@@ -1,3 +1,4 @@
+import org.gradle.api.tasks.testing.Test
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -47,6 +48,12 @@ kotlin {
         }
         jvmMain.dependencies {
             implementation(libs.kotlinx.coroutinesSwing)
+            implementation(libs.onnxruntime)
         }
     }
+}
+
+// 官方 ONNX Runtime 二进制默认开启遥测，必须在原生库初始化前通过进程环境关闭。
+tasks.withType<Test>().configureEach {
+    environment("ORT_DISABLE_TELEMETRY", "1")
 }

@@ -4,7 +4,7 @@
 
 ## 状态结论
 
-B3 已打通 Android 和 iOS 的“系统选图 → 私有去元数据副本 → 本地 OCR → 共享保守解析 → PoC 核对页”纵向链路，并完成两端应用内相机实现；Android CameraX 和 iOS AVFoundation 的核心拍照流程均已通过真机闭环。iOS 横竖屏、闪光灯模式和拒绝权限分支仍待补测。Windows/macOS 已接入共用的“系统文件选择 → 私有去元数据副本 → 明确 OCR 阻断”链路。B3 尚未通过验收，桌面 OCR、图片质量与几何校正、真值标注、准确率统计和干净系统连续识别仍未完成。
+B3 已打通 Android 和 iOS 的“系统选图 → 私有去元数据副本 → 本地 OCR → 共享保守解析 → PoC 核对页”纵向链路，并完成两端应用内相机实现；Android CameraX 和 iOS AVFoundation 的核心拍照流程均已通过真机闭环。iOS 横竖屏、闪光灯模式和拒绝权限分支仍待补测。Windows/macOS 已接入共用的“系统文件选择 → 私有去元数据副本 → 明确 OCR 阻断”链路，并加入 ONNX Runtime 依赖与加载探针；macOS 打包环境已验证 CPU Provider 可加载，但 PP-OCR 模型和产品启动器的遥测前置禁用尚未完成。B3 尚未通过验收，桌面真实 OCR、图片质量与几何校正、真值标注、准确率统计和干净系统连续识别仍未完成。
 
 当前支持白名单保持为空。本进展不能解释为支持任何省份、销售终端、版式或真实中奖判断。
 
@@ -34,6 +34,10 @@ B3 已打通 Android 和 iOS 的“系统选图 → 私有去元数据副本 →
 - 只读取 JPEG `APP1` 或 PNG `eXIf` 中 TIFF IFD0 的方向字段，不解析 GPS 等其他元数据目录；完整支持 EXIF 方向 `1..8`。
 - 使用 ImageIO 限制最长边不超过 4096 像素，并重新编码为应用临时目录内、不携带原始元数据的 JPEG。
 - 应用启动时清理异常退出残留，识别失败、流程退出或重新开始时立即删除当前临时票图；路径边界拒绝删除受控目录外文件。
+- 接入 `com.microsoft.onnxruntime:onnxruntime:1.29.0` CPU 运行时，并增加只返回版本和执行提供器的 `DesktopOnnxRuntimeProbe`；不加载图片、模型或票面文本。
+- 探针在首次引用 ONNX Runtime 前强制检查 `ORT_DISABLE_TELEMETRY=1`，加载后再次调用关闭遥测 API；JVM 测试任务统一注入该进程环境变量，缺失时禁止初始化原生库。
+- 使用最终 `.app` 的原生启动器、精简 JDK 21 runtime 和分发目录内 ONNX JAR 完成临时探针验证，确认 1.29.0 与 CPU Provider 可用；最终 `.app` 通过 `codesign --verify --deep --strict`。
+- 分发 JAR 已核实包含 macOS arm64 动态库、Windows x64 DLL、`Privacy.md` 和 `ThirdPartyNotices.txt`。官方 Maven JAR 仍包含其他平台原生库和 macOS dSYM，当前没有按目标平台裁剪。
 - PP-OCRv5 ONNX 尚未接入。真实图片导入后返回明确能力错误，不会调用 Fake OCR 或进入 Fake 开奖流程。
 
 ### 共享流程
@@ -57,6 +61,7 @@ B3 已打通 Android 和 iOS 的“系统选图 → 私有去元数据副本 →
 - 本轮未单独覆盖横竖屏切换、闪光灯三种模式、拒绝相机权限和真实票 OCR 结果，不能据此把这些分支记为通过。
 - 当前 13 张探索图片的归一化尺寸均高于分辨率闸门，但样本没有低分辨率、模糊、过曝等成组真值，只能证明现有样本不会被尺寸规则误拒绝。
 - macOS arm64 已使用打包后的 `.app` 和系统文件选择器完成真实探索样本导入冒烟；导入后明确展示桌面 OCR 未接入，临时票图在错误页出现前已清理，返回首页正常。
+- macOS arm64 已额外使用打包应用自带的启动器和 JDK 21 runtime，从最终分发目录加载 ONNX Runtime 1.29.0；在进程启动前设置 `ORT_DISABLE_TELEMETRY=1` 后无遥测警告，CPU Provider 探针通过并以状态 0 退出。该验证不包含 OCR 模型和图片推理。
 - Windows 共用导入实现已通过 JVM 合成图片测试和 CI 构建配置覆盖，但尚未在 Windows 10/11 x64 干净系统完成系统选择器、安装包和连续导入验证。
 
 ## 未完成范围
@@ -65,6 +70,8 @@ B3 已打通 Android 和 iOS 的“系统选图 → 私有去元数据副本 →
 - 图片模糊、过曝、裁切、透视、阴影和反光质量检测。
 - 彩票边缘检测、旋转、透视校正、增强候选图和号码区域二次识别。
 - PP-OCRv5 ONNX 三段模型、ZXing，以及 Windows 干净系统文件导入验证。
+- Windows/macOS 产品启动器尚未保证在 ONNX Runtime 初始化前禁用遥测，也未冻结自构建 `--no_telemetry` 制品；该问题解决前真实桌面 OCR 保持阻断。
+- ONNX Runtime 目标平台裁剪、正式许可证归档、公证和卸载验证。
 - 原图与低置信度字段对照、号码编辑器和人工确认，属于 B4。
 - OCR 置信度平台校准、准确率统计、四端差异评估和连续识别性能测试。
 
@@ -78,11 +85,13 @@ B3 已打通 Android 和 iOS 的“系统选图 → 私有去元数据副本 →
 ## 本轮构建基线
 
 - 完整命令 `spotlessCheck jvmTest testAndroidHostTest iosSimulatorArm64Test :androidApp:assembleDebug :desktopApp:packageDmg :composeApp:linkDebugFrameworkIosSimulatorArm64 --rerun-tasks --console=plain` 执行成功，共 191 个 Gradle 任务。
-- 自动化测试共 353 项：JVM 121 项、Android Host 120 项、iOS Simulator 112 项；失败、错误和跳过均为 0。
+- 自动化测试按当前 Gradle 模块统计共 351 项：JVM 119 项、Android Host 120 项、iOS Simulator 112 项；失败、错误和跳过均为 0。旧基线误计了已移除模块残留目录中的 3 项重复测试结果，本次已纠正口径。
 - Xcode `iosApp` Scheme 的 iOS Simulator Debug 构建成功；iPhone Debug 包完成自动签名、安装和启动。
 - Android Debug APK：61,998,602 字节，SHA-256 `2bdcf8526425a460d1ad7d1dab2846f9940cf8452767548aa4d6dfc32df17efa`。
-- macOS DMG：82,687,210 字节，SHA-256 `8642fef2be4a27093b7ecb26939b1249822856cb02b7766fcfc2526faf7b0ef3`。
+- macOS DMG：138,140,088 字节，SHA-256 `bd9a6404989510cdfb1b9eddef0b871b3db90a87d68aa826d490c7fc52cdfa96`。
 - iOS Simulator Debug Framework 主二进制：283,351,360 字节，SHA-256 `c8e8c97e468569572b5bae8518cf8b9432bc9e6348d09e57a3ba99bab6ad7084`。
+- ONNX Runtime Maven 原始 JAR：54,400,660 字节，SHA-256 `5933bbc0c6c4d89afc04bf7c11011de23a947509c1352e5bf5936e62a84e4d10`；Compose 分发目录中的重打包 JAR 为 55,528,543 字节，本轮 SHA-256 `d27439c5b000f88e479092ccce0ab30a5acf80ae574d4c576ec6fb6e332191c8`。
+- 相比接入前 82,687,210 字节的 DMG，本轮增加 55,452,878 字节，约 55.5 MB；主要风险是官方全平台 JAR 尚未裁剪，不能作为最终发布包体积。
 - 以上均为 2026-08-14 开发构建基线，包含调试符号或运行时，不能作为发布包体积承诺。
 
 ## 下一步
@@ -90,4 +99,5 @@ B3 已打通 Android 和 iOS 的“系统选图 → 私有去元数据副本 →
 1. 补测 iOS 真机相机的横竖屏、闪光灯三种模式和拒绝权限分支，并用非票面图片确认 OCR 质量阻断。
 2. 补齐大乐透单期基本票、单期追加票及当前双色球版式样本，并建立脱敏真值台账。
 3. 在现有分辨率闸门上建立可量化的模糊、曝光、阴影、反光、透视和裁切检测，并完成预处理候选对比。
-4. 按已记录版本启动 Windows/macOS PP-OCR ONNX PoC，并在 Windows 10/11 x64 和 macOS arm64 干净系统验证打包与连续识别。
+4. 先冻结 Windows/macOS 的无遥测启动方案，优先评估按目标平台构建 `--no_telemetry` 制品，再接入和转换 PP-OCR 三段模型并执行金样本一致性检查。
+5. 对 ONNX Runtime、模型和字典做目标平台裁剪与许可证归档，在 Windows 10/11 x64 和 macOS arm64 干净系统验证打包及连续识别。
