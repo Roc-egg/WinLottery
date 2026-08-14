@@ -39,10 +39,11 @@ class ConservativeTicketParser : TicketParser {
         }
 
         val issueCandidates = extractIssueCandidates(rows, lotteryType)
-        if (issueCandidates.size > 1) {
+        if (issueCandidates.map { it.value }.toSet().size > 1) {
             return TicketParseResult.NeedsCorrection("识别到多个开奖期号，请重新拍摄或人工核对")
         }
-        val issue = issueCandidates.singleOrNull().orEmpty()
+        val issueCandidate = issueCandidates.firstOrNull()
+        val issue = issueCandidate?.value.orEmpty()
         val parsedBets =
             when (val result = parseBetRows(rows, lotteryType)) {
                 is BetRowsResult.Success -> result.rows
@@ -63,10 +64,11 @@ class ConservativeTicketParser : TicketParser {
                 }
             }
         val paidAmountCandidates = extractPaidAmountCandidates(rows)
-        if (paidAmountCandidates.size > 1) {
+        if (paidAmountCandidates.map { it.value }.toSet().size > 1) {
             return TicketParseResult.NeedsCorrection("识别到多个票面合计金额，请重新拍摄或人工核对")
         }
-        val paidAmountFen = paidAmountCandidates.singleOrNull()
+        val paidAmountCandidate = paidAmountCandidates.firstOrNull()
+        val paidAmountFen = paidAmountCandidate?.value
         val periodCount = explicitPeriodCount ?: V1_PERIOD_COUNT
         val expectedAmountFen =
             TicketAmountCalculator.calculate(
@@ -94,6 +96,18 @@ class ConservativeTicketParser : TicketParser {
                 periodCount = periodCount,
                 paidAmountFen = paidAmountFen,
             )
+        val fieldRegions =
+            buildList {
+                issueCandidate?.let { candidate ->
+                    add(TicketFieldRegion(TicketFieldReference.Issue, candidate.bounds))
+                }
+                parsedBets.forEachIndexed { index, parsed ->
+                    add(TicketFieldRegion(TicketFieldReference.BetLine(index), parsed.bounds))
+                }
+                paidAmountCandidate?.let { candidate ->
+                    add(TicketFieldRegion(TicketFieldReference.PaidAmount, candidate.bounds))
+                }
+            }
         val correctionMessages =
             buildList {
                 if (issue.isEmpty()) {
@@ -109,10 +123,11 @@ class ConservativeTicketParser : TicketParser {
             return TicketParseResult.NeedsCorrection(
                 message = correctionMessages.joinToString(separator = "；"),
                 draft = draft,
+                fieldRegions = fieldRegions,
             )
         }
 
-        return TicketParseResult.ReadyForReview(draft)
+        return TicketParseResult.ReadyForReview(draft, fieldRegions)
     }
 
     /**
@@ -232,7 +247,7 @@ class ConservativeTicketParser : TicketParser {
     private fun extractIssueCandidates(
         rows: List<VisualRow>,
         lotteryType: LotteryType,
-    ): Set<String> {
+    ): List<LocatedValue<String>> {
         val regex =
             when (lotteryType) {
                 LotteryType.SUPER_LOTTO -> SUPER_LOTTO_ISSUE_REGEX
@@ -241,12 +256,12 @@ class ConservativeTicketParser : TicketParser {
         val candidates =
             rows
                 .asSequence()
-                .map { it.text.normalizedForParsing() }
-                .flatMap { text ->
+                .flatMap { row ->
+                    val text = row.text.normalizedForParsing()
                     regex
                         .findAll(text)
-                        .map { match -> match.groupValues[1] }
-                }.toSet()
+                        .map { match -> LocatedValue(match.groupValues[1], row.bounds) }
+                }.toList()
         return candidates
     }
 
@@ -288,6 +303,7 @@ class ConservativeTicketParser : TicketParser {
                     secondaryNumbers = secondaryNumbers,
                     rowMultiplier = rowMultiplierMatch?.groupValues?.get(1)?.toIntOrNull(),
                     originalText = row.text,
+                    bounds = row.bounds,
                 )
         }
         return when {
@@ -353,16 +369,20 @@ class ConservativeTicketParser : TicketParser {
     }
 
     /** 提取所有带“合计”锚点的金额候选，并精确转换为分。 */
-    private fun extractPaidAmountCandidates(rows: List<VisualRow>): Set<Long> {
+    private fun extractPaidAmountCandidates(rows: List<VisualRow>): List<LocatedValue<Long>> {
         val candidates =
             rows
                 .asSequence()
-                .map { it.text.normalizedForParsing() }
-                .flatMap { text ->
+                .flatMap { row ->
+                    val text = row.text.normalizedForParsing()
                     TOTAL_AMOUNT_REGEX
                         .findAll(text)
-                        .mapNotNull { match -> match.groupValues[1].toFenOrNull() }
-                }.toSet()
+                        .mapNotNull { match ->
+                            match.groupValues[1].toFenOrNull()?.let { value ->
+                                LocatedValue(value, row.bounds)
+                            }
+                        }
+                }.toList()
         return candidates
     }
 
@@ -416,7 +436,16 @@ class ConservativeTicketParser : TicketParser {
             }
         return groups.map { group ->
             val ordered = group.sortedBy { it.bounds.left }
-            VisualRow(text = ordered.joinToString(separator = ASCII_SPACE.toString()) { it.text.trim() })
+            VisualRow(
+                text = ordered.joinToString(separator = ASCII_SPACE.toString()) { it.text.trim() },
+                bounds =
+                    NormalizedBounds(
+                        left = ordered.minOf { it.bounds.left },
+                        top = ordered.minOf { it.bounds.top },
+                        right = ordered.maxOf { it.bounds.right },
+                        bottom = ordered.maxOf { it.bounds.bottom },
+                    ),
+            )
         }
     }
 
@@ -488,21 +517,36 @@ class ConservativeTicketParser : TicketParser {
      * @property secondaryNumbers 后区或蓝球号码。
      * @property rowMultiplier 双色球行尾倍数，未识别时为 `null`。
      * @property originalText 供确认界面对照的 OCR 行原文。
+     * @property bounds 投注行在原始校正图中的归一化边界。
      */
     private data class ParsedBetRow(
         val primaryNumbers: List<Int>,
         val secondaryNumbers: List<Int>,
         val rowMultiplier: Int?,
         val originalText: String,
+        val bounds: NormalizedBounds,
+    )
+
+    /**
+     * 一个保留 OCR 视觉行位置的已解析值。
+     *
+     * @property value 已解析字段值。
+     * @property bounds 字段所在视觉行的归一化边界。
+     */
+    private data class LocatedValue<T>(
+        val value: T,
+        val bounds: NormalizedBounds,
     )
 
     /**
      * 合并后的视觉文字行。
      *
      * @property text 按横向顺序连接的原始 OCR 片段。
+     * @property bounds 合并后覆盖所有片段的归一化边界。
      */
     private data class VisualRow(
         val text: String,
+        val bounds: NormalizedBounds,
     )
 
     /** 彩票单式号码规格。 */

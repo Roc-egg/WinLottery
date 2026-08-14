@@ -10,6 +10,7 @@ import roc.win.lottery.recognition.ImageAcquisitionSource
 import roc.win.lottery.recognition.ImageQualityResult
 import roc.win.lottery.recognition.ImageRef
 import roc.win.lottery.recognition.RecognitionResult
+import roc.win.lottery.recognition.TicketFieldRegion
 import roc.win.lottery.recognition.TicketParseResult
 
 /** 驱动本地图片识别、票面人工校正和开奖查询流程的应用状态持有者。 */
@@ -173,7 +174,12 @@ class LotteryAppController(
                         } else if (generation == flowGeneration) {
                             mutableUiState.update {
                                 it.copy(
-                                    screen = createReviewScreen(draft, acquisition.imageRef),
+                                    screen =
+                                        createReviewScreen(
+                                            draft = draft,
+                                            imageRef = acquisition.imageRef,
+                                            fieldRegions = parsed.fieldRegions,
+                                        ),
                                 )
                             }
                         }
@@ -187,7 +193,12 @@ class LotteryAppController(
                         if (generation == flowGeneration) {
                             mutableUiState.update {
                                 it.copy(
-                                    screen = createReviewScreen(parsed.draft, acquisition.imageRef),
+                                    screen =
+                                        createReviewScreen(
+                                            draft = parsed.draft,
+                                            imageRef = acquisition.imageRef,
+                                            fieldRegions = parsed.fieldRegions,
+                                        ),
                                 )
                             }
                         }
@@ -201,12 +212,14 @@ class LotteryAppController(
     private fun createReviewScreen(
         draft: roc.win.lottery.domain.TicketDraft,
         imageRef: ImageRef,
+        fieldRegions: List<TicketFieldRegion>,
     ): AppScreen.Review {
         val editor = TicketReviewState.fromDraft(draft)
         return AppScreen.Review(
             editor = editor,
             imageRef = imageRef,
             evaluation = editor.evaluate(container.ticketValidator),
+            fieldRegions = fieldRegions,
         )
     }
 

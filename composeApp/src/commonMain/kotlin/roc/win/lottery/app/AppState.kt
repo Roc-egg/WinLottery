@@ -3,6 +3,7 @@ package roc.win.lottery.app
 import roc.win.lottery.domain.ConfirmedTicket
 import roc.win.lottery.domain.DrawResult
 import roc.win.lottery.recognition.ImageRef
+import roc.win.lottery.recognition.TicketFieldRegion
 
 /** 应用顶层页面。 */
 sealed interface AppScreen {
@@ -26,13 +27,15 @@ sealed interface AppScreen {
      * 票面人工校正与确认页。
      *
      * @property editor 当前不可变编辑状态。
-     * @property imageRef 当前流程的临时图片引用，后续用于原图区域对照。
+     * @property imageRef 当前流程的临时图片引用，用于原图区域对照。
      * @property evaluation 当前编辑状态的领域评估。
+     * @property fieldRegions 可在原图中定位的 OCR 字段区域。
      */
     data class Review(
         val editor: TicketReviewState,
         val imageRef: ImageRef,
         val evaluation: TicketReviewEvaluation,
+        val fieldRegions: List<TicketFieldRegion>,
     ) : AppScreen
 
     /**

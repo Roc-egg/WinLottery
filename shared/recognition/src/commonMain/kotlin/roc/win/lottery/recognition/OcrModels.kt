@@ -43,6 +43,35 @@ data class OcrDocument(
     val engineName: String,
 )
 
+/** 票面校正页可定位的 OCR 字段。 */
+sealed interface TicketFieldReference {
+    /** 开奖期号。 */
+    data object Issue : TicketFieldReference
+
+    /**
+     * 一行单式投注号码。
+     *
+     * @property index 投注行在草稿中的下标。
+     */
+    data class BetLine(
+        val index: Int,
+    ) : TicketFieldReference
+
+    /** 票面合计金额。 */
+    data object PaidAmount : TicketFieldReference
+}
+
+/**
+ * 一个已解析字段在原始校正图中的位置。
+ *
+ * @property field 可定位的草稿字段。
+ * @property bounds 字段所在 OCR 视觉行的归一化边界。
+ */
+data class TicketFieldRegion(
+    val field: TicketFieldReference,
+    val bounds: NormalizedBounds,
+)
+
 /** 本地 OCR 结果。 */
 sealed interface RecognitionResult {
     /**
@@ -90,9 +119,11 @@ sealed interface TicketParseResult {
      * 已生成等待用户确认的草稿。
      *
      * @property draft 不可直接进入规则引擎的票面草稿。
+     * @property fieldRegions 可供校正页对照原图的字段区域。
      */
     data class ReadyForReview(
         val draft: TicketDraft,
+        val fieldRegions: List<TicketFieldRegion> = emptyList(),
     ) : TicketParseResult
 
     /**
@@ -109,10 +140,12 @@ sealed interface TicketParseResult {
      *
      * @property message 面向用户的修正说明。
      * @property draft 已安全解析的可编辑草稿；无法保证票型或投注结构时为 `null`。
+     * @property fieldRegions 草稿存在时可供校正页对照原图的字段区域。
      */
     data class NeedsCorrection(
         val message: String,
         val draft: TicketDraft? = null,
+        val fieldRegions: List<TicketFieldRegion> = emptyList(),
     ) : TicketParseResult
 }
 

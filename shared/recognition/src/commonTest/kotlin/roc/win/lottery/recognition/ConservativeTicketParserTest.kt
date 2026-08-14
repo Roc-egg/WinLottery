@@ -28,7 +28,8 @@ class ConservativeTicketParserTest {
                 ),
             )
 
-        val draft = assertIs<TicketParseResult.ReadyForReview>(result).draft
+        val review = assertIs<TicketParseResult.ReadyForReview>(result)
+        val draft = review.draft
         assertEquals(LotteryType.SUPER_LOTTO, draft.lotteryType)
         assertEquals("26999", draft.issue)
         assertEquals(5, draft.betLines.size)
@@ -38,6 +39,18 @@ class ConservativeTicketParserTest {
         assertEquals(1, draft.multiplier)
         assertEquals(1, draft.periodCount)
         assertEquals(1_000L, draft.paidAmountFen)
+        assertEquals(
+            listOf(
+                TicketFieldReference.Issue,
+                TicketFieldReference.BetLine(0),
+                TicketFieldReference.BetLine(1),
+                TicketFieldReference.BetLine(2),
+                TicketFieldReference.BetLine(3),
+                TicketFieldReference.BetLine(4),
+                TicketFieldReference.PaidAmount,
+            ),
+            review.fieldRegions.map { it.field },
+        )
     }
 
     /** 同一视觉行的分散 OCR 片段应按横向位置合并后解析大乐透追加票。 */
@@ -63,9 +76,13 @@ class ConservativeTicketParserTest {
                 ),
             )
 
-        val draft = assertIs<TicketParseResult.ReadyForReview>(result).draft
+        val review = assertIs<TicketParseResult.ReadyForReview>(result)
+        val draft = review.draft
         assertTrue(draft.betLines.single().isAdditional == true)
         assertEquals(300L, draft.paidAmountFen)
+        val betRegion = review.fieldRegions.single { it.field == TicketFieldReference.BetLine(0) }
+        assertEquals(0.10f, betRegion.bounds.left)
+        assertEquals(0.88f, betRegion.bounds.right)
     }
 
     /** 双色球单式多注版式应读取每行统一倍数并保留票面顺序。 */
@@ -389,6 +406,9 @@ class ConservativeTicketParserTest {
         assertTrue(correction.message.contains("金额"))
         assertEquals("26999", draft.issue)
         assertNull(draft.paidAmountFen)
+        assertFalse(correction.fieldRegions.any { it.field == TicketFieldReference.PaidAmount })
+        assertTrue(correction.fieldRegions.any { it.field == TicketFieldReference.Issue })
+        assertTrue(correction.fieldRegions.any { it.field == TicketFieldReference.BetLine(0) })
     }
 
     /** 金额与号码、倍数不一致时应保留票面值供人工核对，不能反推并覆盖。 */

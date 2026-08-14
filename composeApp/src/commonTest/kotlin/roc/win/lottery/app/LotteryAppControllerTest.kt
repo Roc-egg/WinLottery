@@ -19,7 +19,10 @@ import roc.win.lottery.recognition.ImageAcquisitionSource
 import roc.win.lottery.recognition.ImageDimensionQualityAnalyzer
 import roc.win.lottery.recognition.ImageQualityAnalyzer
 import roc.win.lottery.recognition.ImageRef
+import roc.win.lottery.recognition.NormalizedBounds
 import roc.win.lottery.recognition.RecognitionResult
+import roc.win.lottery.recognition.TicketFieldReference
+import roc.win.lottery.recognition.TicketFieldRegion
 import roc.win.lottery.recognition.TicketParseResult
 import roc.win.lottery.recognition.TicketParser
 import roc.win.lottery.recognition.TicketRecognizer
@@ -180,6 +183,13 @@ class LotteryAppControllerTest {
                     TicketParseResult.NeedsCorrection(
                         message = "期号缺失，请人工补充",
                         draft = validDraft().copy(issue = ""),
+                        fieldRegions =
+                            listOf(
+                                TicketFieldRegion(
+                                    field = TicketFieldReference.BetLine(0),
+                                    bounds = NormalizedBounds(0.1f, 0.4f, 0.9f, 0.5f),
+                                ),
+                            ),
                     )
                 }
             val controller =
@@ -194,6 +204,7 @@ class LotteryAppControllerTest {
             val review = assertIs<AppScreen.Review>(controller.uiState.value.screen)
             assertFalse(review.evaluation.canConfirm)
             assertTrue(review.evaluation.problems.any { it.field == "issue" })
+            assertEquals(TicketFieldReference.BetLine(0), review.fieldRegions.single().field)
             assertTrue(paths.deletedImageIds.isEmpty())
 
             controller.updateTicketReview(TicketReviewAction.ChangeIssue("26091"))

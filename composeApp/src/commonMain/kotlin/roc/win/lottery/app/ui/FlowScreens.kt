@@ -44,6 +44,8 @@ import roc.win.lottery.domain.DrawResult
 import roc.win.lottery.domain.LotteryType
 import roc.win.lottery.domain.TicketFieldOrigin
 import roc.win.lottery.domain.TicketValidationProblem
+import roc.win.lottery.recognition.ImageRef
+import roc.win.lottery.recognition.TicketFieldRegion
 
 /** 显示本地分析进度和取消入口。 */
 @Composable
@@ -83,6 +85,8 @@ fun AnalysisScreen(
  *
  * @param editor 当前不可变编辑状态。
  * @param evaluation 当前领域评估。
+ * @param imageRef 当前流程的私有临时图片引用。
+ * @param fieldRegions 可在原图中定位的 OCR 字段区域。
  * @param isDemo 开奖等后续能力是否仍为开发演示实现。
  * @param usesRealRecognition 当前草稿是否来自真实图片导入和本地 OCR。
  * @param onBack 返回并清理当前临时票图的操作。
@@ -99,6 +103,8 @@ fun AnalysisScreen(
 fun ReviewScreen(
     editor: TicketReviewState,
     evaluation: TicketReviewEvaluation,
+    imageRef: ImageRef,
+    fieldRegions: List<TicketFieldRegion>,
     isDemo: Boolean,
     usesRealRecognition: Boolean,
     onBack: () -> Unit,
@@ -111,6 +117,7 @@ fun ReviewScreen(
     onUseCalculatedAmount: () -> Unit,
     onConfirm: () -> Unit,
 ) {
+    val previewState = if (usesRealRecognition) rememberTicketPreviewState(imageRef) else null
     AppShell(
         title = "确认票面信息",
         navigationIcon = LotteryIcons.Back,
@@ -125,6 +132,10 @@ fun ReviewScreen(
                 },
             )
             Spacer(Modifier.height(20.dp))
+        }
+        previewState?.let { state ->
+            TicketImagePreview(state = state, fieldRegions = fieldRegions)
+            Spacer(Modifier.height(24.dp))
         }
         Text("请逐项核对", style = MaterialTheme.typography.headlineMedium)
         Spacer(Modifier.height(8.dp))
@@ -242,7 +253,7 @@ fun ReviewScreen(
         Spacer(Modifier.height(24.dp))
         Button(
             onClick = onConfirm,
-            enabled = evaluation.canConfirm,
+            enabled = evaluation.canConfirm && (previewState == null || previewState is TicketPreviewState.Ready),
             modifier = Modifier.fillMaxWidth().height(52.dp),
             shape = MaterialTheme.shapes.small,
         ) {

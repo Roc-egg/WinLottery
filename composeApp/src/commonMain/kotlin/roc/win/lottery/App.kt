@@ -65,6 +65,8 @@ fun App(container: AppContainer = remember { AppContainer.createDemo(getPlatform
                 ReviewScreen(
                     editor = screen.editor,
                     evaluation = screen.evaluation,
+                    imageRef = screen.imageRef,
+                    fieldRegions = screen.fieldRegions,
                     isDemo = uiState.isDemo,
                     usesRealRecognition = container.usesRealRecognition,
                     onBack = { scope.launch { controller.navigateHome() } },
