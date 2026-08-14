@@ -2,6 +2,8 @@ package roc.win.lottery.app
 
 import roc.win.lottery.domain.ConfirmedTicket
 import roc.win.lottery.domain.DrawResult
+import roc.win.lottery.domain.DrawStatus
+import roc.win.lottery.domain.PrizeCheckResult
 import roc.win.lottery.recognition.ImageRef
 import roc.win.lottery.recognition.TicketFieldRegion
 
@@ -54,6 +56,32 @@ sealed interface AppScreen {
      */
     data class DemoComplete(
         val drawResult: DrawResult,
+    ) : AppScreen
+
+    /**
+     * 已取得足够官网证据后的真实中奖测算页。
+     *
+     * @property ticket 用户确认且用于精确查询的票据。
+     * @property drawResult 经双数据面核对的开奖结果。
+     * @property prizeCheckResult 本地规则引擎生成的逐注测算结果。
+     */
+    data class VerificationResult(
+        val ticket: ConfirmedTicket,
+        val drawResult: DrawResult,
+        val prizeCheckResult: PrizeCheckResult,
+    ) : AppScreen
+
+    /**
+     * 官网证据暂不足时保留票据的可重试页面。
+     *
+     * @property ticket 用户确认且用于精确查询的票据。
+     * @property status 本次查询的明确不可用状态。
+     * @property message 仓库返回的安全恢复说明。
+     */
+    data class DrawUnavailable(
+        val ticket: ConfirmedTicket,
+        val status: DrawStatus,
+        val message: String,
     ) : AppScreen
 
     /**

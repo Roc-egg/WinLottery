@@ -88,6 +88,7 @@ fun AnalysisScreen(
  * @param fieldRegions 可在原图中定位的 OCR 字段区域。
  * @param isDemo 开奖等后续能力是否仍为开发演示实现。
  * @param usesRealRecognition 当前草稿是否来自真实图片导入和本地 OCR。
+ * @param usesRealDrawData 确认后是否查询真实官网开奖数据。
  * @param onBack 返回并清理当前临时票图的操作。
  * @param onLotteryTypeChange 修改彩种。
  * @param onIssueChange 修改期号。
@@ -106,6 +107,7 @@ fun ReviewScreen(
     fieldRegions: List<TicketFieldRegion>,
     isDemo: Boolean,
     usesRealRecognition: Boolean,
+    usesRealDrawData: Boolean,
     onBack: () -> Unit,
     onLotteryTypeChange: (LotteryType) -> Unit,
     onIssueChange: (String) -> Unit,
@@ -124,10 +126,18 @@ fun ReviewScreen(
     ) {
         if (isDemo) {
             StatusBanner(
-                if (usesRealRecognition) {
-                    "票面来自本地 OCR，可逐项校正；继续后仍使用固定演示开奖数据，不用于真实中奖判断。"
-                } else {
-                    "以下字段来自固定演示票据，用于验证人工校正和确认流程。"
+                when {
+                    usesRealRecognition && usesRealDrawData -> {
+                        "票面来自本地 OCR；确认后会精确查询该期官网数据并在本机测算。当前仍是未通过正式对账的移动验证版。"
+                    }
+
+                    usesRealRecognition -> {
+                        "票面来自本地 OCR，可逐项校正；继续后仍使用固定演示开奖数据，不用于真实中奖判断。"
+                    }
+
+                    else -> {
+                        "以下字段来自固定演示票据，用于验证人工校正和确认流程。"
+                    }
                 },
             )
             Spacer(Modifier.height(20.dp))
@@ -525,10 +535,17 @@ private fun ValidationSummary(problems: List<TicketValidationProblem>) {
     }
 }
 
-/** 显示开奖查询中的明确状态。 */
+/**
+ * 显示开奖查询中的明确状态。
+ *
+ * @param issue 用户确认并正在精确查询的期号。
+ * @param usesRealDrawData 是否正在核对真实官网数据。
+ * @param onCancel 取消查询并返回首页。
+ */
 @Composable
 fun DrawQueryScreen(
     issue: String,
+    usesRealDrawData: Boolean,
     onCancel: () -> Unit,
 ) {
     AppShell(
@@ -543,7 +560,11 @@ fun DrawQueryScreen(
             Text("正在查询第 $issue 期", style = MaterialTheme.typography.headlineMedium)
             Spacer(Modifier.height(10.dp))
             Text(
-                "只有用户确认后才会发起单期查询",
+                if (usesRealDrawData) {
+                    "正在核对两份官方数据，只查询你确认的单个期号"
+                } else {
+                    "只有用户确认后才会发起单期查询"
+                },
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

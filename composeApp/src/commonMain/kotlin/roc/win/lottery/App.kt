@@ -16,9 +16,11 @@ import roc.win.lottery.app.ui.AboutScreen
 import roc.win.lottery.app.ui.AnalysisScreen
 import roc.win.lottery.app.ui.DemoCompleteScreen
 import roc.win.lottery.app.ui.DrawQueryScreen
+import roc.win.lottery.app.ui.DrawUnavailableScreen
 import roc.win.lottery.app.ui.ErrorScreen
 import roc.win.lottery.app.ui.HomeScreen
 import roc.win.lottery.app.ui.ReviewScreen
+import roc.win.lottery.app.ui.VerificationResultScreen
 import roc.win.lottery.recognition.ImageAcquisitionSource
 
 /**
@@ -42,6 +44,7 @@ fun App(container: AppContainer = remember { AppContainer.createDemo(getPlatform
                     isDemo = uiState.isDemo,
                     usesRealImageAcquisition = container.usesRealImageAcquisition,
                     usesRealRecognition = container.usesRealRecognition,
+                    usesRealDrawData = container.usesRealDrawData,
                     onCamera = {
                         scope.launch { controller.startAnalysis(ImageAcquisitionSource.CAMERA) }
                     },
@@ -69,6 +72,7 @@ fun App(container: AppContainer = remember { AppContainer.createDemo(getPlatform
                     fieldRegions = screen.fieldRegions,
                     isDemo = uiState.isDemo,
                     usesRealRecognition = container.usesRealRecognition,
+                    usesRealDrawData = container.usesRealDrawData,
                     onBack = { scope.launch { controller.navigateHome() } },
                     onLotteryTypeChange = {
                         controller.updateTicketReview(TicketReviewAction.ChangeLotteryType(it))
@@ -100,6 +104,7 @@ fun App(container: AppContainer = remember { AppContainer.createDemo(getPlatform
             is AppScreen.DrawQuery -> {
                 DrawQueryScreen(
                     issue = screen.ticket.issue.value.value,
+                    usesRealDrawData = container.usesRealDrawData,
                     onCancel = { scope.launch { controller.navigateHome() } },
                 )
             }
@@ -108,6 +113,26 @@ fun App(container: AppContainer = remember { AppContainer.createDemo(getPlatform
                 DemoCompleteScreen(
                     drawResult = screen.drawResult,
                     usesRealRecognition = container.usesRealRecognition,
+                    onDone = { scope.launch { controller.navigateHome() } },
+                )
+            }
+
+            is AppScreen.VerificationResult -> {
+                VerificationResultScreen(
+                    ticket = screen.ticket,
+                    drawResult = screen.drawResult,
+                    prizeCheckResult = screen.prizeCheckResult,
+                    onRetry = { scope.launch { controller.retryDrawQuery() } },
+                    onDone = { scope.launch { controller.navigateHome() } },
+                )
+            }
+
+            is AppScreen.DrawUnavailable -> {
+                DrawUnavailableScreen(
+                    ticket = screen.ticket,
+                    status = screen.status,
+                    message = screen.message,
+                    onRetry = { scope.launch { controller.retryDrawQuery() } },
                     onDone = { scope.launch { controller.navigateHome() } },
                 )
             }

@@ -2,6 +2,7 @@ package roc.win.lottery
 
 import roc.win.lottery.app.AppContainer
 import roc.win.lottery.data.FakeDrawRepository
+import roc.win.lottery.domain.LotteryPrizeCalculator
 import roc.win.lottery.domain.TicketValidator
 import roc.win.lottery.recognition.ConservativeTicketParser
 import roc.win.lottery.recognition.DesktopAppPaths
@@ -37,10 +38,12 @@ fun createDesktopImportContainer(ownerProvider: () -> Frame?): AppContainer {
         ticketRecognizer = DesktopOcrUnavailableRecognizer(),
         ticketParser = ConservativeTicketParser(),
         drawRepository = FakeDrawRepository(),
+        prizeCalculator = LotteryPrizeCalculator(),
         appPaths = appPaths,
         ticketValidator = TicketValidator(),
         isDemo = true,
         usesRealImageAcquisition = true,
         usesRealRecognition = false,
+        usesRealDrawData = false,
     )
 }

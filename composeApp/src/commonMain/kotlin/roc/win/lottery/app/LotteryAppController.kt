@@ -5,6 +5,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import roc.win.lottery.data.DrawQueryResult
+import roc.win.lottery.domain.ConfirmedTicket
 import roc.win.lottery.recognition.ImageAcquisitionResult
 import roc.win.lottery.recognition.ImageAcquisitionSource
 import roc.win.lottery.recognition.ImageQualityResult
@@ -120,7 +121,7 @@ class LotteryAppController(
         }
     }
 
-    /** 用户确认当前合法票据后，清理临时图片并执行一次开奖查询。 */
+    /** 用户确认当前合法票据后，清理临时图片并执行一次精确期号查询。 */
     suspend fun confirmTicket() {
         val review = mutableUiState.value.screen as? AppScreen.Review ?: return
         val ticket = review.evaluation.ticket
@@ -128,16 +129,57 @@ class LotteryAppController(
 
         val generation = flowGeneration
         clearTemporaryImage()
+        queryDraw(ticket, generation)
+    }
+
+    /** 从结果页或不可用页保留用户确认票据并主动重新查询同一期开奖。 */
+    suspend fun retryDrawQuery() {
+        val ticket =
+            when (val screen = mutableUiState.value.screen) {
+                is AppScreen.DrawUnavailable -> screen.ticket
+                is AppScreen.VerificationResult -> screen.ticket
+                else -> return
+            }
+        queryDraw(ticket, flowGeneration)
+    }
+
+    /** 查询精确期号，并把真实数据交给本地规则引擎。 */
+    private suspend fun queryDraw(
+        ticket: ConfirmedTicket,
+        generation: Long,
+    ) {
+        if (generation != flowGeneration) return
         mutableUiState.update { it.copy(screen = AppScreen.DrawQuery(ticket)) }
         when (val result = container.drawRepository.getDraw(ticket.lotteryType.value, ticket.issue.value)) {
             is DrawQueryResult.Success -> {
                 if (generation == flowGeneration) {
-                    mutableUiState.update { it.copy(screen = AppScreen.DemoComplete(result.drawResult)) }
+                    val nextScreen =
+                        if (container.usesRealDrawData) {
+                            AppScreen.VerificationResult(
+                                ticket = ticket,
+                                drawResult = result.drawResult,
+                                prizeCheckResult = container.prizeCalculator.calculate(ticket, result.drawResult),
+                            )
+                        } else {
+                            AppScreen.DemoComplete(result.drawResult)
+                        }
+                    mutableUiState.update { it.copy(screen = nextScreen) }
                 }
             }
 
             is DrawQueryResult.Unavailable -> {
-                showError("开奖数据不可用", result.message, generation)
+                if (generation == flowGeneration) {
+                    mutableUiState.update {
+                        it.copy(
+                            screen =
+                                AppScreen.DrawUnavailable(
+                                    ticket = ticket,
+                                    status = result.status,
+                                    message = result.message,
+                                ),
+                        )
+                    }
+                }
             }
         }
     }

@@ -3,7 +3,8 @@ package roc.win.lottery
 import android.os.Build
 import androidx.activity.ComponentActivity
 import roc.win.lottery.app.AppContainer
-import roc.win.lottery.data.FakeDrawRepository
+import roc.win.lottery.data.OfficialDrawRepository
+import roc.win.lottery.domain.LotteryPrizeCalculator
 import roc.win.lottery.domain.TicketValidator
 import roc.win.lottery.recognition.AndroidAppPaths
 import roc.win.lottery.recognition.AndroidPhotoPickerImageAcquirer
@@ -24,10 +25,10 @@ class AndroidPlatform : Platform {
 actual fun getPlatform(): Platform = AndroidPlatform()
 
 /**
- * 创建已接入 Android Photo Picker 和 ML Kit OCR 的 B3 PoC 容器。
+ * 创建已接入 Android 图片采集、本地 OCR 和真实开奖查询的移动容器。
  *
  * @param activity 用于注册系统选图结果和读取应用私有目录的宿主 Activity。
- * @return 使用真实本地识别、保守解析器和 Fake 开奖仓库的应用容器。
+ * @return 使用真实本地识别、保守解析器、官网开奖仓库和本地规则引擎的应用容器。
  */
 fun createAndroidRecognitionContainer(activity: ComponentActivity): AppContainer {
     val appPaths = AndroidAppPaths(activity.applicationContext)
@@ -37,11 +38,13 @@ fun createAndroidRecognitionContainer(activity: ComponentActivity): AppContainer
         imageQualityAnalyzer = ImageDimensionQualityAnalyzer(),
         ticketRecognizer = MlKitChineseTicketRecognizer(activity.applicationContext),
         ticketParser = ConservativeTicketParser(),
-        drawRepository = FakeDrawRepository(),
+        drawRepository = OfficialDrawRepository(),
+        prizeCalculator = LotteryPrizeCalculator(),
         appPaths = appPaths,
         ticketValidator = TicketValidator(),
         isDemo = true,
         usesRealImageAcquisition = true,
         usesRealRecognition = true,
+        usesRealDrawData = true,
     )
 }

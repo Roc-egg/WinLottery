@@ -1,10 +1,19 @@
 package roc.win.lottery.data
 
 import kotlinx.coroutines.test.runTest
+import roc.win.lottery.domain.BetLine
+import roc.win.lottery.domain.ConfirmedTicket
+import roc.win.lottery.domain.ConfirmedValue
+import roc.win.lottery.domain.DrawResult
 import roc.win.lottery.domain.DrawStatus
 import roc.win.lottery.domain.Issue
+import roc.win.lottery.domain.LotteryPrizeCalculator
 import roc.win.lottery.domain.LotteryType
+import roc.win.lottery.domain.PrizeCheckStatus
+import roc.win.lottery.domain.PrizeTierCodes
+import roc.win.lottery.domain.TicketFieldOrigin
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
@@ -38,8 +47,34 @@ class OfficialDrawRepositoryLiveSmokeTest {
                 assertTrue(draw.evidence.contentSha256.matches(SHA_256_PATTERN))
                 assertTrue(draw.supportingEvidence.isNotEmpty())
                 assertTrue(draw.supportingEvidence.all { it.contentSha256.matches(SHA_256_PATTERN) })
+
+                val prizeCheck = LotteryPrizeCalculator().calculate(winningTicket(draw), draw)
+                assertEquals(PrizeCheckStatus.WIN, prizeCheck.status)
+                assertEquals(PrizeTierCodes.FIRST, prizeCheck.lineResults.single().prizeTierCode)
             }
         }
+
+    /** 使用规范化开奖号码在内存构造一张单倍基本投注头奖票。 */
+    private fun winningTicket(draw: DrawResult): ConfirmedTicket =
+        ConfirmedTicket(
+            lotteryType = confirmed(draw.lotteryType),
+            issue = confirmed(draw.issue),
+            betLines =
+                listOf(
+                    BetLine(
+                        primaryNumbers = confirmed(draw.primaryNumbers),
+                        secondaryNumbers = confirmed(draw.secondaryNumbers),
+                        isAdditional = confirmed(false),
+                        originalText = "",
+                    ),
+                ),
+            multiplier = confirmed(1),
+            periodCount = confirmed(1),
+            paidAmountFen = confirmed(SINGLE_BET_AMOUNT_FEN),
+        )
+
+    /** 创建标记为测试内存输入的已确认字段。 */
+    private fun <T> confirmed(value: T): ConfirmedValue<T> = ConfirmedValue(value, TicketFieldOrigin.USER)
 
     /** 读取启用 smoke 时必须显式提供的期号变量。 */
     private fun requiredEnvironmentVariable(name: String): String =
@@ -64,5 +99,8 @@ class OfficialDrawRepositoryLiveSmokeTest {
 
         /** 小写十六进制 SHA-256 格式。 */
         val SHA_256_PATTERN = Regex("^[0-9a-f]{64}$")
+
+        /** 两种彩票单倍基本投注金额，单位为分。 */
+        const val SINGLE_BET_AMOUNT_FEN = 200L
     }
 }

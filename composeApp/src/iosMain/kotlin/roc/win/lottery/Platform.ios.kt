@@ -3,7 +3,8 @@ package roc.win.lottery
 import platform.UIKit.UIDevice
 import platform.UIKit.UIViewController
 import roc.win.lottery.app.AppContainer
-import roc.win.lottery.data.FakeDrawRepository
+import roc.win.lottery.data.OfficialDrawRepository
+import roc.win.lottery.domain.LotteryPrizeCalculator
 import roc.win.lottery.domain.TicketValidator
 import roc.win.lottery.recognition.ConservativeTicketParser
 import roc.win.lottery.recognition.IOSAppPaths
@@ -24,10 +25,10 @@ class IOSPlatform : Platform {
 actual fun getPlatform(): Platform = IOSPlatform()
 
 /**
- * 创建已接入 iOS PHPicker 和 Vision OCR 的 B3 PoC 容器。
+ * 创建已接入 iOS 图片采集、本地 OCR 和真实开奖查询的移动容器。
  *
  * @param presenterProvider 返回当前可展示系统图片选择器的宿主控制器。
- * @return 使用真实本地识别、保守解析器和 Fake 开奖仓库的应用容器。
+ * @return 使用真实本地识别、保守解析器、官网开奖仓库和本地规则引擎的应用容器。
  */
 fun createIOSRecognitionContainer(presenterProvider: () -> UIViewController?): AppContainer {
     val appPaths = IOSAppPaths()
@@ -37,11 +38,13 @@ fun createIOSRecognitionContainer(presenterProvider: () -> UIViewController?): A
         imageQualityAnalyzer = ImageDimensionQualityAnalyzer(),
         ticketRecognizer = VisionTicketRecognizer(),
         ticketParser = ConservativeTicketParser(),
-        drawRepository = FakeDrawRepository(),
+        drawRepository = OfficialDrawRepository(),
+        prizeCalculator = LotteryPrizeCalculator(),
         appPaths = appPaths,
         ticketValidator = TicketValidator(),
         isDemo = true,
         usesRealImageAcquisition = true,
         usesRealRecognition = true,
+        usesRealDrawData = true,
     )
 }

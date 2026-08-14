@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.dp
  * @param isDemo 是否展示开发阶段能力边界。
  * @param usesRealImageAcquisition 是否已接入真实图片采集。
  * @param usesRealRecognition 是否已接入真实本地 OCR。
+ * @param usesRealDrawData 是否已接入真实官网开奖查询。
  * @param onCamera 拍照操作。
  * @param onImport 图片导入操作。
  * @param onAbout 关于与隐私操作。
@@ -42,6 +43,7 @@ fun HomeScreen(
     isDemo: Boolean,
     usesRealImageAcquisition: Boolean,
     usesRealRecognition: Boolean,
+    usesRealDrawData: Boolean,
     onCamera: () -> Unit,
     onImport: () -> Unit,
     onAbout: () -> Unit,
@@ -55,7 +57,7 @@ fun HomeScreen(
         Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
             Column(modifier = Modifier.widthIn(max = 680.dp).fillMaxWidth()) {
                 if (isDemo) {
-                    DemoNotice(usesRealImageAcquisition, usesRealRecognition)
+                    DemoNotice(usesRealImageAcquisition, usesRealRecognition, usesRealDrawData)
                     Spacer(Modifier.height(24.dp))
                 }
                 Text("纸质彩票中奖测算", style = MaterialTheme.typography.displaySmall)
@@ -130,11 +132,13 @@ fun HomeScreen(
  *
  * @param usesRealImageAcquisition 是否已接入真实图片采集。
  * @param usesRealRecognition 是否已接入真实本地 OCR。
+ * @param usesRealDrawData 是否已接入真实官网开奖查询。
  */
 @Composable
 private fun DemoNotice(
     usesRealImageAcquisition: Boolean,
     usesRealRecognition: Boolean,
+    usesRealDrawData: Boolean,
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -144,6 +148,10 @@ private fun DemoNotice(
         Text(
             text =
                 when {
+                    usesRealRecognition && usesRealDrawData -> {
+                        "移动验证版：本地 OCR、人工确认、官网开奖结果查询和本地中奖测算已贯通；正式对账与数据授权尚未完成。"
+                    }
+
                     usesRealRecognition -> {
                         "识别 PoC：图片导入、本地 OCR 和保守解析已在本机运行；开奖结果仍为固定演示数据。"
                     }

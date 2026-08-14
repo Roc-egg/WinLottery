@@ -3,6 +3,8 @@ package roc.win.lottery.app
 import roc.win.lottery.Platform
 import roc.win.lottery.data.DrawRepository
 import roc.win.lottery.data.FakeDrawRepository
+import roc.win.lottery.domain.LotteryPrizeCalculator
+import roc.win.lottery.domain.PrizeCalculator
 import roc.win.lottery.domain.TicketValidator
 import roc.win.lottery.recognition.AppPaths
 import roc.win.lottery.recognition.ConservativeTicketParser
@@ -24,11 +26,13 @@ import roc.win.lottery.recognition.TicketRecognizer
  * @property ticketRecognizer 本地 OCR 能力。
  * @property ticketParser 票面结构解析能力。
  * @property drawRepository 开奖查询能力。
+ * @property prizeCalculator 本地中奖规则计算能力。
  * @property appPaths 临时文件管理能力。
  * @property ticketValidator 票面领域校验器。
- * @property isDemo 当前容器是否仍使用外部能力 Fake。
+ * @property isDemo 是否展示开发阶段能力边界。
  * @property usesRealImageAcquisition 图片采集是否由真实平台实现提供。
  * @property usesRealRecognition 本地 OCR 是否由真实平台实现提供。
+ * @property usesRealDrawData 开奖查询是否使用真实官网数据。
  */
 class AppContainer(
     val platform: Platform,
@@ -37,11 +41,13 @@ class AppContainer(
     val ticketRecognizer: TicketRecognizer,
     val ticketParser: TicketParser,
     val drawRepository: DrawRepository,
+    val prizeCalculator: PrizeCalculator,
     val appPaths: AppPaths,
     val ticketValidator: TicketValidator,
     val isDemo: Boolean,
     val usesRealImageAcquisition: Boolean,
     val usesRealRecognition: Boolean,
+    val usesRealDrawData: Boolean,
 ) {
     /** 创建无相机、无真实 OCR、无网络也能演示状态流的开发容器。 */
     companion object {
@@ -59,11 +65,13 @@ class AppContainer(
                 ticketRecognizer = FakeTicketRecognizer(),
                 ticketParser = ConservativeTicketParser(),
                 drawRepository = FakeDrawRepository(),
+                prizeCalculator = LotteryPrizeCalculator(),
                 appPaths = FakeAppPaths(),
                 ticketValidator = TicketValidator(),
                 isDemo = true,
                 usesRealImageAcquisition = false,
                 usesRealRecognition = false,
+                usesRealDrawData = false,
             )
     }
 }

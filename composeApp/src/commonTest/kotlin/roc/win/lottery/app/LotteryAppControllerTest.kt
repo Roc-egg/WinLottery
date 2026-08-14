@@ -2,10 +2,21 @@ package roc.win.lottery.app
 
 import kotlinx.coroutines.test.runTest
 import roc.win.lottery.Platform
+import roc.win.lottery.data.DrawQueryResult
 import roc.win.lottery.data.DrawRepository
 import roc.win.lottery.data.FakeDrawRepository
 import roc.win.lottery.domain.BetLineDraft
+import roc.win.lottery.domain.DrawPolicy
+import roc.win.lottery.domain.DrawResult
+import roc.win.lottery.domain.DrawStatus
+import roc.win.lottery.domain.Issue
+import roc.win.lottery.domain.LotteryPrizeCalculator
 import roc.win.lottery.domain.LotteryType
+import roc.win.lottery.domain.PrizeCheckStatus
+import roc.win.lottery.domain.PrizeTier
+import roc.win.lottery.domain.PrizeTierCodes
+import roc.win.lottery.domain.RuleVersion
+import roc.win.lottery.domain.SourceEvidence
 import roc.win.lottery.domain.TicketDraft
 import roc.win.lottery.domain.TicketValidator
 import roc.win.lottery.recognition.AppPaths
@@ -77,6 +88,104 @@ class LotteryAppControllerTest {
             assertEquals(1, repository.queryCount)
             assertEquals(listOf("b1-demo-ticket"), paths.deletedImageIds)
             assertIs<AppScreen.DemoComplete>(controller.uiState.value.screen)
+        }
+
+    /** 真实开奖查询成功后必须执行本地规则计算并展示逐注结果。 */
+    @Test
+    fun verifiedDrawProducesRealPrizeResult() =
+        runTest {
+            val repository = SequenceDrawRepository(DrawQueryResult.Success(verifiedDraw()))
+            val controller = createController(repository, usesRealDrawData = true)
+            controller.startAnalysis(ImageAcquisitionSource.SYSTEM_PICKER)
+
+            controller.confirmTicket()
+
+            val screen = assertIs<AppScreen.VerificationResult>(controller.uiState.value.screen)
+            assertEquals(PrizeCheckStatus.WIN, screen.prizeCheckResult.status)
+            assertEquals(
+                PrizeTierCodes.FIRST,
+                screen.prizeCheckResult.lineResults
+                    .single()
+                    .prizeTierCode,
+            )
+            assertEquals(1_800_000L, screen.prizeCheckResult.estimatedPrizeFen)
+            assertEquals("26091", screen.ticket.issue.value.value)
+            assertEquals(1, repository.queryCount)
+            assertEquals(LotteryType.SUPER_LOTTO, repository.lastLotteryType)
+            assertEquals(Issue("26091"), repository.lastIssue)
+        }
+
+    /** 号码终态可以判断奖级，但奖金未终态时绝不能展示确定金额。 */
+    @Test
+    fun finalNumbersKeepsWinningAmountUnknown() =
+        runTest {
+            val draw = verifiedDraw().copy(status = DrawStatus.FINAL_NUMBERS)
+            val controller =
+                createController(
+                    repository = SequenceDrawRepository(DrawQueryResult.Success(draw)),
+                    usesRealDrawData = true,
+                )
+            controller.startAnalysis(ImageAcquisitionSource.SYSTEM_PICKER)
+
+            controller.confirmTicket()
+
+            val screen = assertIs<AppScreen.VerificationResult>(controller.uiState.value.screen)
+            assertEquals(PrizeCheckStatus.WIN, screen.prizeCheckResult.status)
+            assertEquals(null, screen.prizeCheckResult.estimatedPrizeFen)
+            assertTrue(
+                screen.prizeCheckResult.message
+                    .orEmpty()
+                    .contains("待官方数据确认"),
+            )
+        }
+
+    /** 所有开奖不可用状态都必须保留票据，不能变成中奖结果或普通错误页。 */
+    @Test
+    fun unavailableDrawStatusesKeepTicketWithoutPrizeConclusion() =
+        runTest {
+            val statuses =
+                listOf(
+                    DrawStatus.NOT_PUBLISHED,
+                    DrawStatus.PUBLISHING,
+                    DrawStatus.NETWORK_UNAVAILABLE,
+                    DrawStatus.SOURCE_UNAVAILABLE,
+                    DrawStatus.CONFLICT,
+                )
+
+            statuses.forEach { status ->
+                val repository = SequenceDrawRepository(DrawQueryResult.Unavailable(status, "测试不可用状态"))
+                val controller = createController(repository, usesRealDrawData = true)
+                controller.startAnalysis(ImageAcquisitionSource.SYSTEM_PICKER)
+
+                controller.confirmTicket()
+
+                val screen = assertIs<AppScreen.DrawUnavailable>(controller.uiState.value.screen)
+                assertEquals(status, screen.status)
+                assertEquals("26091", screen.ticket.issue.value.value)
+                assertEquals(1, repository.queryCount)
+            }
+        }
+
+    /** 官网暂时不可用后应使用原确认票据重试，并在成功后完成真实测算。 */
+    @Test
+    fun unavailableDrawCanRetryWithConfirmedTicket() =
+        runTest {
+            val repository =
+                SequenceDrawRepository(
+                    DrawQueryResult.Unavailable(DrawStatus.NETWORK_UNAVAILABLE, "测试网络不可用"),
+                    DrawQueryResult.Success(verifiedDraw()),
+                )
+            val controller = createController(repository, usesRealDrawData = true)
+            controller.startAnalysis(ImageAcquisitionSource.SYSTEM_PICKER)
+            controller.confirmTicket()
+            assertIs<AppScreen.DrawUnavailable>(controller.uiState.value.screen)
+
+            controller.retryDrawQuery()
+
+            val screen = assertIs<AppScreen.VerificationResult>(controller.uiState.value.screen)
+            assertEquals("26091", screen.ticket.issue.value.value)
+            assertEquals(PrizeCheckStatus.WIN, screen.prizeCheckResult.status)
+            assertEquals(2, repository.queryCount)
         }
 
     /** 非法人工校正必须停留在当前页面，且不得查询开奖或清理票图。 */
@@ -280,6 +389,7 @@ class LotteryAppControllerTest {
         repository: DrawRepository,
         appPaths: AppPaths = FakeAppPaths(),
         usesRealRecognition: Boolean = false,
+        usesRealDrawData: Boolean = false,
         ticketRecognizer: TicketRecognizer = FakeTicketRecognizer(),
         imageAcquirer: ImageAcquirer = FakeImageAcquirer(supportsCamera = false),
         imageQualityAnalyzer: ImageQualityAnalyzer = ImageDimensionQualityAnalyzer(),
@@ -301,11 +411,13 @@ class LotteryAppControllerTest {
                 ticketRecognizer = ticketRecognizer,
                 ticketParser = ticketParser,
                 drawRepository = repository,
+                prizeCalculator = LotteryPrizeCalculator(),
                 appPaths = appPaths,
                 ticketValidator = TicketValidator(),
                 isDemo = true,
                 usesRealImageAcquisition = false,
                 usesRealRecognition = usesRealRecognition,
+                usesRealDrawData = usesRealDrawData,
             ),
         )
     }
@@ -328,6 +440,77 @@ class LotteryAppControllerTest {
             periodCount = 1,
             paidAmountFen = 300L,
         )
+
+    /** 创建与合法测试票完全匹配的双证据大乐透开奖结果。 */
+    private fun verifiedDraw(): DrawResult =
+        DrawResult(
+            lotteryType = LotteryType.SUPER_LOTTO,
+            issue = Issue("26091"),
+            drawDate = "2026-08-12",
+            primaryNumbers = listOf(2, 7, 14, 21, 33),
+            secondaryNumbers = listOf(4, 9),
+            status = DrawStatus.FINAL_PAYOUT,
+            revision = 1,
+            ruleVersion = RuleVersion.DLT_2026_01.code,
+            policy = DrawPolicy.STANDARD,
+            prizeTiers =
+                listOf(
+                    PrizeTier(
+                        code = PrizeTierCodes.FIRST,
+                        displayName = "一等奖",
+                        singlePrizeFen = 1_000_000L,
+                        additionalPrizeFen = 800_000L,
+                    ),
+                ),
+            evidence =
+                SourceEvidence(
+                    sourceName = "测试主源",
+                    sourceUrl = "https://example.invalid/main",
+                    fetchedAtEpochMillis = 1L,
+                    contentSha256 = "main-hash",
+                ),
+            supportingEvidence =
+                listOf(
+                    SourceEvidence(
+                        sourceName = "测试辅助源",
+                        sourceUrl = "https://example.invalid/supporting",
+                        fetchedAtEpochMillis = 1L,
+                        contentSha256 = "supporting-hash",
+                    ),
+                ),
+        )
+
+    /** 按顺序返回预置查询结果并记录查询次数。 */
+    private class SequenceDrawRepository(
+        vararg results: DrawQueryResult,
+    ) : DrawRepository {
+        /** 查询时依次消费的预置结果。 */
+        private val results = results.toList().also { require(it.isNotEmpty()) }
+
+        /** 已触发的单期查询次数。 */
+        var queryCount: Int = 0
+            private set
+
+        /** 最近一次查询收到的彩种。 */
+        var lastLotteryType: LotteryType? = null
+            private set
+
+        /** 最近一次查询收到的精确期号。 */
+        var lastIssue: Issue? = null
+            private set
+
+        /** 返回当前预置结果，超出数量时继续返回最后一项。 */
+        override suspend fun getDraw(
+            lotteryType: LotteryType,
+            issue: Issue,
+        ): DrawQueryResult {
+            lastLotteryType = lotteryType
+            lastIssue = issue
+            val result = results[minOf(queryCount, results.lastIndex)]
+            queryCount += 1
+            return result
+        }
+    }
 
     /** 记录调用次数并委托给固定演示仓库。 */
     private class CountingDrawRepository : DrawRepository {
