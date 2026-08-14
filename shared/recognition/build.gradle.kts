@@ -48,6 +48,7 @@ kotlin {
         }
         jvmMain.dependencies {
             implementation(libs.kotlinx.coroutinesSwing)
+            implementation(libs.kotlinx.serializationJson)
             implementation(libs.onnxruntime)
         }
     }

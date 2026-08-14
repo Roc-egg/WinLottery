@@ -1,0 +1,139 @@
+{
+  "schemaVersion": 1,
+  "bundleId": "paddleocr-3.7.0-ppocrv5-mobile-opset17",
+  "resourceRoot": "roc/win/lottery/recognition/models/ppocrv5",
+  "conversion": {
+    "platform": "darwin-arm64",
+    "pythonVersion": "3.9.6",
+    "paddlePaddleVersion": "3.0.0",
+    "paddle2OnnxVersion": "2.1.0",
+    "onnxVersion": "1.17.0",
+    "packagingVersion": "24.2",
+    "pyYamlVersion": "6.0.3",
+    "opsetVersion": 17,
+    "enableAutoUpdateOpset": false,
+    "enableOnnxChecker": true,
+    "optimizeTool": "None"
+  },
+  "licenses": [
+    {
+      "component": "PaddleOCR models",
+      "spdx": "Apache-2.0",
+      "url": "https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/v3.7.0/LICENSE",
+      "sha256": "3840c5c0c61c294264d2dd77b8777be6ddd90121ef4e0e64abcd22edea581d6e"
+    },
+    {
+      "component": "Paddle2ONNX",
+      "spdx": "Apache-2.0",
+      "url": "https://raw.githubusercontent.com/PaddlePaddle/Paddle2ONNX/v2.1.0/LICENSE",
+      "sha256": "ba77dd623b6441638120d06f0426db80f9032c457dac18f4ad8f1f06fd97e2db"
+    }
+  ],
+  "dictionary": {
+    "source": {
+      "url": "https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/v3.7.0/ppocr/utils/dict/ppocrv5_dict.txt",
+      "fileName": "ppocrv5_dict.txt",
+      "byteCount": 74012,
+      "sha256": "d1979e9f794c464c0d2e0b70a7fe14dd978e9dc644c0e71f14158cdf8342af1b"
+    },
+    "resourceFile": "characters.txt",
+    "byteCount": 74012,
+    "sha256": "d1979e9f794c464c0d2e0b70a7fe14dd978e9dc644c0e71f14158cdf8342af1b",
+    "lineCount": 18383
+  },
+  "models": [
+    {
+      "id": "detection",
+      "upstreamName": "PP-OCRv5_mobile_det",
+      "source": {
+        "url": "https://paddle-model-ecology.bj.bcebos.com/paddlex/official_inference_model/paddle3.0.0/PP-OCRv5_mobile_det_infer.tar",
+        "fileName": "PP-OCRv5_mobile_det_infer.tar",
+        "modelDirectory": "PP-OCRv5_mobile_det_infer",
+        "byteCount": 4935680,
+        "sha256": "50446e5d01ac2a73d5319c89513281f6578414c888c602f9af13f93feefffc58"
+      },
+      "resourceFile": "detection.onnx",
+      "byteCount": 4766440,
+      "sha256": "c8d9b07063420ce5365c74e42532de48238feeeedcdb7a330b195708bc38a93f",
+      "irVersion": 8,
+      "nodeCount": 925,
+      "input": {
+        "name": "x",
+        "shape": [-1, 3, -1, -1]
+      },
+      "output": {
+        "name": "fetch_name_0",
+        "shape": [-1, 1, -1, -1]
+      },
+      "syntheticParity": {
+        "inputShape": [1, 3, 64, 64],
+        "elementCount": 4096,
+        "relativeTolerance": 0.0001,
+        "absoluteTolerance": 0.00001,
+        "maxAbsoluteError": 0.000000109456266
+      }
+    },
+    {
+      "id": "orientation",
+      "upstreamName": "PP-LCNet_x0_25_textline_ori",
+      "source": {
+        "url": "https://paddle-model-ecology.bj.bcebos.com/paddlex/official_inference_model/paddle3.0.0/PP-LCNet_x0_25_textline_ori_infer.tar",
+        "fileName": "PP-LCNet_x0_25_textline_ori_infer.tar",
+        "modelDirectory": "PP-LCNet_x0_25_textline_ori_infer",
+        "byteCount": 1095680,
+        "sha256": "268d9aea61461c3d4a5a32752e5b920e8af2ee0a002362f6ba5cd39638fa2c3a"
+      },
+      "resourceFile": "orientation.onnx",
+      "byteCount": 1016850,
+      "sha256": "4d6027cad43b04171d6eafa20e7342fea7a657724e96d642564392b6df1e9768",
+      "irVersion": 8,
+      "nodeCount": 282,
+      "input": {
+        "name": "x",
+        "shape": [-1, 3, 80, 160]
+      },
+      "output": {
+        "name": "fetch_name_0",
+        "shape": [-1, 2]
+      },
+      "syntheticParity": {
+        "inputShape": [1, 3, 80, 160],
+        "elementCount": 2,
+        "relativeTolerance": 0.0001,
+        "absoluteTolerance": 0.00001,
+        "maxAbsoluteError": 0.000000730156898
+      }
+    },
+    {
+      "id": "recognition",
+      "upstreamName": "PP-OCRv5_mobile_rec",
+      "source": {
+        "url": "https://paddle-model-ecology.bj.bcebos.com/paddlex/official_inference_model/paddle3.0.0/PP-OCRv5_mobile_rec_infer.tar",
+        "fileName": "PP-OCRv5_mobile_rec_infer.tar",
+        "modelDirectory": "PP-OCRv5_mobile_rec_infer",
+        "byteCount": 16834560,
+        "sha256": "566b9512b34e34a9f0db54d87b51fa5a0b9ed2cf1ab7e49728cc0b8b5a64f414"
+      },
+      "resourceFile": "recognition.onnx",
+      "byteCount": 16529870,
+      "sha256": "bcb195e3463eb9e46ef419b8a01ea4729577de5fd63c64f0a762e43bd64256e7",
+      "irVersion": 8,
+      "nodeCount": 922,
+      "input": {
+        "name": "x",
+        "shape": [-1, 3, 48, -1]
+      },
+      "output": {
+        "name": "fetch_name_0",
+        "shape": [-1, -1, 18385]
+      },
+      "syntheticParity": {
+        "inputShape": [1, 3, 48, 160],
+        "elementCount": 367700,
+        "relativeTolerance": 0.0001,
+        "absoluteTolerance": 0.00001,
+        "maxAbsoluteError": 0.0000742673874
+      }
+    }
+  ]
+}

@@ -4,7 +4,7 @@
 
 ## 状态结论
 
-B3 已打通 Android 和 iOS 的“系统选图 → 私有去元数据副本 → 本地 OCR → 共享保守解析 → PoC 核对页”纵向链路，并完成两端应用内相机实现；Android CameraX 和 iOS AVFoundation 的核心拍照流程均已通过真机闭环。iOS 横竖屏、闪光灯模式和拒绝权限分支仍待补测。Windows/macOS 已接入共用的“系统文件选择 → 私有去元数据副本 → 明确 OCR 阻断”链路，并加入 ONNX Runtime 依赖、加载探针和独立本地工作进程；macOS 最终分发启动器已验证由父进程在运行时初始化前禁用遥测并加载 CPU Provider。PP-OCR 模型和 Windows 分发实机验收尚未完成。B3 尚未通过验收，桌面真实 OCR、图片质量与几何校正、真值标注、准确率统计和干净系统连续识别仍未完成。
+B3 已打通 Android 和 iOS 的“系统选图 → 私有去元数据副本 → 本地 OCR → 共享保守解析 → PoC 核对页”纵向链路，并完成两端应用内相机实现；Android CameraX 和 iOS AVFoundation 的核心拍照流程均已通过真机闭环。iOS 横竖屏、闪光灯模式和拒绝权限分支仍待补测。Windows/macOS 已接入共用的“系统文件选择 → 私有去元数据副本 → 明确 OCR 阻断”链路，并加入 ONNX Runtime 依赖、加载探针和独立本地工作进程；macOS 最终分发启动器已验证由父进程在运行时初始化前禁用遥测并加载 CPU Provider。PP-OCRv5 官方来源锁定、可复现转换和数值一致性验证已完成，但转换模型尚未进入安装包或图片推理协议，Windows 分发实机验收也未完成。B3 尚未通过验收，桌面真实 OCR、图片质量与几何校正、真值标注、准确率统计和干净系统连续识别仍未完成。
 
 当前支持白名单保持为空。本进展不能解释为支持任何省份、销售终端、版式或真实中奖判断。
 
@@ -40,7 +40,11 @@ B3 已打通 Android 和 iOS 的“系统选图 → 私有去元数据副本 →
 - 桌面入口在创建 UI 前识别内部工作模式；新增 `verifyPackagedOnnxRuntime` Gradle 任务，对 Compose 最终分发启动器、精简 JDK 21 runtime 和分发 JAR 执行父子进程验收。
 - macOS arm64 的最终 `.app` 已在父进程明确未禁用遥测时通过验收，确认子进程覆盖为禁用状态后可加载 1.29.0 和 CPU Provider；任务支持 Gradle configuration cache，最终 `.app` 通过 `codesign --verify --deep --strict`。
 - 分发 JAR 已核实包含 macOS arm64 动态库、Windows x64 DLL、`Privacy.md` 和 `ThirdPartyNotices.txt`。官方 Maven JAR 仍包含其他平台原生库和 macOS dSYM，当前没有按目标平台裁剪。
-- PP-OCRv5 ONNX 尚未接入。真实图片导入后返回明确能力错误，不会调用 Fake OCR 或进入 Fake 开奖流程。
+- 固定 PaddleOCR `v3.7.0` 的检测、文本行方向和识别三份官方 Paddle 推理模型及 18,383 行字典；源归档和字典均记录 URL、字节数与 SHA-256。
+- 固定 macOS arm64、Python `3.9.6`、PaddlePaddle `3.0.0`、Paddle2ONNX `2.1.0`、ONNX `1.17.0`、PyYAML `6.0.3` 和 `packaging 24.2`，所有 wheel 使用哈希锁；转换固定 opset 17、关闭自动升级、开启 checker 并明确使用 `--optimize_tool None`。
+- 三份 ONNX 均通过 checker、严格形状推导和 ONNX Runtime Java `1.29.0` CPU Session 加载；使用非彩票确定性合成张量逐元素比较 Paddle 与 ONNX 输出，检测、方向、识别的最大绝对误差分别为 `1.09456266e-7`、`7.30156898e-7`、`7.42673874e-5`，均通过 `rtol=1e-4`、`atol=1e-5`。
+- 增加包内 `model-lock.json`、Kotlin 严格解析和路径穿越拒绝测试，以及完全离线、可重复执行的转换工具；普通 Gradle 构建不会联网下载模型。
+- 转换后的 ONNX 二进制尚未纳入仓库或分发包，真实图片导入后仍返回明确能力错误，不会调用 Fake OCR 或进入 Fake 开奖流程。
 
 ### 共享流程
 
@@ -71,9 +75,9 @@ B3 已打通 Android 和 iOS 的“系统选图 → 私有去元数据副本 →
 - iOS AVFoundation 应用内相机的横竖屏、闪光灯模式和拒绝权限分支真机验收。
 - 图片模糊、过曝、裁切、透视、阴影和反光质量检测。
 - 彩票边缘检测、旋转、透视校正、增强候选图和号码区域二次识别。
-- PP-OCRv5 ONNX 三段模型、ZXing，以及 Windows 干净系统文件导入验证。
+- PP-OCRv5 三段 ONNX 的资源分发、加载前哈希校验、图片预处理、检测后处理、方向校正、CTC 解码、ZXing，以及 Windows 干净系统文件导入验证。
 - Windows x64 最终分发启动器尚未执行同一父子进程验收；自构建 `--no_telemetry` 制品仍可作为后续纵深防护评估项。
-- 当前工作进程只支持运行时健康检查，尚未定义图片推理请求、受控临时路径校验、OCR 结果 IPC 和进程异常恢复。
+- 当前工作进程只支持运行时健康检查，尚未定义模型 Session 生命周期、图片推理请求、受控临时路径校验、OCR 结果 IPC 和进程异常恢复。
 - ONNX Runtime 目标平台裁剪、正式许可证归档、公证和卸载验证。
 - 原图与低置信度字段对照、号码编辑器和人工确认，属于 B4。
 - OCR 置信度平台校准、准确率统计、四端差异评估和连续识别性能测试。
@@ -87,14 +91,15 @@ B3 已打通 Android 和 iOS 的“系统选图 → 私有去元数据副本 →
 
 ## 本轮构建基线
 
-- 完整命令 `spotlessCheck jvmTest testAndroidHostTest iosSimulatorArm64Test :androidApp:assembleDebug :desktopApp:packageDmg :desktopApp:verifyPackagedOnnxRuntime :composeApp:linkDebugFrameworkIosSimulatorArm64 --rerun-tasks --console=plain` 执行成功，共 192 个 Gradle 任务。
-- 自动化测试按当前 Gradle 模块统计共 354 项：JVM 122 项、Android Host 120 项、iOS Simulator 112 项；失败、错误和跳过均为 0。旧基线误计的重复测试口径已纠正，本轮新增 3 项工作进程测试。
+- 完整命令 `spotlessCheck jvmTest testAndroidHostTest iosSimulatorArm64Test :androidApp:assembleDebug :desktopApp:packageDmg :desktopApp:verifyPackagedOnnxRuntime :composeApp:linkDebugFrameworkIosSimulatorArm64 --rerun-tasks --console=plain` 执行成功，共 193 个 Gradle 任务。
+- 自动化测试按当前 Gradle 模块统计共 356 项：JVM 124 项、Android Host 120 项、iOS Simulator 112 项；失败、错误和跳过均为 0。模型锁新增 2 项 JVM 测试。
 - Xcode `iosApp` Scheme 的 iOS Simulator Debug 构建成功；iPhone Debug 包完成自动签名、安装和启动。
 - Android Debug APK：61,998,602 字节，SHA-256 `2bdcf8526425a460d1ad7d1dab2846f9940cf8452767548aa4d6dfc32df17efa`。
-- macOS DMG：138,157,274 字节，SHA-256 `3757e14e2bcac5210e2e3fa7b1f85e51a340b4669d0d713baae34c8dbc28898e`。
+- macOS DMG：138,120,605 字节，SHA-256 `3cbc5009471b887a90ac7ffb12990e4fb1cad8c96be8d6aa5b8f7287fdae4edf`。
 - iOS Simulator Debug Framework 主二进制：283,351,360 字节，SHA-256 `c8e8c97e468569572b5bae8518cf8b9432bc9e6348d09e57a3ba99bab6ad7084`。
-- ONNX Runtime Maven 原始 JAR：54,400,660 字节，SHA-256 `5933bbc0c6c4d89afc04bf7c11011de23a947509c1352e5bf5936e62a84e4d10`；Compose 分发目录中的重打包 JAR 为 55,528,543 字节，本轮 SHA-256 `03d25b435e12d9ceb456428875db762e42bf37d07649b0686dc4681fc1b70e31`。
-- 相比接入前 82,687,210 字节的 DMG，本轮增加 55,470,064 字节，约 55.5 MB；主要风险是官方全平台 JAR 尚未裁剪，不能作为最终发布包体积。
+- ONNX Runtime Maven 原始 JAR：54,400,660 字节，SHA-256 `5933bbc0c6c4d89afc04bf7c11011de23a947509c1352e5bf5936e62a84e4d10`；Compose 分发目录中的重打包 JAR 为 55,528,543 字节，本轮 SHA-256 `1036faa5e3d5fd37dafc68cc0a7bfefbdbbebafb03c1d6afc86fd8f45ef2f389`。
+- 分发 `recognition` JAR 已包含 4,744 字节的 `model-lock.json`，但不包含 `.onnx` 或字符字典；这与当前“锁定转换已完成、模型分发未启用”的能力边界一致。
+- 相比接入前 82,687,210 字节的 DMG，本轮增加 55,433,395 字节，约 55.4 MB；主要风险是官方全平台 JAR 尚未裁剪，不能作为最终发布包体积。
 - 以上均为 2026-08-14 开发构建基线，包含调试符号或运行时，不能作为发布包体积承诺。
 
 ## 下一步
@@ -102,5 +107,5 @@ B3 已打通 Android 和 iOS 的“系统选图 → 私有去元数据副本 →
 1. 补测 iOS 真机相机的横竖屏、闪光灯三种模式和拒绝权限分支，并用非票面图片确认 OCR 质量阻断。
 2. 补齐大乐透单期基本票、单期追加票及当前双色球版式样本，并建立脱敏真值台账。
 3. 在现有分辨率闸门上建立可量化的模糊、曝光、阴影、反光、透视和裁切检测，并完成预处理候选对比。
-4. 下载并转换 PP-OCR 三段模型，固定源文件、字典、转换命令和 SHA-256，先用非票面金样本验证 ONNX 输出一致性，再扩展工作进程的受控图片推理协议。
+4. 将锁定模型接入分发资源，加载前校验字节数和 SHA-256；在独立工作进程中实现受控图片请求、预处理、三段推理、后处理和 OCR 结果 IPC。
 5. 对 ONNX Runtime、模型和字典做目标平台裁剪与许可证归档，在 Windows 10/11 x64 执行同一无遥测分发验收，并在两端干净系统验证打包及连续识别。

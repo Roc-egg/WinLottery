@@ -275,6 +275,7 @@ Desktop 首轮 PoC 使用以下有官方来源的组合，只有通过 B3 后才
 - PaddleOCR 仓库 `v3.7.0` 的 PP-OCRv5 mobile 三段模型：`PP-OCRv5_mobile_det`、`PP-LCNet_x0_25_textline_ori`、`PP-OCRv5_mobile_rec`。
 - 识别字典使用同一版本的 `ppocr/utils/dict/ppocrv5_dict.txt`，当前为 18,383 行；字典顺序必须与模型一致，不得自行删减或重排。
 - 官方发布的是 Paddle 推理模型，不是 ONNX。使用 Paddle2ONNX `v2.1.0` 转换，PoC 固定转换命令、opset、转换日志、源文件和 ONNX 文件 SHA-256，并执行 ONNX checker 和金样本输出对比；禁止使用来源不明的社区 ONNX。
+- 仓库通过 `model-lock.json` 同时向转换工具和 JVM 运行时提供单一模型锁，固定 macOS arm64、Python `3.9.6`、PaddlePaddle `3.0.0`、ONNX `1.17.0`、opset 17、关闭自动升级并明确禁用外部优化器；普通 Gradle 构建不联网下载模型，转换产物只有哈希完全一致才允许进入后续分发验证。
 - JVM 推理候选为 `com.microsoft.onnxruntime:onnxruntime:1.29.0` 的 CPU 执行提供器。官方 JAR 已核实包含 Windows x64 和 macOS arm64 原生库；B3 必须验证 Compose 打包、签名、公证以及是否剔除无关平台原生库。
 - 该版本官方 `Privacy.md` 明确说明受支持平台的官方二进制默认开启遥测。项目必须在原生库初始化前设置 `ORT_DISABLE_TELEMETRY=1`，或改用通过 `--no_telemetry` 构建并完成供应链记录的目标平台制品；只在初始化后调用关闭 API 不满足本项目的本地处理边界。Windows/macOS 产品启动器完成并验证该约束前，不得启用真实桌面 OCR。
 - Desktop PoC 采用独立本地工作进程隔离 ONNX Runtime：普通 UI 主进程不加载运行时，父进程在创建子进程时注入 `ORT_DISABLE_TELEMETRY=1`，子进程随后再次调用关闭遥测 API。运行时健康检查协议只返回版本和执行提供器，拒绝额外输出；macOS arm64 分发启动器已通过该路径，Windows x64 仍需在实际分发包中验收。

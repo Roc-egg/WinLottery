@@ -22,6 +22,8 @@ jobs:
           cache: gradle
       - name: 配置 Gradle
         uses: gradle/actions/setup-gradle@v4
+      - name: 校验 Desktop OCR 模型锁
+        run: python3 tools/desktop-ocr/convert_ppocrv5.py --verify-lock-only
       - name: 运行格式检查和共享测试矩阵
         run: ./gradlew spotlessCheck jvmTest testAndroidHostTest iosSimulatorArm64Test
       - name: 构建 Android 调试包
