@@ -8,8 +8,8 @@ import roc.win.lottery.domain.TicketDraft
 /**
  * 从平台标准 OCR 行中保守提取 V1 单式票字段。
  *
- * 解析器只接受能够由票面原文直接证明的值。多期、补打、复式、胆拖、疑似字符混淆和金额矛盾
- * 都会被明确阻断，不会为了通过领域校验而猜测或修正号码。
+ * 解析器只接受能够由票面原文直接证明的值。多期、补打、复式、胆拖、疑似字符混淆会被明确阻断；
+ * 只有彩种与投注结构已经确定时，缺失期号、缺失金额或金额矛盾才会携带草稿进入人工校正。
  */
 class ConservativeTicketParser : TicketParser {
     /** 解析一份标准 OCR 文档，并返回等待确认或明确阻断状态。 */
@@ -38,9 +38,11 @@ class ConservativeTicketParser : TicketParser {
             return TicketParseResult.Unsupported("识别到${explicitPeriodCount}期投注，V1 仅支持单期彩票")
         }
 
-        val issue =
-            extractSingleIssue(rows, lotteryType)
-                ?: return TicketParseResult.NeedsCorrection("期号缺失、格式错误或存在多个候选值")
+        val issueCandidates = extractIssueCandidates(rows, lotteryType)
+        if (issueCandidates.size > 1) {
+            return TicketParseResult.NeedsCorrection("识别到多个开奖期号，请重新拍摄或人工核对")
+        }
+        val issue = issueCandidates.singleOrNull().orEmpty()
         val parsedBets =
             when (val result = parseBetRows(rows, lotteryType)) {
                 is BetRowsResult.Success -> result.rows
@@ -60,9 +62,11 @@ class ConservativeTicketParser : TicketParser {
                     false
                 }
             }
-        val paidAmountFen =
-            extractPaidAmountFen(rows)
-                ?: return TicketParseResult.NeedsCorrection("票面合计金额缺失、格式错误或存在多个候选值")
+        val paidAmountCandidates = extractPaidAmountCandidates(rows)
+        if (paidAmountCandidates.size > 1) {
+            return TicketParseResult.NeedsCorrection("识别到多个票面合计金额，请重新拍摄或人工核对")
+        }
+        val paidAmountFen = paidAmountCandidates.singleOrNull()
         val periodCount = explicitPeriodCount ?: V1_PERIOD_COUNT
         val expectedAmountFen =
             TicketAmountCalculator.calculate(
@@ -72,11 +76,8 @@ class ConservativeTicketParser : TicketParser {
                 multiplier = multiplier,
                 periodCount = periodCount,
             )
-        if (expectedAmountFen == null || expectedAmountFen != paidAmountFen) {
-            return TicketParseResult.NeedsCorrection("票面金额与投注行、倍数、期数或追加属性不一致")
-        }
-
-        return TicketParseResult.ReadyForReview(
+                ?: return TicketParseResult.NeedsCorrection("无法根据当前投注结构计算金额")
+        val draft =
             TicketDraft(
                 lotteryType = lotteryType,
                 issue = issue,
@@ -92,8 +93,26 @@ class ConservativeTicketParser : TicketParser {
                 multiplier = multiplier,
                 periodCount = periodCount,
                 paidAmountFen = paidAmountFen,
-            ),
-        )
+            )
+        val correctionMessages =
+            buildList {
+                if (issue.isEmpty()) {
+                    add("期号缺失或格式错误，请在票面校正页补充")
+                }
+                if (paidAmountFen == null) {
+                    add("票面合计金额缺失或格式错误，请在票面校正页补充")
+                } else if (expectedAmountFen != paidAmountFen) {
+                    add("票面金额与投注行、倍数、期数或追加属性不一致")
+                }
+            }
+        if (correctionMessages.isNotEmpty()) {
+            return TicketParseResult.NeedsCorrection(
+                message = correctionMessages.joinToString(separator = "；"),
+                draft = draft,
+            )
+        }
+
+        return TicketParseResult.ReadyForReview(draft)
     }
 
     /**
@@ -209,11 +228,11 @@ class ConservativeTicketParser : TicketParser {
                     ?.toIntOrNull()
             }.toSet()
 
-    /** 提取与彩种长度一致且唯一的开奖期号。 */
-    private fun extractSingleIssue(
+    /** 提取所有与彩种长度一致的开奖期号候选，交由主流程判断缺失或冲突。 */
+    private fun extractIssueCandidates(
         rows: List<VisualRow>,
         lotteryType: LotteryType,
-    ): String? {
+    ): Set<String> {
         val regex =
             when (lotteryType) {
                 LotteryType.SUPER_LOTTO -> SUPER_LOTTO_ISSUE_REGEX
@@ -223,9 +242,12 @@ class ConservativeTicketParser : TicketParser {
             rows
                 .asSequence()
                 .map { it.text.normalizedForParsing() }
-                .mapNotNull { text -> regex.find(text)?.groupValues?.get(1) }
-                .toSet()
-        return candidates.singleOrNull()
+                .flatMap { text ->
+                    regex
+                        .findAll(text)
+                        .map { match -> match.groupValues[1] }
+                }.toSet()
+        return candidates
     }
 
     /** 解析所有外观上属于投注号码的行，并对数量、范围和顺序执行严格校验。 */
@@ -330,20 +352,18 @@ class ConservativeTicketParser : TicketParser {
         return additionalValues.singleOrNull()
     }
 
-    /** 提取带“合计”锚点的唯一金额，并精确转换为分。 */
-    private fun extractPaidAmountFen(rows: List<VisualRow>): Long? {
+    /** 提取所有带“合计”锚点的金额候选，并精确转换为分。 */
+    private fun extractPaidAmountCandidates(rows: List<VisualRow>): Set<Long> {
         val candidates =
             rows
                 .asSequence()
                 .map { it.text.normalizedForParsing() }
-                .mapNotNull { text ->
+                .flatMap { text ->
                     TOTAL_AMOUNT_REGEX
-                        .find(text)
-                        ?.groupValues
-                        ?.get(1)
-                        ?.toFenOrNull()
+                        .findAll(text)
+                        .mapNotNull { match -> match.groupValues[1].toFenOrNull() }
                 }.toSet()
-        return candidates.singleOrNull()
+        return candidates
     }
 
     /** 把平台可能输出的全角字符归一化，但不替换形似数字的字母。 */

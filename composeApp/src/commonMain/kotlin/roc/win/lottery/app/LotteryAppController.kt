@@ -167,7 +167,16 @@ class LotteryAppController(
                 }
                 when (val parsed = container.ticketParser.parse(recognition.document)) {
                     is TicketParseResult.NeedsCorrection -> {
-                        showError("需要人工修正", parsed.message, generation)
+                        val draft = parsed.draft
+                        if (draft == null) {
+                            showError("需要人工修正", parsed.message, generation)
+                        } else if (generation == flowGeneration) {
+                            mutableUiState.update {
+                                it.copy(
+                                    screen = createReviewScreen(draft, acquisition.imageRef),
+                                )
+                            }
+                        }
                     }
 
                     is TicketParseResult.Unsupported -> {

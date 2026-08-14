@@ -108,9 +108,11 @@ sealed interface TicketParseResult {
      * 关键字段不完整或不合法，需要人工重新处理。
      *
      * @property message 面向用户的修正说明。
+     * @property draft 已安全解析的可编辑草稿；无法保证票型或投注结构时为 `null`。
      */
     data class NeedsCorrection(
         val message: String,
+        val draft: TicketDraft? = null,
     ) : TicketParseResult
 }
 

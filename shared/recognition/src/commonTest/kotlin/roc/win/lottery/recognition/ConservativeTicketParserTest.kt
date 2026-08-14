@@ -5,6 +5,8 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /** 基于真实票样结构最小化后的保守票面解析测试。 */
@@ -349,7 +351,47 @@ class ConservativeTicketParserTest {
         assertIs<TicketParseResult.ReadyForReview>(result)
     }
 
-    /** 金额与号码、倍数不一致时应要求核对，不能反推并覆盖票面字段。 */
+    /** 期号缺失但票型和投注结构完整时应携带草稿进入人工校正。 */
+    @Test
+    fun missingIssueProvidesRecoverableDraft() {
+        val result =
+            parser.parse(
+                document(
+                    "超级大乐透",
+                    "单式票 1倍 合计2元",
+                    "① 01 07 14 22 35 + 03 11",
+                ),
+            )
+
+        val correction = assertIs<TicketParseResult.NeedsCorrection>(result)
+        val draft = assertNotNull(correction.draft)
+        assertTrue(correction.message.contains("期号"))
+        assertEquals("", draft.issue)
+        assertEquals(1, draft.betLines.size)
+        assertEquals(200L, draft.paidAmountFen)
+    }
+
+    /** 金额缺失但其他关键字段可靠时应保留已解析字段供用户补充。 */
+    @Test
+    fun missingAmountProvidesRecoverableDraft() {
+        val result =
+            parser.parse(
+                document(
+                    "超级大乐透",
+                    "第26999期",
+                    "单式票 1倍",
+                    "① 01 07 14 22 35 + 03 11",
+                ),
+            )
+
+        val correction = assertIs<TicketParseResult.NeedsCorrection>(result)
+        val draft = assertNotNull(correction.draft)
+        assertTrue(correction.message.contains("金额"))
+        assertEquals("26999", draft.issue)
+        assertNull(draft.paidAmountFen)
+    }
+
+    /** 金额与号码、倍数不一致时应保留票面值供人工核对，不能反推并覆盖。 */
     @Test
     fun inconsistentAmountRequiresCorrection() {
         val result =
@@ -364,6 +406,81 @@ class ConservativeTicketParserTest {
 
         val correction = assertIs<TicketParseResult.NeedsCorrection>(result)
         assertTrue(correction.message.contains("金额"))
+        assertEquals(2_000L, assertNotNull(correction.draft).paidAmountFen)
+    }
+
+    /** 多个期号候选可能代表不同彩票，不得任选或生成可恢复草稿。 */
+    @Test
+    fun conflictingIssuesDoNotProvideDraft() {
+        val result =
+            parser.parse(
+                document(
+                    "超级大乐透",
+                    "第26999期 第26998期",
+                    "单式票 1倍 合计2元",
+                    "① 01 07 14 22 35 + 03 11",
+                ),
+            )
+
+        val correction = assertIs<TicketParseResult.NeedsCorrection>(result)
+        assertTrue(correction.message.contains("多个开奖期号"))
+        assertNull(correction.draft)
+    }
+
+    /** 多个合计金额候选存在歧义时不得任选或生成可恢复草稿。 */
+    @Test
+    fun conflictingAmountsDoNotProvideDraft() {
+        val result =
+            parser.parse(
+                document(
+                    "超级大乐透",
+                    "第26999期",
+                    "单式票 1倍 合计2元",
+                    "总计4元",
+                    "① 01 07 14 22 35 + 03 11",
+                ),
+            )
+
+        val correction = assertIs<TicketParseResult.NeedsCorrection>(result)
+        assertTrue(correction.message.contains("多个票面合计金额"))
+        assertNull(correction.draft)
+    }
+
+    /** 倍数无法确定时不能用默认一倍生成可恢复草稿。 */
+    @Test
+    fun missingMultiplierDoesNotProvideDraft() {
+        val result =
+            parser.parse(
+                document(
+                    "超级大乐透",
+                    "第26999期",
+                    "单式票 合计2元",
+                    "① 01 07 14 22 35 + 03 11",
+                ),
+            )
+
+        val correction = assertIs<TicketParseResult.NeedsCorrection>(result)
+        assertTrue(correction.message.contains("倍数"))
+        assertNull(correction.draft)
+    }
+
+    /** 大乐透追加属性存在冲突时不能默认成基本投注生成草稿。 */
+    @Test
+    fun conflictingAdditionalStateDoesNotProvideDraft() {
+        val result =
+            parser.parse(
+                document(
+                    "超级大乐透",
+                    "第26999期",
+                    "单式票 1倍 合计3元",
+                    "追加投注 1倍",
+                    "① 01 07 14 22 35 + 03 11",
+                ),
+            )
+
+        val correction = assertIs<TicketParseResult.NeedsCorrection>(result)
+        assertTrue(correction.message.contains("追加属性"))
+        assertNull(correction.draft)
     }
 
     /** 同一号码区域非升序时必须回到人工核对，不能静默重排。 */

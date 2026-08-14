@@ -94,6 +94,39 @@ class TicketReviewStateTest {
         assertTrue(evaluation.problems.any { it.field == "paidAmountFen" })
     }
 
+    /** 解析器未取得金额时不得使用默认值，用户可明确采用理论金额恢复合法状态。 */
+    @Test
+    fun missingDraftAmountRequiresExplicitCorrection() {
+        val state = TicketReviewState.fromDraft(superLottoDraft().copy(paidAmountFen = null))
+
+        assertFalse(state.evaluate(validator).canConfirm)
+        assertEquals("", state.paidAmountYuan.value)
+
+        val repaired = state.applyAction(TicketReviewAction.UseCalculatedAmount)
+        val evaluation = repaired.evaluate(validator)
+
+        assertTrue(evaluation.canConfirm)
+        val ticket = assertNotNull(evaluation.ticket)
+        assertEquals(300L, ticket.paidAmountFen.value)
+        assertEquals(TicketFieldOrigin.DERIVED, ticket.paidAmountFen.origin)
+    }
+
+    /** 解析器未取得期号时必须由用户补齐，并记录为用户来源。 */
+    @Test
+    fun missingDraftIssueRequiresUserCorrection() {
+        val state = TicketReviewState.fromDraft(superLottoDraft().copy(issue = ""))
+
+        val initialEvaluation = state.evaluate(validator)
+        assertFalse(initialEvaluation.canConfirm)
+        assertTrue(initialEvaluation.problems.any { it.field == "issue" })
+
+        val repaired = state.applyAction(TicketReviewAction.ChangeIssue("26091"))
+        val evaluation = repaired.evaluate(validator)
+
+        assertTrue(evaluation.canConfirm)
+        assertEquals(TicketFieldOrigin.USER, assertNotNull(evaluation.ticket).issue.origin)
+    }
+
     /** 切换到双色球后应能修正号码和金额并重新得到合法票据。 */
     @Test
     fun lotteryTypeChangeCanBeFullyCorrected() {

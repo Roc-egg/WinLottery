@@ -4,6 +4,9 @@ import kotlinx.coroutines.test.runTest
 import roc.win.lottery.Platform
 import roc.win.lottery.data.DrawRepository
 import roc.win.lottery.data.FakeDrawRepository
+import roc.win.lottery.domain.BetLineDraft
+import roc.win.lottery.domain.LotteryType
+import roc.win.lottery.domain.TicketDraft
 import roc.win.lottery.domain.TicketValidator
 import roc.win.lottery.recognition.AppPaths
 import roc.win.lottery.recognition.ConservativeTicketParser
@@ -17,6 +20,8 @@ import roc.win.lottery.recognition.ImageDimensionQualityAnalyzer
 import roc.win.lottery.recognition.ImageQualityAnalyzer
 import roc.win.lottery.recognition.ImageRef
 import roc.win.lottery.recognition.RecognitionResult
+import roc.win.lottery.recognition.TicketParseResult
+import roc.win.lottery.recognition.TicketParser
 import roc.win.lottery.recognition.TicketRecognizer
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -165,6 +170,58 @@ class LotteryAppControllerTest {
             assertEquals(listOf("low-resolution-image"), paths.deletedImageIds)
         }
 
+    /** 可恢复解析结果应进入校正页并保留临时图片，补齐字段后才能确认。 */
+    @Test
+    fun recoverableParseResultKeepsImageAtReviewGate() =
+        runTest {
+            val paths = TrackingAppPaths()
+            val parser =
+                TicketParser {
+                    TicketParseResult.NeedsCorrection(
+                        message = "期号缺失，请人工补充",
+                        draft = validDraft().copy(issue = ""),
+                    )
+                }
+            val controller =
+                createController(
+                    repository = CountingDrawRepository(),
+                    appPaths = paths,
+                    ticketParser = parser,
+                )
+
+            controller.startAnalysis(ImageAcquisitionSource.SYSTEM_PICKER)
+
+            val review = assertIs<AppScreen.Review>(controller.uiState.value.screen)
+            assertFalse(review.evaluation.canConfirm)
+            assertTrue(review.evaluation.problems.any { it.field == "issue" })
+            assertTrue(paths.deletedImageIds.isEmpty())
+
+            controller.updateTicketReview(TicketReviewAction.ChangeIssue("26091"))
+
+            assertTrue(assertIs<AppScreen.Review>(controller.uiState.value.screen).evaluation.canConfirm)
+            assertTrue(paths.deletedImageIds.isEmpty())
+        }
+
+    /** 不带安全草稿的人工修正结果仍应进入错误页并立即清理临时图片。 */
+    @Test
+    fun unrecoverableParseResultClearsTemporaryImage() =
+        runTest {
+            val paths = TrackingAppPaths()
+            val parser = TicketParser { TicketParseResult.NeedsCorrection("无法安全划分投注行") }
+            val controller =
+                createController(
+                    repository = CountingDrawRepository(),
+                    appPaths = paths,
+                    ticketParser = parser,
+                )
+
+            controller.startAnalysis(ImageAcquisitionSource.SYSTEM_PICKER)
+
+            val error = assertIs<AppScreen.Error>(controller.uiState.value.screen)
+            assertEquals("需要人工修正", error.title)
+            assertEquals(listOf("b1-demo-ticket"), paths.deletedImageIds)
+        }
+
     /** 创建使用可计数仓库和真实保守解析器的开发控制器。 */
     private fun createController(
         repository: DrawRepository,
@@ -173,6 +230,7 @@ class LotteryAppControllerTest {
         ticketRecognizer: TicketRecognizer = FakeTicketRecognizer(),
         imageAcquirer: ImageAcquirer = FakeImageAcquirer(supportsCamera = false),
         imageQualityAnalyzer: ImageQualityAnalyzer = ImageDimensionQualityAnalyzer(),
+        ticketParser: TicketParser = ConservativeTicketParser(),
     ): LotteryAppController {
         val platform =
             object : Platform {
@@ -188,7 +246,7 @@ class LotteryAppControllerTest {
                 imageAcquirer = imageAcquirer,
                 imageQualityAnalyzer = imageQualityAnalyzer,
                 ticketRecognizer = ticketRecognizer,
-                ticketParser = ConservativeTicketParser(),
+                ticketParser = ticketParser,
                 drawRepository = repository,
                 appPaths = appPaths,
                 ticketValidator = TicketValidator(),
@@ -198,6 +256,25 @@ class LotteryAppControllerTest {
             ),
         )
     }
+
+    /** 创建控制器测试共用的合法大乐透草稿。 */
+    private fun validDraft(): TicketDraft =
+        TicketDraft(
+            lotteryType = LotteryType.SUPER_LOTTO,
+            issue = "26091",
+            betLines =
+                listOf(
+                    BetLineDraft(
+                        primaryNumbers = listOf(2, 7, 14, 21, 33),
+                        secondaryNumbers = listOf(4, 9),
+                        isAdditional = true,
+                        originalText = "02 07 14 21 33 + 04 09",
+                    ),
+                ),
+            multiplier = 1,
+            periodCount = 1,
+            paidAmountFen = 300L,
+        )
 
     /** 记录调用次数并委托给固定演示仓库。 */
     private class CountingDrawRepository : DrawRepository {
