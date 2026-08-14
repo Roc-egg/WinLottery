@@ -20,6 +20,7 @@ import roc.win.lottery.recognition.RecognitionResult
 import roc.win.lottery.recognition.TicketRecognizer
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
@@ -46,25 +47,49 @@ class LotteryAppControllerTest {
             val controller = createController(repository)
             controller.startAnalysis(ImageAcquisitionSource.SYSTEM_PICKER)
 
-            controller.confirmDemoTicket()
+            controller.confirmTicket()
 
             assertEquals(1, repository.queryCount)
             assertIs<AppScreen.DemoComplete>(controller.uiState.value.screen)
         }
 
-    /** 真实 OCR 草稿在人工编辑和真实开奖接入前不得进入 Fake 开奖流程。 */
+    /** 真实 OCR 草稿通过人工校正闸门后可以继续到明确标注的演示开奖流程。 */
     @Test
-    fun realRecognitionCannotEnterDemoDrawQuery() =
+    fun realRecognitionCanEnterCorrectionAndDemoDrawQuery() =
         runTest {
             val repository = CountingDrawRepository()
-            val controller = createController(repository, usesRealRecognition = true)
+            val paths = TrackingAppPaths()
+            val controller = createController(repository, paths, usesRealRecognition = true)
             controller.startAnalysis(ImageAcquisitionSource.SYSTEM_PICKER)
 
-            controller.confirmDemoTicket()
+            val review = assertIs<AppScreen.Review>(controller.uiState.value.screen)
+            assertTrue(review.evaluation.canConfirm)
+            controller.confirmTicket()
+
+            assertEquals(1, repository.queryCount)
+            assertEquals(listOf("b1-demo-ticket"), paths.deletedImageIds)
+            assertIs<AppScreen.DemoComplete>(controller.uiState.value.screen)
+        }
+
+    /** 非法人工校正必须停留在当前页面，且不得查询开奖或清理票图。 */
+    @Test
+    fun invalidCorrectionStaysAtReviewGate() =
+        runTest {
+            val repository = CountingDrawRepository()
+            val paths = TrackingAppPaths()
+            val controller = createController(repository, paths, usesRealRecognition = true)
+            controller.startAnalysis(ImageAcquisitionSource.SYSTEM_PICKER)
+
+            controller.updateTicketReview(TicketReviewAction.ChangeIssue("2609"))
+            val review = assertIs<AppScreen.Review>(controller.uiState.value.screen)
+            assertFalse(review.evaluation.canConfirm)
+            assertTrue(review.evaluation.problems.any { it.field == "issue" })
+
+            controller.confirmTicket()
 
             assertEquals(0, repository.queryCount)
-            val error = assertIs<AppScreen.Error>(controller.uiState.value.screen)
-            assertEquals("识别 PoC 已完成", error.title)
+            assertTrue(paths.deletedImageIds.isEmpty())
+            assertIs<AppScreen.Review>(controller.uiState.value.screen)
         }
 
     /** 返回首页应清除当前流程页面状态。 */

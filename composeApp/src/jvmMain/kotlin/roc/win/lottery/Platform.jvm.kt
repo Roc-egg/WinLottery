@@ -15,7 +15,7 @@ class JVMPlatform : Platform {
     /** 当前桌面操作系统名称。 */
     override val name: String = System.getProperty("os.name") ?: "Desktop"
 
-    /** 桌面端 V1 只支持系统图片导入。 */
+    /** 后续桌面版本当前只保留系统图片导入能力。 */
     override val supportsCamera: Boolean = false
 }
 
@@ -23,10 +23,10 @@ class JVMPlatform : Platform {
 actual fun getPlatform(): Platform = JVMPlatform()
 
 /**
- * 创建已接入 Windows/macOS 文件导入、但尚未接入桌面 OCR 的 B3 容器。
+ * 创建已接入 Windows/macOS 文件导入、但尚未接入桌面 OCR 的延期开发容器。
  *
  * @param ownerProvider 返回系统文件选择器使用的当前桌面窗口。
- * @return 使用真实本地图片副本、明确 OCR 阻断和 Fake 开奖仓库的应用容器。
+ * @return 使用真实本地图片副本、明确 OCR 阻断和 Fake 开奖仓库的后续版本容器。
  */
 fun createDesktopImportContainer(ownerProvider: () -> Frame?): AppContainer {
     val appPaths = DesktopAppPaths()

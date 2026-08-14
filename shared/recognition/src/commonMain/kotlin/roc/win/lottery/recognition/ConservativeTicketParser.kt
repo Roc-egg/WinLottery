@@ -2,6 +2,7 @@ package roc.win.lottery.recognition
 
 import roc.win.lottery.domain.BetLineDraft
 import roc.win.lottery.domain.LotteryType
+import roc.win.lottery.domain.TicketAmountCalculator
 import roc.win.lottery.domain.TicketDraft
 
 /**
@@ -64,12 +65,12 @@ class ConservativeTicketParser : TicketParser {
                 ?: return TicketParseResult.NeedsCorrection("票面合计金额缺失、格式错误或存在多个候选值")
         val periodCount = explicitPeriodCount ?: V1_PERIOD_COUNT
         val expectedAmountFen =
-            expectedAmountFen(
+            TicketAmountCalculator.calculate(
                 lotteryType = lotteryType,
                 betLineCount = parsedBets.size,
+                additionalLineCount = if (isAdditional) parsedBets.size else 0,
                 multiplier = multiplier,
                 periodCount = periodCount,
-                isAdditional = isAdditional,
             )
         if (expectedAmountFen == null || expectedAmountFen != paidAmountFen) {
             return TicketParseResult.NeedsCorrection("票面金额与投注行、倍数、期数或追加属性不一致")
@@ -345,25 +346,6 @@ class ConservativeTicketParser : TicketParser {
         return candidates.singleOrNull()
     }
 
-    /** 根据已识别字段计算理论票面金额，溢出时返回 `null`。 */
-    private fun expectedAmountFen(
-        lotteryType: LotteryType,
-        betLineCount: Int,
-        multiplier: Int,
-        periodCount: Int,
-        isAdditional: Boolean,
-    ): Long? {
-        val perBetFen =
-            BASE_BET_PRICE_FEN +
-                if (lotteryType == LotteryType.SUPER_LOTTO && isAdditional) ADDITIONAL_BET_PRICE_FEN else 0L
-        return multiplyExactOrNull(
-            perBetFen,
-            betLineCount.toLong(),
-            multiplier.toLong(),
-            periodCount.toLong(),
-        )
-    }
-
     /** 把平台可能输出的全角字符归一化，但不替换形似数字的字母。 */
     private fun String.normalizedForParsing(): String {
         val builder = StringBuilder(length)
@@ -396,16 +378,6 @@ class ConservativeTicketParser : TicketParser {
         val fractionFen = fractionText.padEnd(MAX_FRACTION_DIGITS, ASCII_ZERO).toLongOrNull() ?: 0L
         if (wholeYuan > (Long.MAX_VALUE - fractionFen) / FEN_PER_YUAN) return null
         return wholeYuan * FEN_PER_YUAN + fractionFen
-    }
-
-    /** 对多个非负因子执行带溢出保护的乘法。 */
-    private fun multiplyExactOrNull(vararg factors: Long): Long? {
-        var result = 1L
-        factors.forEach { factor ->
-            if (factor < 0L || (factor != 0L && result > Long.MAX_VALUE / factor)) return null
-            result *= factor
-        }
-        return result
     }
 
     /** 按归一化纵向位置合并同一视觉行中的 OCR 片段。 */
@@ -590,12 +562,6 @@ class ConservativeTicketParser : TicketParser {
 
         /** V1 只支持一期投注。 */
         const val V1_PERIOD_COUNT = 1
-
-        /** 单注基本投注金额，单位为分。 */
-        const val BASE_BET_PRICE_FEN = 200L
-
-        /** 大乐透单注追加金额，单位为分。 */
-        const val ADDITIONAL_BET_PRICE_FEN = 100L
 
         /** 一行至少出现这些两位数字才视为疑似投注行。 */
         const val MIN_NUMBER_TOKENS_FOR_BET_CANDIDATE = 5

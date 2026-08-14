@@ -5,11 +5,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import roc.win.lottery.data.DrawQueryResult
-import roc.win.lottery.domain.BetLine
-import roc.win.lottery.domain.ConfirmedTicket
-import roc.win.lottery.domain.ConfirmedValue
-import roc.win.lottery.domain.Issue
-import roc.win.lottery.domain.TicketFieldOrigin
 import roc.win.lottery.recognition.ImageAcquisitionResult
 import roc.win.lottery.recognition.ImageAcquisitionSource
 import roc.win.lottery.recognition.ImageQualityResult
@@ -17,7 +12,7 @@ import roc.win.lottery.recognition.ImageRef
 import roc.win.lottery.recognition.RecognitionResult
 import roc.win.lottery.recognition.TicketParseResult
 
-/** 驱动图片识别 PoC、保守票面解析和开发流程页面的应用状态持有者。 */
+/** 驱动本地图片识别、票面人工校正和开奖查询流程的应用状态持有者。 */
 class LotteryAppController(
     /** 应用依赖容器。 */
     private val container: AppContainer,
@@ -109,49 +104,26 @@ class LotteryAppController(
         mutableUiState.update { it.copy(screen = AppScreen.About) }
     }
 
-    /**
-     * 接受演示草稿并验证确认后的不可变领域对象。
-     *
-     * 真实字段编辑器属于 B4；当前阶段只证明确认闸门和依赖方向可运行。
-     */
-    suspend fun confirmDemoTicket() {
+    /** 应用一次人工校正动作并立即刷新领域问题。 */
+    fun updateTicketReview(action: TicketReviewAction) {
         val review = mutableUiState.value.screen as? AppScreen.Review ?: return
-        if (container.usesRealRecognition) {
-            showError(
-                "识别 PoC 已完成",
-                "人工编辑和真实开奖尚未接入，本次票面不会用于中奖判断",
-                flowGeneration,
+        val editor = review.editor.applyAction(action)
+        mutableUiState.update {
+            it.copy(
+                screen =
+                    review.copy(
+                        editor = editor,
+                        evaluation = editor.evaluate(container.ticketValidator),
+                    ),
             )
-            return
         }
-        val draft = review.draft
-        val lotteryType = draft.lotteryType ?: return showError("票面信息不完整", "请重新识别彩票", flowGeneration)
-        val ticket =
-            ConfirmedTicket(
-                lotteryType = ConfirmedValue(lotteryType, TicketFieldOrigin.OCR),
-                issue = ConfirmedValue(Issue(draft.issue), TicketFieldOrigin.OCR),
-                betLines =
-                    draft.betLines.map { line ->
-                        BetLine(
-                            primaryNumbers = ConfirmedValue(line.primaryNumbers.sorted(), TicketFieldOrigin.OCR),
-                            secondaryNumbers = ConfirmedValue(line.secondaryNumbers.sorted(), TicketFieldOrigin.OCR),
-                            isAdditional = ConfirmedValue(line.isAdditional ?: false, TicketFieldOrigin.OCR),
-                            originalText = line.originalText,
-                        )
-                    },
-                multiplier = ConfirmedValue(draft.multiplier ?: 0, TicketFieldOrigin.OCR),
-                periodCount = ConfirmedValue(draft.periodCount ?: 0, TicketFieldOrigin.OCR),
-                paidAmountFen = ConfirmedValue(draft.paidAmountFen ?: -1L, TicketFieldOrigin.OCR),
-            )
-        val validation = container.ticketValidator.validate(ticket)
-        if (!validation.canCalculate) {
-            showError(
-                "票面校验未通过",
-                validation.problems.joinToString(separator = "；") { it.message },
-                flowGeneration,
-            )
-            return
-        }
+    }
+
+    /** 用户确认当前合法票据后，清理临时图片并执行一次开奖查询。 */
+    suspend fun confirmTicket() {
+        val review = mutableUiState.value.screen as? AppScreen.Review ?: return
+        val ticket = review.evaluation.ticket
+        if (!review.evaluation.canConfirm || ticket == null) return
 
         val generation = flowGeneration
         clearTemporaryImage()
@@ -206,7 +178,7 @@ class LotteryAppController(
                         if (generation == flowGeneration) {
                             mutableUiState.update {
                                 it.copy(
-                                    screen = AppScreen.Review(parsed.draft, acquisition.imageRef),
+                                    screen = createReviewScreen(parsed.draft, acquisition.imageRef),
                                 )
                             }
                         }
@@ -214,6 +186,19 @@ class LotteryAppController(
                 }
             }
         }
+    }
+
+    /** 从解析草稿创建带实时领域评估的校正页状态。 */
+    private fun createReviewScreen(
+        draft: roc.win.lottery.domain.TicketDraft,
+        imageRef: ImageRef,
+    ): AppScreen.Review {
+        val editor = TicketReviewState.fromDraft(draft)
+        return AppScreen.Review(
+            editor = editor,
+            imageRef = imageRef,
+            evaluation = editor.evaluate(container.ticketValidator),
+        )
     }
 
     /** 只在当前流程仍有效时展示错误。 */

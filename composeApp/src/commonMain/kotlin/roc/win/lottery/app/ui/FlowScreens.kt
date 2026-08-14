@@ -1,28 +1,49 @@
 package roc.win.lottery.app.ui
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import roc.win.lottery.app.TicketLineReviewState
+import roc.win.lottery.app.TicketNumberArea
+import roc.win.lottery.app.TicketReviewEvaluation
+import roc.win.lottery.app.TicketReviewState
 import roc.win.lottery.domain.DrawResult
 import roc.win.lottery.domain.LotteryType
-import roc.win.lottery.domain.TicketDraft
+import roc.win.lottery.domain.TicketFieldOrigin
+import roc.win.lottery.domain.TicketValidationProblem
 
 /** 显示本地分析进度和取消入口。 */
 @Composable
@@ -58,20 +79,36 @@ fun AnalysisScreen(
 }
 
 /**
- * 显示 B1/B3 人工确认页面壳。
+ * 显示 Android 和 iOS 共用的票面人工校正页面。
  *
- * @param draft 经过保守解析的票面草稿。
+ * @param editor 当前不可变编辑状态。
+ * @param evaluation 当前领域评估。
  * @param isDemo 开奖等后续能力是否仍为开发演示实现。
  * @param usesRealRecognition 当前草稿是否来自真实图片导入和本地 OCR。
  * @param onBack 返回并清理当前临时票图的操作。
+ * @param onLotteryTypeChange 修改彩种。
+ * @param onIssueChange 修改期号。
+ * @param onNumberToggle 切换指定投注行的号码球。
+ * @param onMultiplierChange 修改倍数。
+ * @param onAdditionalChange 修改大乐透追加属性。
+ * @param onPaidAmountChange 修改票面金额。
+ * @param onUseCalculatedAmount 使用当前投注结构推导金额。
  * @param onConfirm 用户确认当前字段的操作。
  */
 @Composable
 fun ReviewScreen(
-    draft: TicketDraft,
+    editor: TicketReviewState,
+    evaluation: TicketReviewEvaluation,
     isDemo: Boolean,
     usesRealRecognition: Boolean,
     onBack: () -> Unit,
+    onLotteryTypeChange: (LotteryType) -> Unit,
+    onIssueChange: (String) -> Unit,
+    onNumberToggle: (Int, TicketNumberArea, Int) -> Unit,
+    onMultiplierChange: (Int) -> Unit,
+    onAdditionalChange: (Boolean) -> Unit,
+    onPaidAmountChange: (String) -> Unit,
+    onUseCalculatedAmount: () -> Unit,
     onConfirm: () -> Unit,
 ) {
     AppShell(
@@ -82,9 +119,9 @@ fun ReviewScreen(
         if (isDemo) {
             StatusBanner(
                 if (usesRealRecognition) {
-                    "以下字段来自真实本地 OCR，但编辑器尚未接入；请勿继续用于实际中奖判断。"
+                    "票面来自本地 OCR，可逐项校正；继续后仍使用固定演示开奖数据，不用于真实中奖判断。"
                 } else {
-                    "以下字段来自 B1 固定演示数据，真实编辑器将在 B4 接入。"
+                    "以下字段来自固定演示票据，用于验证人工校正和确认流程。"
                 },
             )
             Spacer(Modifier.height(20.dp))
@@ -97,51 +134,361 @@ fun ReviewScreen(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.height(24.dp))
-        InfoSection(
-            rows =
-                listOf(
-                    "彩种" to draft.lotteryType.displayName(),
-                    "期号" to draft.issue,
-                    "倍数" to "${draft.multiplier ?: "待确认"} 倍",
-                    "期数" to "${draft.periodCount ?: "待确认"} 期",
-                    "票面金额" to draft.paidAmountFen.toYuanText(),
-                ),
-        )
-        Spacer(Modifier.height(20.dp))
-        Text("投注号码", style = MaterialTheme.typography.titleLarge)
-        Spacer(Modifier.height(12.dp))
-        draft.betLines.forEachIndexed { index, line ->
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = MaterialTheme.shapes.small,
-                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                color = MaterialTheme.colorScheme.surface,
-            ) {
-                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("第 ${index + 1} 注", style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        line.primaryNumbers.joinToString("  ") { it.toString().padStart(2, '0') },
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
-                    Text(
-                        "${draft.lotteryType.secondaryAreaName()} " +
-                            line.secondaryNumbers.joinToString("  ") { it.toString().padStart(2, '0') } +
-                            if (line.isAdditional == true) " · 追加" else "",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.secondary,
-                    )
-                }
+        Text("彩种", style = MaterialTheme.typography.titleMedium)
+        Spacer(Modifier.height(8.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            LotteryType.entries.forEach { lotteryType ->
+                FilterChip(
+                    selected = editor.lotteryType.value == lotteryType,
+                    onClick = { onLotteryTypeChange(lotteryType) },
+                    label = { Text(lotteryType.displayName()) },
+                )
             }
-            Spacer(Modifier.height(10.dp))
         }
         Spacer(Modifier.height(18.dp))
+        OutlinedTextField(
+            value = editor.issue.value,
+            onValueChange = onIssueChange,
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("开奖期号") },
+            singleLine = true,
+            isError = evaluation.problems.hasField("issue"),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+        )
+        evaluation.problems.firstMessageFor("issue")?.let { message ->
+            FieldProblem(message)
+        }
+        Spacer(Modifier.height(24.dp))
+        Text("投注号码", style = MaterialTheme.typography.titleLarge)
+        Spacer(Modifier.height(12.dp))
+        editor.betLines.forEachIndexed { index, line ->
+            TicketLineEditor(
+                lineIndex = index,
+                line = line,
+                lotteryType = editor.lotteryType.value,
+                problems = evaluation.problems,
+                onNumberToggle = onNumberToggle,
+            )
+            Spacer(Modifier.height(10.dp))
+        }
+        Spacer(Modifier.height(14.dp))
+        Text("投注属性", style = MaterialTheme.typography.titleLarge)
+        Spacer(Modifier.height(12.dp))
+        MultiplierEditor(
+            multiplier = editor.multiplier.value,
+            onMultiplierChange = onMultiplierChange,
+        )
+        evaluation.problems.firstMessageFor("multiplier")?.let { message ->
+            FieldProblem(message)
+        }
+        Spacer(Modifier.height(12.dp))
+        if (editor.lotteryType.value == LotteryType.SUPER_LOTTO) {
+            SettingRow(
+                title = "追加投注",
+                detail = if (editor.isAdditional) "每注增加 1 元" else "基本投注",
+            ) {
+                Switch(
+                    checked = editor.isAdditional,
+                    onCheckedChange = onAdditionalChange,
+                )
+            }
+            Spacer(Modifier.height(12.dp))
+        }
+        SettingRow(title = "投注期数", detail = "V1 仅支持单期") {
+            Text("1 期", style = MaterialTheme.typography.titleMedium)
+        }
+        Spacer(Modifier.height(18.dp))
+        Text("票面金额", style = MaterialTheme.typography.titleLarge)
+        Spacer(Modifier.height(12.dp))
+        OutlinedTextField(
+            value = editor.paidAmountYuan.value,
+            onValueChange = onPaidAmountChange,
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("合计金额") },
+            suffix = { Text("元") },
+            singleLine = true,
+            isError = evaluation.problems.hasField("paidAmountFen"),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                "按当前投注计算：${editor.calculatedAmountFen.toYuanText()}",
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.width(8.dp))
+            TextButton(
+                onClick = onUseCalculatedAmount,
+                enabled = editor.calculatedAmountFen != null,
+            ) {
+                Text("使用计算金额")
+            }
+        }
+        evaluation.problems.firstMessageFor("paidAmountFen")?.let { message ->
+            FieldProblem(message)
+        }
+        if (evaluation.problems.isNotEmpty()) {
+            Spacer(Modifier.height(18.dp))
+            ValidationSummary(evaluation.problems)
+        }
+        Spacer(Modifier.height(24.dp))
         Button(
-            onClick = if (usesRealRecognition) onBack else onConfirm,
+            onClick = onConfirm,
+            enabled = evaluation.canConfirm,
             modifier = Modifier.fillMaxWidth().height(52.dp),
             shape = MaterialTheme.shapes.small,
         ) {
-            Text(if (usesRealRecognition) "结束本次识别" else "已核对，继续")
+            Text("已核对，继续")
+        }
+    }
+}
+
+/**
+ * 显示一行单式投注的号码球编辑器。
+ *
+ * @param lineIndex 投注行下标。
+ * @param line 当前行编辑状态。
+ * @param lotteryType 当前玩法。
+ * @param problems 当前领域问题。
+ * @param onNumberToggle 切换号码球的操作。
+ */
+@Composable
+private fun TicketLineEditor(
+    lineIndex: Int,
+    line: TicketLineReviewState,
+    lotteryType: LotteryType?,
+    problems: List<TicketValidationProblem>,
+    onNumberToggle: (Int, TicketNumberArea, Int) -> Unit,
+) {
+    val spec = LotteryNumberSpec.forLottery(lotteryType)
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.small,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        color = MaterialTheme.colorScheme.surface,
+    ) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("第 ${lineIndex + 1} 注", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    line.displayOrigin().displayName(),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            NumberAreaEditor(
+                title = spec.primaryName,
+                selectedNumbers = line.primaryNumbers.value,
+                expectedCount = spec.primaryCount,
+                range = spec.primaryRange,
+                selectedColor = MaterialTheme.colorScheme.primary,
+                onToggle = { number -> onNumberToggle(lineIndex, TicketNumberArea.PRIMARY, number) },
+            )
+            problems.firstMessageFor("betLines[$lineIndex].primaryNumbers")?.let { message ->
+                FieldProblem(message)
+            }
+            NumberAreaEditor(
+                title = spec.secondaryName,
+                selectedNumbers = line.secondaryNumbers.value,
+                expectedCount = spec.secondaryCount,
+                range = spec.secondaryRange,
+                selectedColor = MaterialTheme.colorScheme.secondary,
+                onToggle = { number -> onNumberToggle(lineIndex, TicketNumberArea.SECONDARY, number) },
+            )
+            problems.firstMessageFor("betLines[$lineIndex].secondaryNumbers")?.let { message ->
+                FieldProblem(message)
+            }
+            if (line.originalText.isNotBlank()) {
+                Text(
+                    "OCR 原文：${line.originalText}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+/** 显示一个可横向滚动的号码区域。 */
+@Composable
+private fun NumberAreaEditor(
+    title: String,
+    selectedNumbers: List<Int>,
+    expectedCount: Int,
+    range: IntRange,
+    selectedColor: androidx.compose.ui.graphics.Color,
+    onToggle: (Int) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            "$title（已选 ${selectedNumbers.size}/$expectedCount）",
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            val lastVisibleNumber = maxOf(range.last, selectedNumbers.maxOrNull() ?: range.last)
+            (range.first..lastVisibleNumber).forEach { number ->
+                val selected = number in selectedNumbers
+                NumberBall(
+                    number = number,
+                    selected = selected,
+                    enabled = selected || (number in range && selectedNumbers.size < expectedCount),
+                    selectedColor = selectedColor,
+                    onToggle = { onToggle(number) },
+                )
+            }
+        }
+    }
+}
+
+/** 显示一个尺寸稳定、可选择的号码球。 */
+@Composable
+private fun NumberBall(
+    number: Int,
+    selected: Boolean,
+    enabled: Boolean,
+    selectedColor: androidx.compose.ui.graphics.Color,
+    onToggle: () -> Unit,
+) {
+    Surface(
+        modifier =
+            Modifier
+                .size(48.dp)
+                .selectable(
+                    selected = selected,
+                    enabled = enabled,
+                    role = Role.Checkbox,
+                    onClick = onToggle,
+                ),
+        shape = CircleShape,
+        color =
+            when {
+                selected -> selectedColor
+                enabled -> MaterialTheme.colorScheme.surface
+                else -> MaterialTheme.colorScheme.surfaceVariant
+            },
+        contentColor =
+            when {
+                selected -> MaterialTheme.colorScheme.onPrimary
+                enabled -> MaterialTheme.colorScheme.onSurface
+                else -> MaterialTheme.colorScheme.onSurfaceVariant
+            },
+        border =
+            if (selected) {
+                null
+            } else {
+                BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+            },
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Text(number.toString().padStart(2, '0'), style = MaterialTheme.typography.labelLarge)
+        }
+    }
+}
+
+/** 显示投注倍数步进器。 */
+@Composable
+private fun MultiplierEditor(
+    multiplier: Int,
+    onMultiplierChange: (Int) -> Unit,
+) {
+    SettingRow(title = "投注倍数", detail = "可选 1 至 99 倍") {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(
+                onClick = { onMultiplierChange(multiplier - 1) },
+                enabled = multiplier > MIN_MULTIPLIER,
+            ) {
+                Icon(LotteryIcons.Minus, contentDescription = "减少倍数")
+            }
+            Text(
+                "$multiplier 倍",
+                modifier = Modifier.width(64.dp),
+                style = MaterialTheme.typography.titleMedium,
+            )
+            IconButton(
+                onClick = { onMultiplierChange(multiplier + 1) },
+                enabled = multiplier < MAX_MULTIPLIER,
+            ) {
+                Icon(LotteryIcons.Plus, contentDescription = "增加倍数")
+            }
+        }
+    }
+}
+
+/** 显示一行投注设置和右侧控件。 */
+@Composable
+private fun SettingRow(
+    title: String,
+    detail: String,
+    control: @Composable () -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.small,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        color = MaterialTheme.colorScheme.surface,
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.titleMedium)
+                Text(
+                    detail,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            control()
+        }
+    }
+}
+
+/** 在对应输入下方显示一条领域问题。 */
+@Composable
+private fun FieldProblem(message: String) {
+    Text(
+        message,
+        modifier = Modifier.padding(start = 16.dp, top = 4.dp),
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.error,
+    )
+}
+
+/** 汇总当前仍阻断确认的领域问题。 */
+@Composable
+private fun ValidationSummary(problems: List<TicketValidationProblem>) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.small,
+        color = MaterialTheme.colorScheme.errorContainer,
+    ) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("请先修正以下信息", style = MaterialTheme.typography.titleMedium)
+            problems.distinctBy { it.field to it.message }.forEach { problem ->
+                Text(
+                    "• ${problem.message}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                )
+            }
         }
     }
 }
@@ -176,20 +523,29 @@ fun DrawQueryScreen(
  * 显示开发状态流完成结果，不声称完成真实测算。
  *
  * @param drawResult Fake 开奖仓库返回的演示结果。
+ * @param usesRealRecognition 票面是否来自移动端真实本地 OCR。
  * @param onDone 返回首页的操作。
  */
 @Composable
 fun DemoCompleteScreen(
     drawResult: DrawResult,
+    usesRealRecognition: Boolean,
     onDone: () -> Unit,
 ) {
     AppShell(title = "流程演示完成") {
         StatusBanner("开发链路已跑通，本页不代表真实中奖结果。")
         Spacer(Modifier.height(24.dp))
-        Text("四端共享状态流可用", style = MaterialTheme.typography.headlineMedium)
+        Text(
+            if (usesRealRecognition) "移动端校正链路可用" else "共享演示状态流可用",
+            style = MaterialTheme.typography.headlineMedium,
+        )
         Spacer(Modifier.height(12.dp))
         Text(
-            "票面结构已使用保守解析器；图片采集、OCR 和开奖查询仍由 Fake 实现。",
+            if (usesRealRecognition) {
+                "票面已由本地 OCR、保守解析和人工校正生成；开奖数据仍为固定演示数据。"
+            } else {
+                "票面结构已使用保守解析器；图片采集、OCR 和开奖查询仍为固定演示实现。"
+            },
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -338,14 +694,6 @@ private fun LotteryType?.displayName(): String =
         null -> "待确认"
     }
 
-/** 返回当前彩种次号码区域的准确名称。 */
-private fun LotteryType?.secondaryAreaName(): String =
-    when (this) {
-        LotteryType.SUPER_LOTTO -> "后区"
-        LotteryType.DOUBLE_COLOR_BALL -> "蓝球"
-        null -> "次号码"
-    }
-
 /** 把分转换为不参与计算的展示文本。 */
 private fun Long?.toYuanText(): String =
     if (this == null) {
@@ -353,3 +701,74 @@ private fun Long?.toYuanText(): String =
     } else {
         "${this / 100}.${(this % 100).toString().padStart(2, '0')} 元"
     }
+
+/** 判断问题列表是否包含指定字段。 */
+private fun List<TicketValidationProblem>.hasField(field: String): Boolean = any { it.field == field }
+
+/** 返回指定字段的首条问题说明。 */
+private fun List<TicketValidationProblem>.firstMessageFor(field: String): String? =
+    firstOrNull { it.field == field }?.message
+
+/** 返回校正字段来源的简短中文名称。 */
+private fun TicketFieldOrigin.displayName(): String =
+    when (this) {
+        TicketFieldOrigin.OCR -> "OCR 识别"
+        TicketFieldOrigin.USER -> "用户已修改"
+        TicketFieldOrigin.DERIVED -> "规则推导"
+    }
+
+/** 汇总一行投注当前最需要展示的字段来源。 */
+private fun TicketLineReviewState.displayOrigin(): TicketFieldOrigin =
+    when {
+        primaryNumbers.origin == TicketFieldOrigin.USER ||
+            secondaryNumbers.origin == TicketFieldOrigin.USER ||
+            isAdditional.origin == TicketFieldOrigin.USER -> TicketFieldOrigin.USER
+
+        primaryNumbers.origin == TicketFieldOrigin.DERIVED ||
+            secondaryNumbers.origin == TicketFieldOrigin.DERIVED ||
+            isAdditional.origin == TicketFieldOrigin.DERIVED -> TicketFieldOrigin.DERIVED
+
+        else -> TicketFieldOrigin.OCR
+    }
+
+/**
+ * 号码球编辑器使用的玩法规格。
+ *
+ * @property primaryName 主号码区域名称。
+ * @property primaryCount 主号码数量。
+ * @property primaryRange 主号码范围。
+ * @property secondaryName 次号码区域名称。
+ * @property secondaryCount 次号码数量。
+ * @property secondaryRange 次号码范围。
+ */
+private data class LotteryNumberSpec(
+    val primaryName: String,
+    val primaryCount: Int,
+    val primaryRange: IntRange,
+    val secondaryName: String,
+    val secondaryCount: Int,
+    val secondaryRange: IntRange,
+) {
+    /** 创建当前玩法的 V1 单式号码规格。 */
+    companion object {
+        /** 返回当前玩法的号码规格，玩法待确认时先展示大乐透范围。 */
+        fun forLottery(lotteryType: LotteryType?): LotteryNumberSpec =
+            when (lotteryType) {
+                LotteryType.DOUBLE_COLOR_BALL -> {
+                    LotteryNumberSpec("红球", 6, 1..33, "蓝球", 1, 1..16)
+                }
+
+                LotteryType.SUPER_LOTTO,
+                null,
+                -> {
+                    LotteryNumberSpec("前区", 5, 1..35, "后区", 2, 1..12)
+                }
+            }
+    }
+}
+
+/** V1 最小投注倍数。 */
+private const val MIN_MULTIPLIER = 1
+
+/** V1 最大投注倍数。 */
+private const val MAX_MULTIPLIER = 99

@@ -2,7 +2,6 @@ package roc.win.lottery.app
 
 import roc.win.lottery.domain.ConfirmedTicket
 import roc.win.lottery.domain.DrawResult
-import roc.win.lottery.domain.TicketDraft
 import roc.win.lottery.recognition.ImageRef
 
 /** 应用顶层页面。 */
@@ -24,20 +23,22 @@ sealed interface AppScreen {
     ) : AppScreen
 
     /**
-     * 人工确认页壳。
+     * 票面人工校正与确认页。
      *
-     * @property draft OCR 文档经保守解析得到的票面草稿。
-     * @property imageRef 当前流程的临时图片引用，B4 将用于原图对照。
+     * @property editor 当前不可变编辑状态。
+     * @property imageRef 当前流程的临时图片引用，后续用于原图区域对照。
+     * @property evaluation 当前编辑状态的领域评估。
      */
     data class Review(
-        val draft: TicketDraft,
+        val editor: TicketReviewState,
         val imageRef: ImageRef,
+        val evaluation: TicketReviewEvaluation,
     ) : AppScreen
 
     /**
      * 开奖查询状态页。
      *
-     * @property ticket 已通过领域校验的演示票据。
+     * @property ticket 已通过领域校验的用户确认票据。
      */
     data class DrawQuery(
         val ticket: ConfirmedTicket,

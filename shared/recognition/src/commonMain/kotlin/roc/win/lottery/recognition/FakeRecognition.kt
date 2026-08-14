@@ -10,7 +10,7 @@ class FakeImageAcquirer(
     /** 返回不包含真实票据内容的内存演示引用。 */
     override suspend fun acquire(source: ImageAcquisitionSource): ImageAcquisitionResult {
         if (source == ImageAcquisitionSource.CAMERA && !supportsCamera) {
-            return ImageAcquisitionResult.Unavailable("桌面端 V1 仅支持导入图片")
+            return ImageAcquisitionResult.Unavailable("桌面版本当前仅支持导入图片")
         }
         delay(ACQUIRE_DELAY_MILLIS)
         return ImageAcquisitionResult.Success(

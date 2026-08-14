@@ -10,6 +10,7 @@ import kotlinx.coroutines.launch
 import roc.win.lottery.app.AppContainer
 import roc.win.lottery.app.AppScreen
 import roc.win.lottery.app.LotteryAppController
+import roc.win.lottery.app.TicketReviewAction
 import roc.win.lottery.app.theme.LotteryTheme
 import roc.win.lottery.app.ui.AboutScreen
 import roc.win.lottery.app.ui.AnalysisScreen
@@ -62,11 +63,35 @@ fun App(container: AppContainer = remember { AppContainer.createDemo(getPlatform
 
             is AppScreen.Review -> {
                 ReviewScreen(
-                    draft = screen.draft,
+                    editor = screen.editor,
+                    evaluation = screen.evaluation,
                     isDemo = uiState.isDemo,
                     usesRealRecognition = container.usesRealRecognition,
                     onBack = { scope.launch { controller.navigateHome() } },
-                    onConfirm = { scope.launch { controller.confirmDemoTicket() } },
+                    onLotteryTypeChange = {
+                        controller.updateTicketReview(TicketReviewAction.ChangeLotteryType(it))
+                    },
+                    onIssueChange = {
+                        controller.updateTicketReview(TicketReviewAction.ChangeIssue(it))
+                    },
+                    onNumberToggle = { lineIndex, area, number ->
+                        controller.updateTicketReview(
+                            TicketReviewAction.ToggleNumber(lineIndex, area, number),
+                        )
+                    },
+                    onMultiplierChange = {
+                        controller.updateTicketReview(TicketReviewAction.ChangeMultiplier(it))
+                    },
+                    onAdditionalChange = {
+                        controller.updateTicketReview(TicketReviewAction.ChangeAdditional(it))
+                    },
+                    onPaidAmountChange = {
+                        controller.updateTicketReview(TicketReviewAction.ChangePaidAmount(it))
+                    },
+                    onUseCalculatedAmount = {
+                        controller.updateTicketReview(TicketReviewAction.UseCalculatedAmount)
+                    },
+                    onConfirm = { scope.launch { controller.confirmTicket() } },
                 )
             }
 
@@ -80,6 +105,7 @@ fun App(container: AppContainer = remember { AppContainer.createDemo(getPlatform
             is AppScreen.DemoComplete -> {
                 DemoCompleteScreen(
                     drawResult = screen.drawResult,
+                    usesRealRecognition = container.usesRealRecognition,
                     onDone = { scope.launch { controller.navigateHome() } },
                 )
             }

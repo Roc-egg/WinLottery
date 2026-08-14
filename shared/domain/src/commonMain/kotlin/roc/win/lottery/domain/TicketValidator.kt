@@ -135,15 +135,28 @@ class TicketValidator {
             return
         }
 
-        val baseAmountFen = ticket.betLines.size.toLong() * BASE_BET_PRICE_FEN * ticket.multiplier.value
-        val additionalAmountFen =
-            if (ticket.lotteryType.value == LotteryType.SUPER_LOTTO) {
-                ticket.betLines.count { it.isAdditional.value }.toLong() * ADDITIONAL_BET_PRICE_FEN *
-                    ticket.multiplier.value
-            } else {
-                0L
+        val baseAmountFen =
+            TicketAmountCalculator.calculate(
+                lotteryType = ticket.lotteryType.value,
+                betLineCount = ticket.betLines.size,
+                additionalLineCount = 0,
+                multiplier = ticket.multiplier.value,
+                periodCount = ticket.periodCount.value,
+            ) ?: run {
+                addProblem(TicketValidationStatus.INVALID, "paidAmountFen", "无法根据当前投注结构计算金额")
+                return
             }
-        val expectedAmountFen = baseAmountFen + additionalAmountFen
+        val expectedAmountFen =
+            TicketAmountCalculator.calculate(
+                lotteryType = ticket.lotteryType.value,
+                betLineCount = ticket.betLines.size,
+                additionalLineCount = ticket.betLines.count { it.isAdditional.value },
+                multiplier = ticket.multiplier.value,
+                periodCount = ticket.periodCount.value,
+            ) ?: run {
+                addProblem(TicketValidationStatus.INVALID, "paidAmountFen", "无法根据当前投注结构计算金额")
+                return
+            }
 
         val maxAmountFen =
             if (ticket.lotteryType.value == LotteryType.SUPER_LOTTO) {
@@ -187,12 +200,6 @@ class TicketValidator {
 
     /** V1 只允许一期投注。 */
     private companion object {
-        /** 单式基本投注单价，单位为分。 */
-        const val BASE_BET_PRICE_FEN = 200L
-
-        /** 大乐透追加投注单价，单位为分。 */
-        const val ADDITIONAL_BET_PRICE_FEN = 100L
-
         /** 最小投注倍数。 */
         const val MIN_MULTIPLIER = 1
 
