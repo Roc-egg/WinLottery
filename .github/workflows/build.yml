@@ -1,0 +1,51 @@
+name: 构建验证
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  android-and-macos:
+    name: Android、macOS 与 iOS 共享代码
+    runs-on: macos-15
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+      - name: 配置 Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+      - name: 配置 Gradle
+        uses: gradle/actions/setup-gradle@v4
+      - name: 运行格式检查和共享测试矩阵
+        run: ./gradlew spotlessCheck jvmTest testAndroidHostTest iosSimulatorArm64Test
+      - name: 构建 Android 调试包
+        run: ./gradlew :androidApp:assembleDebug
+      - name: 构建 macOS 分发包
+        run: ./gradlew :desktopApp:packageDmg
+      - name: 编译 iOS 模拟器共享框架
+        run: ./gradlew :composeApp:linkDebugFrameworkIosSimulatorArm64
+
+  windows:
+    name: Windows 桌面包
+    runs-on: windows-2025
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+      - name: 配置 Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+      - name: 配置 Gradle
+        uses: gradle/actions/setup-gradle@v4
+      - name: 运行共享测试
+        run: .\gradlew.bat jvmTest
+      - name: 构建 Windows 分发包
+        run: .\gradlew.bat :desktopApp:packageMsi

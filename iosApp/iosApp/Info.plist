@@ -4,5 +4,7 @@
 <dict>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>用于拍摄实体彩票并在本机识别票面信息。</string>
 </dict>
 </plist>

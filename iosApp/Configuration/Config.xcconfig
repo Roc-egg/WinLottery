@@ -1,4 +1,6 @@
 TEAM_ID=
+DEVELOPMENT_TEAM_ID=
+#include? "Local.xcconfig"
 
 PRODUCT_NAME=WinLottery
 PRODUCT_BUNDLE_IDENTIFIER=roc.win.lottery.WinLottery$(TEAM_ID)

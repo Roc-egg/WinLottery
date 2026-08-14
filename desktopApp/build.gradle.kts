@@ -7,17 +7,16 @@ plugins {
 }
 
 dependencies {
-    implementation(project(":shared"))
+    implementation(project(":composeApp"))
 
     implementation(compose.desktop.currentOs)
-    implementation(libs.kotlinx.coroutinesSwing)
 
     implementation(libs.compose.uiToolingPreview)
 }
 
 compose.desktop {
     application {
-        mainClass = "roc.win.lottery.MainKt"
+        mainClass = "roc.win.lottery.DesktopEntryKt"
 
         nativeDistributions {
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)

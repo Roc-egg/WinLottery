@@ -17,3 +17,11 @@ captures
 !*.xcworkspace/contents.xcworkspacedata
 **/xcshareddata/WorkspaceSettings.xcsettings
 node_modules/
+
+# 真实彩票样本包含敏感信息，禁止提交仓库。
+private-samples/
+ticket-samples/
+image/test/
+
+# iOS 本机签名团队配置，仓库只提交示例文件。
+iosApp/Configuration/Local.xcconfig

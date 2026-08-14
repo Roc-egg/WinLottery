@@ -241,6 +241,7 @@ composeApp → recognition/data → domain
 
 ```kotlin
 interface ImageAcquirer
+interface ImageQualityAnalyzer
 interface TicketRecognizer
 interface TicketParser
 interface DrawRepository

@@ -1,0 +1,69 @@
+package roc.win.lottery.app
+
+import roc.win.lottery.Platform
+import roc.win.lottery.data.DrawRepository
+import roc.win.lottery.data.FakeDrawRepository
+import roc.win.lottery.domain.TicketValidator
+import roc.win.lottery.recognition.AppPaths
+import roc.win.lottery.recognition.ConservativeTicketParser
+import roc.win.lottery.recognition.FakeAppPaths
+import roc.win.lottery.recognition.FakeImageAcquirer
+import roc.win.lottery.recognition.FakeTicketRecognizer
+import roc.win.lottery.recognition.ImageAcquirer
+import roc.win.lottery.recognition.ImageDimensionQualityAnalyzer
+import roc.win.lottery.recognition.ImageQualityAnalyzer
+import roc.win.lottery.recognition.TicketParser
+import roc.win.lottery.recognition.TicketRecognizer
+
+/**
+ * 应用级依赖容器，使用构造注入保持平台实现可替换。
+ *
+ * @property platform 当前平台能力。
+ * @property imageAcquirer 图片采集能力。
+ * @property imageQualityAnalyzer OCR 前的本地图片质量检查能力。
+ * @property ticketRecognizer 本地 OCR 能力。
+ * @property ticketParser 票面结构解析能力。
+ * @property drawRepository 开奖查询能力。
+ * @property appPaths 临时文件管理能力。
+ * @property ticketValidator 票面领域校验器。
+ * @property isDemo 当前容器是否仍使用外部能力 Fake。
+ * @property usesRealImageAcquisition 图片采集是否由真实平台实现提供。
+ * @property usesRealRecognition 本地 OCR 是否由真实平台实现提供。
+ */
+class AppContainer(
+    val platform: Platform,
+    val imageAcquirer: ImageAcquirer,
+    val imageQualityAnalyzer: ImageQualityAnalyzer,
+    val ticketRecognizer: TicketRecognizer,
+    val ticketParser: TicketParser,
+    val drawRepository: DrawRepository,
+    val appPaths: AppPaths,
+    val ticketValidator: TicketValidator,
+    val isDemo: Boolean,
+    val usesRealImageAcquisition: Boolean,
+    val usesRealRecognition: Boolean,
+) {
+    /** 创建无相机、无真实 OCR、无网络也能演示状态流的开发容器。 */
+    companion object {
+        /**
+         * 创建开发演示依赖。
+         *
+         * @param platform 当前运行平台能力。
+         * @return 外部能力使用 Fake、票面结构使用真实保守解析器的容器。
+         */
+        fun createDemo(platform: Platform): AppContainer =
+            AppContainer(
+                platform = platform,
+                imageAcquirer = FakeImageAcquirer(platform.supportsCamera),
+                imageQualityAnalyzer = ImageDimensionQualityAnalyzer(),
+                ticketRecognizer = FakeTicketRecognizer(),
+                ticketParser = ConservativeTicketParser(),
+                drawRepository = FakeDrawRepository(),
+                appPaths = FakeAppPaths(),
+                ticketValidator = TicketValidator(),
+                isDemo = true,
+                usesRealImageAcquisition = false,
+                usesRealRecognition = false,
+            )
+    }
+}

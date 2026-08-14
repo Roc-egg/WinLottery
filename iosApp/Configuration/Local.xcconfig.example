@@ -1,0 +1,2 @@
+// 将占位值替换为 Xcode 账号对应的开发团队 ID。
+DEVELOPMENT_TEAM_ID=YOUR_TEAM_ID
