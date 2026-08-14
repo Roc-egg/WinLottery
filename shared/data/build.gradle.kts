@@ -47,6 +47,9 @@ kotlin {
         jvmMain.dependencies {
             implementation(libs.ktor.clientOkhttp)
         }
+        jvmTest.dependencies {
+            implementation(libs.pdfbox)
+        }
         commonTest.dependencies {
             implementation(libs.kotlin.test)
             implementation(libs.kotlinx.coroutinesTest)
