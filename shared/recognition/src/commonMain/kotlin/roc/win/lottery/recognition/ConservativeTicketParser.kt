@@ -9,7 +9,7 @@ import roc.win.lottery.domain.TicketDraft
  * 从平台标准 OCR 行中保守提取 V1 单式票字段。
  *
  * 解析器只接受能够由票面原文直接证明的值。多期、补打、复式、胆拖、疑似字符混淆会被明确阻断；
- * 只有彩种与投注结构已经确定时，缺失期号、缺失金额或金额矛盾才会携带草稿进入人工校正。
+ * 只有彩种与投注结构已经确定时，缺失期号、倍数、追加属性、金额或金额矛盾才会携带草稿进入人工校正。
  */
 class ConservativeTicketParser : TicketParser {
     /** 解析一份标准 OCR 文档，并返回等待确认或明确阻断状态。 */
@@ -49,20 +49,14 @@ class ConservativeTicketParser : TicketParser {
                 is BetRowsResult.Success -> result.rows
                 is BetRowsResult.Failed -> return TicketParseResult.NeedsCorrection(result.message)
             }
-        val multiplier =
-            extractMultiplier(rows, parsedBets, lotteryType)
-                ?: return TicketParseResult.NeedsCorrection("投注倍数缺失、存在字符混淆或多个候选值")
-        val isAdditional =
+        val multiplierExtraction = extractMultiplier(rows, parsedBets, lotteryType)
+        val multiplier = multiplierExtraction.value
+        val additionalExtraction =
             when (lotteryType) {
-                LotteryType.SUPER_LOTTO -> {
-                    extractSuperLottoAdditional(rows)
-                        ?: return TicketParseResult.NeedsCorrection("大乐透追加属性缺失或存在冲突")
-                }
-
-                LotteryType.DOUBLE_COLOR_BALL -> {
-                    false
-                }
+                LotteryType.SUPER_LOTTO -> extractSuperLottoAdditional(rows)
+                LotteryType.DOUBLE_COLOR_BALL -> FieldExtraction(value = false, bounds = null)
             }
+        val isAdditional = additionalExtraction.value
         val paidAmountCandidates = extractPaidAmountCandidates(rows)
         if (paidAmountCandidates.map { it.value }.toSet().size > 1) {
             return TicketParseResult.NeedsCorrection("识别到多个票面合计金额，请重新拍摄或人工核对")
@@ -71,14 +65,17 @@ class ConservativeTicketParser : TicketParser {
         val paidAmountFen = paidAmountCandidate?.value
         val periodCount = explicitPeriodCount ?: V1_PERIOD_COUNT
         val expectedAmountFen =
-            TicketAmountCalculator.calculate(
-                lotteryType = lotteryType,
-                betLineCount = parsedBets.size,
-                additionalLineCount = if (isAdditional) parsedBets.size else 0,
-                multiplier = multiplier,
-                periodCount = periodCount,
-            )
-                ?: return TicketParseResult.NeedsCorrection("无法根据当前投注结构计算金额")
+            if (multiplier != null && isAdditional != null) {
+                TicketAmountCalculator.calculate(
+                    lotteryType = lotteryType,
+                    betLineCount = parsedBets.size,
+                    additionalLineCount = if (isAdditional) parsedBets.size else 0,
+                    multiplier = multiplier,
+                    periodCount = periodCount,
+                )
+            } else {
+                null
+            }
         val draft =
             TicketDraft(
                 lotteryType = lotteryType,
@@ -104,6 +101,14 @@ class ConservativeTicketParser : TicketParser {
                 parsedBets.forEachIndexed { index, parsed ->
                     add(TicketFieldRegion(TicketFieldReference.BetLine(index), parsed.bounds))
                 }
+                multiplierExtraction.bounds?.let { bounds ->
+                    add(TicketFieldRegion(TicketFieldReference.Multiplier, bounds))
+                }
+                if (lotteryType == LotteryType.SUPER_LOTTO) {
+                    additionalExtraction.bounds?.let { bounds ->
+                        add(TicketFieldRegion(TicketFieldReference.Additional, bounds))
+                    }
+                }
                 paidAmountCandidate?.let { candidate ->
                     add(TicketFieldRegion(TicketFieldReference.PaidAmount, candidate.bounds))
                 }
@@ -113,10 +118,19 @@ class ConservativeTicketParser : TicketParser {
                 if (issue.isEmpty()) {
                     add("期号缺失或格式错误，请在票面校正页补充")
                 }
+                if (multiplier == null) {
+                    add("投注倍数缺失、存在字符混淆或多个候选值，请明确选择")
+                }
+                if (isAdditional == null) {
+                    add("大乐透追加属性缺失或存在冲突，请明确选择")
+                }
                 if (paidAmountFen == null) {
                     add("票面合计金额缺失或格式错误，请在票面校正页补充")
-                } else if (expectedAmountFen != paidAmountFen) {
+                } else if (expectedAmountFen != null && expectedAmountFen != paidAmountFen) {
                     add("票面金额与投注行、倍数、期数或追加属性不一致")
+                }
+                if (multiplier != null && isAdditional != null && expectedAmountFen == null) {
+                    add("无法根据当前投注结构计算金额")
                 }
             }
         if (correctionMessages.isNotEmpty()) {
@@ -329,43 +343,63 @@ class ConservativeTicketParser : TicketParser {
             numbers.distinct().size == numbers.size &&
             numbers.zipWithNext().all { (left, right) -> left < right }
 
-    /** 提取全票统一倍数；双色球可从每行一致的 `xN` 标记取得倍数。 */
+    /** 提取全票统一倍数及所在区域；双色球可从每行一致的 `xN` 标记取得倍数。 */
     private fun extractMultiplier(
         rows: List<VisualRow>,
         parsedBets: List<ParsedBetRow>,
         lotteryType: LotteryType,
-    ): Int? {
+    ): FieldExtraction<Int> {
         val summaryCandidates =
             rows
                 .asSequence()
-                .map { it.text.normalizedForParsing() }
-                .mapNotNull { text ->
+                .mapNotNull { row ->
+                    val text = row.text.normalizedForParsing()
                     EXACT_MULTIPLIER_REGEX
                         .find(text)
                         ?.groupValues
                         ?.get(1)
                         ?.toIntOrNull()
-                }.toSet()
-        if (summaryCandidates.size == 1) return summaryCandidates.single().takeIf { it in VALID_MULTIPLIER_RANGE }
-        if (summaryCandidates.size > 1 || lotteryType != LotteryType.DOUBLE_COLOR_BALL) return null
-
-        val rowCandidates = parsedBets.mapNotNull { it.rowMultiplier }.toSet()
-        return rowCandidates.singleOrNull()?.takeIf { candidate ->
-            candidate in VALID_MULTIPLIER_RANGE && parsedBets.all { it.rowMultiplier == candidate }
+                        ?.let { value -> LocatedValue(value, row.bounds) }
+                }.toList()
+        if (summaryCandidates.isNotEmpty()) {
+            val values = summaryCandidates.map { it.value }.toSet()
+            return FieldExtraction(
+                value = values.singleOrNull()?.takeIf { it in VALID_MULTIPLIER_RANGE },
+                bounds = summaryCandidates.map { it.bounds }.coveringBoundsOrNull(),
+            )
         }
+        if (lotteryType != LotteryType.DOUBLE_COLOR_BALL) return FieldExtraction(value = null, bounds = null)
+
+        val rowsWithMultiplier = parsedBets.filter { it.rowMultiplier != null }
+        val rowCandidates = rowsWithMultiplier.mapNotNull { it.rowMultiplier }.toSet()
+        val value =
+            rowCandidates.singleOrNull()?.takeIf { candidate ->
+                candidate in VALID_MULTIPLIER_RANGE && parsedBets.all { it.rowMultiplier == candidate }
+            }
+        return FieldExtraction(
+            value = value,
+            bounds = rowsWithMultiplier.map { it.bounds }.coveringBoundsOrNull(),
+        )
     }
 
-    /** 从大乐透投注摘要判断是否追加；摘要缺失时不默认解释为基本投注。 */
-    private fun extractSuperLottoAdditional(rows: List<VisualRow>): Boolean? {
+    /** 从大乐透投注摘要判断是否追加并保留区域；摘要缺失时不默认解释为基本投注。 */
+    private fun extractSuperLottoAdditional(rows: List<VisualRow>): FieldExtraction<Boolean> {
         val summaries =
             rows
                 .asSequence()
-                .map { it.text.normalizedForParsing() }
-                .filter { text -> EXACT_MULTIPLIER_REGEX.containsMatchIn(text) }
-                .toList()
-        if (summaries.isEmpty()) return null
-        val additionalValues = summaries.map { it.compactForKeywords().contains(ADDITIONAL_KEYWORD) }.toSet()
-        return additionalValues.singleOrNull()
+                .mapNotNull { row ->
+                    val text = row.text.normalizedForParsing()
+                    val compactText = text.compactForKeywords()
+                    if (EXACT_MULTIPLIER_REGEX.containsMatchIn(text) || compactText.contains(ADDITIONAL_KEYWORD)) {
+                        LocatedValue(compactText.contains(ADDITIONAL_KEYWORD), row.bounds)
+                    } else {
+                        null
+                    }
+                }.toList()
+        return FieldExtraction(
+            value = summaries.map { it.value }.toSet().singleOrNull(),
+            bounds = summaries.map { it.bounds }.coveringBoundsOrNull(),
+        )
     }
 
     /** 提取所有带“合计”锚点的金额候选，并精确转换为分。 */
@@ -468,6 +502,17 @@ class ConservativeTicketParser : TicketParser {
     private val NormalizedBounds.height: Float
         get() = kotlin.math.abs(bottom - top)
 
+    /** 返回所有区域的最小覆盖矩形；列表为空时返回 `null`。 */
+    private fun List<NormalizedBounds>.coveringBoundsOrNull(): NormalizedBounds? {
+        if (isEmpty()) return null
+        return NormalizedBounds(
+            left = minOf { it.left },
+            top = minOf { it.top },
+            right = maxOf { it.right },
+            bottom = maxOf { it.bottom },
+        )
+    }
+
     /** 彩种检测结果。 */
     private sealed interface LotteryTypeDetection {
         /**
@@ -536,6 +581,17 @@ class ConservativeTicketParser : TicketParser {
     private data class LocatedValue<T>(
         val value: T,
         val bounds: NormalizedBounds,
+    )
+
+    /**
+     * 一个允许值待人工确认、同时保留候选区域的字段提取结果。
+     *
+     * @property value 唯一合法值；缺失、非法或冲突时为 `null`。
+     * @property bounds 所有相关 OCR 视觉行的最小覆盖区域。
+     */
+    private data class FieldExtraction<T>(
+        val value: T?,
+        val bounds: NormalizedBounds?,
     )
 
     /**

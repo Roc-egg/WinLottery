@@ -293,6 +293,8 @@ private fun TicketFieldReference.displayName(): String =
     when (this) {
         TicketFieldReference.Issue -> "期号"
         is TicketFieldReference.BetLine -> "第 ${index + 1} 注"
+        TicketFieldReference.Multiplier -> "倍数"
+        TicketFieldReference.Additional -> "追加"
         TicketFieldReference.PaidAmount -> "金额"
     }
 

@@ -27,7 +27,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -199,12 +198,28 @@ fun ReviewScreen(
         if (editor.lotteryType.value == LotteryType.SUPER_LOTTO) {
             SettingRow(
                 title = "追加投注",
-                detail = if (editor.isAdditional) "每注增加 1 元" else "基本投注",
+                detail =
+                    when (editor.isAdditional) {
+                        true -> "每注增加 1 元"
+                        false -> "基本投注"
+                        null -> "待确认"
+                    },
             ) {
-                Switch(
-                    checked = editor.isAdditional,
-                    onCheckedChange = onAdditionalChange,
-                )
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    FilterChip(
+                        selected = editor.isAdditional == false,
+                        onClick = { onAdditionalChange(false) },
+                        label = { Text("基本") },
+                    )
+                    FilterChip(
+                        selected = editor.isAdditional == true,
+                        onClick = { onAdditionalChange(true) },
+                        label = { Text("追加") },
+                    )
+                }
+            }
+            evaluation.problems.firstMessageFor("isAdditional")?.let { message ->
+                FieldProblem(message)
             }
             Spacer(Modifier.height(12.dp))
         }
@@ -414,27 +429,33 @@ private fun NumberBall(
 /** 显示投注倍数步进器。 */
 @Composable
 private fun MultiplierEditor(
-    multiplier: Int,
+    multiplier: Int?,
     onMultiplierChange: (Int) -> Unit,
 ) {
-    SettingRow(title = "投注倍数", detail = "可选 1 至 99 倍") {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            IconButton(
-                onClick = { onMultiplierChange(multiplier - 1) },
-                enabled = multiplier > MIN_MULTIPLIER,
-            ) {
-                Icon(LotteryIcons.Minus, contentDescription = "减少倍数")
+    SettingRow(title = "投注倍数", detail = if (multiplier == null) "待确认" else "可选 1 至 99 倍") {
+        if (multiplier == null) {
+            TextButton(onClick = { onMultiplierChange(MIN_MULTIPLIER) }) {
+                Text("确认 1 倍")
             }
-            Text(
-                "$multiplier 倍",
-                modifier = Modifier.width(64.dp),
-                style = MaterialTheme.typography.titleMedium,
-            )
-            IconButton(
-                onClick = { onMultiplierChange(multiplier + 1) },
-                enabled = multiplier < MAX_MULTIPLIER,
-            ) {
-                Icon(LotteryIcons.Plus, contentDescription = "增加倍数")
+        } else {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(
+                    onClick = { onMultiplierChange(multiplier - 1) },
+                    enabled = multiplier > MIN_MULTIPLIER,
+                ) {
+                    Icon(LotteryIcons.Minus, contentDescription = "减少倍数")
+                }
+                Text(
+                    "$multiplier 倍",
+                    modifier = Modifier.width(64.dp),
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                IconButton(
+                    onClick = { onMultiplierChange(multiplier + 1) },
+                    enabled = multiplier < MAX_MULTIPLIER,
+                ) {
+                    Icon(LotteryIcons.Plus, contentDescription = "增加倍数")
+                }
             }
         }
     }

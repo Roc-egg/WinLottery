@@ -100,13 +100,13 @@ sealed interface TicketReviewAction {
  *
  * @property primaryNumbers 前区或红球号码。
  * @property secondaryNumbers 后区或蓝球号码。
- * @property isAdditional 该行是否为大乐透追加投注。
+ * @property isAdditional 该行是否为大乐透追加投注，尚待用户确认时值为 `null`。
  * @property originalText OCR 原始行文本。
  */
 data class TicketLineReviewState(
     val primaryNumbers: TicketReviewField<List<Int>>,
     val secondaryNumbers: TicketReviewField<List<Int>>,
-    val isAdditional: TicketReviewField<Boolean>,
+    val isAdditional: TicketReviewField<Boolean?>,
     val originalText: String,
 )
 
@@ -131,7 +131,7 @@ data class TicketReviewEvaluation(
  * @property lotteryType 当前玩法。
  * @property issue 当前期号输入。
  * @property betLines 保留票面顺序的投注行。
- * @property multiplier 当前投注倍数。
+ * @property multiplier 当前投注倍数，尚待用户确认时值为 `null`。
  * @property periodCount 当前投注期数，V1 固定为 1。
  * @property paidAmountYuan 当前票面金额输入，单位为元。
  */
@@ -139,23 +139,26 @@ data class TicketReviewState(
     val lotteryType: TicketReviewField<LotteryType?>,
     val issue: TicketReviewField<String>,
     val betLines: List<TicketLineReviewState>,
-    val multiplier: TicketReviewField<Int>,
+    val multiplier: TicketReviewField<Int?>,
     val periodCount: TicketReviewField<Int>,
     val paidAmountYuan: TicketReviewField<String>,
 ) {
-    /** 当前所有投注行是否均为追加投注。 */
-    val isAdditional: Boolean
-        get() = betLines.isNotEmpty() && betLines.all { it.isAdditional.value }
+    /** 当前全票追加属性；尚未确认或各行不一致时为 `null`。 */
+    val isAdditional: Boolean?
+        get() = betLines.map { it.isAdditional.value }.toSet().singleOrNull()
 
     /** 根据当前投注结构计算出的理论金额，单位为分。 */
     val calculatedAmountFen: Long?
         get() {
             val selectedLotteryType = lotteryType.value ?: return null
+            val selectedMultiplier = multiplier.value ?: return null
+            val additionalValues = betLines.map { it.isAdditional.value }
+            if (additionalValues.any { it == null }) return null
             return TicketAmountCalculator.calculate(
                 lotteryType = selectedLotteryType,
                 betLineCount = betLines.size,
-                additionalLineCount = betLines.count { it.isAdditional.value },
-                multiplier = multiplier.value,
+                additionalLineCount = additionalValues.count { it == true },
+                multiplier = selectedMultiplier,
                 periodCount = periodCount.value,
             )
         }
@@ -193,19 +196,22 @@ data class TicketReviewState(
     private fun changeLotteryType(value: LotteryType): TicketReviewState {
         if (lotteryType.value == value) return this
         val updatedLines =
-            if (value == LotteryType.DOUBLE_COLOR_BALL) {
-                betLines.map { line ->
-                    line.copy(
-                        isAdditional =
-                            if (line.isAdditional.value) {
-                                TicketReviewField(false, TicketFieldOrigin.DERIVED)
-                            } else {
-                                line.isAdditional
-                            },
-                    )
+            when {
+                value == LotteryType.DOUBLE_COLOR_BALL -> {
+                    betLines.map { line ->
+                        line.copy(isAdditional = TicketReviewField(false, TicketFieldOrigin.DERIVED))
+                    }
                 }
-            } else {
-                betLines
+
+                lotteryType.value == LotteryType.DOUBLE_COLOR_BALL -> {
+                    betLines.map { line ->
+                        line.copy(isAdditional = TicketReviewField(null, TicketFieldOrigin.DERIVED))
+                    }
+                }
+
+                else -> {
+                    betLines
+                }
             }
         return copy(
             lotteryType = TicketReviewField(value, TicketFieldOrigin.USER),
@@ -286,7 +292,20 @@ data class TicketReviewState(
                 problems += TicketValidationProblem("paidAmountFen", "票面金额必须是最多两位小数的非负金额")
                 null
             }
-        if (selectedLotteryType == null || paidAmountFen == null) {
+        val selectedMultiplier =
+            multiplier.value ?: run {
+                problems += TicketValidationProblem("multiplier", "请明确确认投注倍数")
+                null
+            }
+        if (betLines.any { it.isAdditional.value == null }) {
+            problems += TicketValidationProblem("isAdditional", "请选择基本投注或追加投注")
+        }
+        if (
+            selectedLotteryType == null ||
+            paidAmountFen == null ||
+            selectedMultiplier == null ||
+            betLines.any { it.isAdditional.value == null }
+        ) {
             return TicketBuildResult.Invalid(problems)
         }
 
@@ -307,11 +326,15 @@ data class TicketReviewState(
                                     line.secondaryNumbers.value.sorted(),
                                     line.secondaryNumbers.origin,
                                 ),
-                            isAdditional = ConfirmedValue(line.isAdditional.value, line.isAdditional.origin),
+                            isAdditional =
+                                ConfirmedValue(
+                                    checkNotNull(line.isAdditional.value),
+                                    line.isAdditional.origin,
+                                ),
                             originalText = line.originalText,
                         )
                     },
-                multiplier = ConfirmedValue(multiplier.value, multiplier.origin),
+                multiplier = ConfirmedValue(selectedMultiplier, multiplier.origin),
                 periodCount = ConfirmedValue(periodCount.value, periodCount.origin),
                 paidAmountFen = ConfirmedValue(paidAmountFen, paidAmountYuan.origin),
             ),
@@ -321,7 +344,7 @@ data class TicketReviewState(
     /** 从保守解析器输出的草稿创建初始校正状态。 */
     companion object {
         /**
-         * 把 OCR 草稿映射为可编辑字段，缺失的 V1 固定值使用推导来源。
+         * 把 OCR 草稿映射为可编辑字段；未知倍数和追加属性保持为空，V1 固定期数使用推导来源。
          *
          * @param draft 等待人工核对的 OCR 草稿。
          */
@@ -336,22 +359,15 @@ data class TicketReviewState(
                             secondaryNumbers =
                                 TicketReviewField(line.secondaryNumbers.sorted(), TicketFieldOrigin.OCR),
                             isAdditional =
-                                TicketReviewField(
-                                    line.isAdditional ?: false,
-                                    if (line.isAdditional == null) {
-                                        TicketFieldOrigin.DERIVED
-                                    } else {
-                                        TicketFieldOrigin.OCR
-                                    },
-                                ),
+                                if (draft.lotteryType == LotteryType.DOUBLE_COLOR_BALL) {
+                                    TicketReviewField(false, TicketFieldOrigin.DERIVED)
+                                } else {
+                                    TicketReviewField(line.isAdditional, TicketFieldOrigin.OCR)
+                                },
                             originalText = line.originalText,
                         )
                     },
-                multiplier =
-                    TicketReviewField(
-                        draft.multiplier ?: MIN_MULTIPLIER,
-                        if (draft.multiplier == null) TicketFieldOrigin.DERIVED else TicketFieldOrigin.OCR,
-                    ),
+                multiplier = TicketReviewField(draft.multiplier, TicketFieldOrigin.OCR),
                 periodCount =
                     TicketReviewField(
                         draft.periodCount ?: V1_PERIOD_COUNT,
@@ -366,9 +382,6 @@ data class TicketReviewState(
 
         /** 期号输入允许的最大位数。 */
         private const val MAX_ISSUE_INPUT_LENGTH = 7
-
-        /** V1 最小投注倍数。 */
-        private const val MIN_MULTIPLIER = 1
 
         /** V1 合法投注倍数。 */
         private val VALID_MULTIPLIER_RANGE = 1..99

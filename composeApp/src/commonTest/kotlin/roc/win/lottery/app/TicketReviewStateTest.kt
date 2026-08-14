@@ -9,6 +9,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /** 移动端共用票面校正状态测试。 */
@@ -125,6 +126,50 @@ class TicketReviewStateTest {
 
         assertTrue(evaluation.canConfirm)
         assertEquals(TicketFieldOrigin.USER, assertNotNull(evaluation.ticket).issue.origin)
+    }
+
+    /** 解析器未取得倍数时必须保持空值，用户明确选择后才能构造票据。 */
+    @Test
+    fun missingDraftMultiplierRequiresExplicitSelection() {
+        val state = TicketReviewState.fromDraft(superLottoDraft().copy(multiplier = null))
+
+        val initialEvaluation = state.evaluate(validator)
+        assertFalse(initialEvaluation.canConfirm)
+        assertNull(state.multiplier.value)
+        assertNull(state.calculatedAmountFen)
+        assertTrue(initialEvaluation.problems.any { it.field == "multiplier" })
+
+        val repaired = state.applyAction(TicketReviewAction.ChangeMultiplier(1))
+        val evaluation = repaired.evaluate(validator)
+
+        assertTrue(evaluation.canConfirm)
+        val ticket = assertNotNull(evaluation.ticket)
+        assertEquals(1, ticket.multiplier.value)
+        assertEquals(TicketFieldOrigin.USER, ticket.multiplier.origin)
+    }
+
+    /** 大乐透追加属性未知时必须保持空值，用户明确选择后才能构造票据。 */
+    @Test
+    fun missingDraftAdditionalRequiresExplicitSelection() {
+        val draft =
+            superLottoDraft().copy(
+                betLines = superLottoDraft().betLines.map { it.copy(isAdditional = null) },
+            )
+        val state = TicketReviewState.fromDraft(draft)
+
+        val initialEvaluation = state.evaluate(validator)
+        assertFalse(initialEvaluation.canConfirm)
+        assertNull(state.isAdditional)
+        assertNull(state.calculatedAmountFen)
+        assertTrue(initialEvaluation.problems.any { it.field == "isAdditional" })
+
+        val repaired = state.applyAction(TicketReviewAction.ChangeAdditional(true))
+        val evaluation = repaired.evaluate(validator)
+
+        assertTrue(evaluation.canConfirm)
+        val additional = assertNotNull(evaluation.ticket).betLines.single().isAdditional
+        assertTrue(additional.value)
+        assertEquals(TicketFieldOrigin.USER, additional.origin)
     }
 
     /** 切换到双色球后应能修正号码和金额并重新得到合法票据。 */

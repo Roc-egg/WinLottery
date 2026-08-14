@@ -57,6 +57,12 @@ sealed interface TicketFieldReference {
         val index: Int,
     ) : TicketFieldReference
 
+    /** 投注倍数。 */
+    data object Multiplier : TicketFieldReference
+
+    /** 大乐透基本或追加投注属性。 */
+    data object Additional : TicketFieldReference
+
     /** 票面合计金额。 */
     data object PaidAmount : TicketFieldReference
 }

@@ -47,6 +47,8 @@ class ConservativeTicketParserTest {
                 TicketFieldReference.BetLine(2),
                 TicketFieldReference.BetLine(3),
                 TicketFieldReference.BetLine(4),
+                TicketFieldReference.Multiplier,
+                TicketFieldReference.Additional,
                 TicketFieldReference.PaidAmount,
             ),
             review.fieldRegions.map { it.field },
@@ -83,6 +85,8 @@ class ConservativeTicketParserTest {
         val betRegion = review.fieldRegions.single { it.field == TicketFieldReference.BetLine(0) }
         assertEquals(0.10f, betRegion.bounds.left)
         assertEquals(0.88f, betRegion.bounds.right)
+        assertTrue(review.fieldRegions.any { it.field == TicketFieldReference.Multiplier })
+        assertTrue(review.fieldRegions.any { it.field == TicketFieldReference.Additional })
     }
 
     /** 双色球单式多注版式应读取每行统一倍数并保留票面顺序。 */
@@ -466,9 +470,9 @@ class ConservativeTicketParserTest {
         assertNull(correction.draft)
     }
 
-    /** 倍数无法确定时不能用默认一倍生成可恢复草稿。 */
+    /** 倍数和追加均无法确定时应保留空值进入校正，不能静默使用默认值。 */
     @Test
-    fun missingMultiplierDoesNotProvideDraft() {
+    fun missingMultiplierProvidesUnconfirmedDraft() {
         val result =
             parser.parse(
                 document(
@@ -481,10 +485,35 @@ class ConservativeTicketParserTest {
 
         val correction = assertIs<TicketParseResult.NeedsCorrection>(result)
         assertTrue(correction.message.contains("倍数"))
-        assertNull(correction.draft)
+        assertTrue(correction.message.contains("追加属性"))
+        val draft = assertNotNull(correction.draft)
+        assertNull(draft.multiplier)
+        assertNull(draft.betLines.single().isAdditional)
     }
 
-    /** 大乐透追加属性存在冲突时不能默认成基本投注生成草稿。 */
+    /** 多个倍数候选应保留空值和候选区域进入校正。 */
+    @Test
+    fun conflictingMultipliersProvideUnconfirmedDraft() {
+        val result =
+            parser.parse(
+                document(
+                    "超级大乐透",
+                    "第26999期",
+                    "单式票 1倍 合计2元",
+                    "2倍",
+                    "① 01 07 14 22 35 + 03 11",
+                ),
+            )
+
+        val correction = assertIs<TicketParseResult.NeedsCorrection>(result)
+        assertTrue(correction.message.contains("倍数"))
+        val draft = assertNotNull(correction.draft)
+        assertNull(draft.multiplier)
+        assertFalse(draft.betLines.single().isAdditional ?: true)
+        assertTrue(correction.fieldRegions.any { it.field == TicketFieldReference.Multiplier })
+    }
+
+    /** 大乐透追加属性存在冲突时应保留空值进入校正，不能默认成基本投注。 */
     @Test
     fun conflictingAdditionalStateDoesNotProvideDraft() {
         val result =
@@ -500,7 +529,10 @@ class ConservativeTicketParserTest {
 
         val correction = assertIs<TicketParseResult.NeedsCorrection>(result)
         assertTrue(correction.message.contains("追加属性"))
-        assertNull(correction.draft)
+        val draft = assertNotNull(correction.draft)
+        assertNull(draft.betLines.single().isAdditional)
+        assertEquals(1, draft.multiplier)
+        assertTrue(correction.fieldRegions.any { it.field == TicketFieldReference.Additional })
     }
 
     /** 同一号码区域非升序时必须回到人工核对，不能静默重排。 */

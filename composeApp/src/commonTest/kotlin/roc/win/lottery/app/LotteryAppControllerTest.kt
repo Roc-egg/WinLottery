@@ -213,6 +213,48 @@ class LotteryAppControllerTest {
             assertTrue(paths.deletedImageIds.isEmpty())
         }
 
+    /** 倍数和追加均待确认时，控制器必须在两项都由用户选择后才解除确认闸门。 */
+    @Test
+    fun unresolvedTicketPropertiesRequireSeparateUserSelections() =
+        runTest {
+            val baseDraft = validDraft()
+            val unresolvedDraft =
+                baseDraft.copy(
+                    betLines = baseDraft.betLines.map { it.copy(isAdditional = null) },
+                    multiplier = null,
+                )
+            val parser =
+                TicketParser {
+                    TicketParseResult.NeedsCorrection(
+                        message = "倍数和追加属性待确认",
+                        draft = unresolvedDraft,
+                    )
+                }
+            val controller =
+                createController(
+                    repository = CountingDrawRepository(),
+                    ticketParser = parser,
+                )
+
+            controller.startAnalysis(ImageAcquisitionSource.SYSTEM_PICKER)
+
+            val initialReview = assertIs<AppScreen.Review>(controller.uiState.value.screen)
+            assertFalse(initialReview.evaluation.canConfirm)
+            assertTrue(initialReview.evaluation.problems.any { it.field == "multiplier" })
+            assertTrue(initialReview.evaluation.problems.any { it.field == "isAdditional" })
+
+            controller.updateTicketReview(TicketReviewAction.ChangeMultiplier(1))
+
+            val multiplierReview = assertIs<AppScreen.Review>(controller.uiState.value.screen)
+            assertFalse(multiplierReview.evaluation.canConfirm)
+            assertFalse(multiplierReview.evaluation.problems.any { it.field == "multiplier" })
+            assertTrue(multiplierReview.evaluation.problems.any { it.field == "isAdditional" })
+
+            controller.updateTicketReview(TicketReviewAction.ChangeAdditional(true))
+
+            assertTrue(assertIs<AppScreen.Review>(controller.uiState.value.screen).evaluation.canConfirm)
+        }
+
     /** 不带安全草稿的人工修正结果仍应进入错误页并立即清理临时图片。 */
     @Test
     fun unrecoverableParseResultClearsTemporaryImage() =
