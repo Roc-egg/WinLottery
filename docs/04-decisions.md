@@ -26,7 +26,7 @@
 - 状态：已采用。
 - 决策：Android 使用 ML Kit bundled 模型，iOS 使用 Vision，Desktop 使用 PP-OCR ONNX；不调用云 OCR。
 - 原因：保护票据隐私、避免客户端密钥和网络依赖。
-- 影响：安装包体积增加，四端 OCR 准确率需分别校准。
+- 影响：安装包体积增加，四端 OCR 准确率需分别校准；Desktop 的 ONNX Runtime 只允许在父进程预先禁用遥测后启动的独立本地工作进程中加载。
 
 ## ADR-005：所有票面关键字段必须人工确认
 

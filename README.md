@@ -11,16 +11,16 @@
 | B0 需求与票样基线 | 进行中 | 产品边界、技术方案、支持门槛和隐私规则已固化；已完成 13 张真实图片的本地探索 | 样本数量、省份和拍摄条件不足；未建立双人真值，支持白名单保持为空 |
 | B1 四端工程骨架 | 核心完成 | 建立 Android、iOS、Windows/macOS 宿主、共享模块、Compose 页面壳、CI 和开发构建链路 | Windows MSI 仍待远端 runner 实际构建和干净系统验证 |
 | B2 开奖查询与规则引擎 | 核心完成，待验收 | 已实现体彩/福彩适配器、双源证据状态、两种彩票现行规则、倍数和大乐透追加计算 | 每种彩票 20 期正式对账、连续 6 个开奖窗口采样和数据授权仍未完成 |
-| B3 图片采集与 OCR PoC | 进行中 | Android/iOS 拍照、系统选图、本地 OCR 和保守解析已贯通；桌面导图、去元数据副本、ONNX Runtime 1.29.0 底座及 macOS 打包环境加载验证已完成 | 桌面 PP-OCR/ZXing、生产启动器的遥测前置禁用、完整图片质量与几何校正、准确率统计和干净系统连续识别未完成 |
+| B3 图片采集与 OCR PoC | 进行中 | Android/iOS 拍照、系统选图、本地 OCR 和保守解析已贯通；桌面导图、ONNX Runtime 1.29.0 底座及 macOS 无遥测工作进程分发验收已完成 | 桌面 PP-OCR/ZXing、Windows 工作进程实机验收、完整图片质量与几何校正、准确率统计和干净系统连续识别未完成 |
 | B4 票面解析与人工校正 | 未开始 | 已有保守解析器和真实识别阻断闸门作为前置验证 | 原图字段对照、号码编辑器、倍数/追加校正和人工确认未实现 |
 | B5 核心端到端闭环 | 未开始 | 开奖仓库、规则引擎与采集 PoC 已分别具备 | 尚未串联真实确认、开奖查询、中奖测算和结果页 |
 | B6 稳定性与 V1 发布 | 未开始 | 已建立发布指标和分批验收标准 | 盲测、性能、四端安装包、签名公证、隐私材料和数据授权未完成 |
 
-当前自动化基线按现有 Gradle 模块统计为 351 项：JVM 119 项、Android Host 120 项、iOS Simulator 112 项，失败、错误和跳过均为 0。Android 和 iOS 核心相机流程已通过真机冒烟；真实图片不会进入 Fake 开奖流程，分析结束后会清理应用私有临时副本。
+当前自动化基线按现有 Gradle 模块统计为 354 项：JVM 122 项、Android Host 120 项、iOS Simulator 112 项，失败、错误和跳过均为 0。Android 和 iOS 核心相机流程已通过真机冒烟；真实图片不会进入 Fake 开奖流程，分析结束后会清理应用私有临时副本。
 
 > 当前版本不能用于真实中奖判断，也不能解释为支持任何省份、销售终端或票面版式。B2、B3 均未通过验收闸门。
 
-桌面端当前只完成 ONNX Runtime 依赖、CPU Provider 探针和 macOS 分发环境加载验证，尚未包含 PP-OCR 模型或执行真实 OCR。官方 1.29.0 二进制默认开启遥测；探针和测试已强制要求在原生库初始化前禁用，但 Windows/macOS 产品启动器尚未完成同等配置，因此真实桌面 OCR 继续保持明确阻断。
+桌面端当前只完成 ONNX Runtime 依赖、CPU Provider 探针和独立本地工作进程，尚未包含 PP-OCR 模型或执行真实 OCR。普通 UI 主进程不加载 ONNX；macOS 分发启动器已验证由父进程注入 `ORT_DISABLE_TELEMETRY=1` 后再启动工作进程，Windows 仍待同等实机验收，因此真实桌面 OCR 继续保持明确阻断。
 
 开发基线文档：
 
@@ -51,6 +51,7 @@
 
 - Android 调试包：`./gradlew :androidApp:assembleDebug`
 - macOS 桌面应用：`./gradlew :desktopApp:run`
+- 桌面分发 ONNX 验收：`./gradlew :desktopApp:verifyPackagedOnnxRuntime`
 - JVM 共享测试：`./gradlew jvmTest`
 - 完整共享测试矩阵：`./gradlew jvmTest testAndroidHostTest iosSimulatorArm64Test`
 - 格式检查：`./gradlew spotlessCheck`

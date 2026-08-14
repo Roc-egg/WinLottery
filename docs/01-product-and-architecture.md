@@ -277,6 +277,7 @@ Desktop 首轮 PoC 使用以下有官方来源的组合，只有通过 B3 后才
 - 官方发布的是 Paddle 推理模型，不是 ONNX。使用 Paddle2ONNX `v2.1.0` 转换，PoC 固定转换命令、opset、转换日志、源文件和 ONNX 文件 SHA-256，并执行 ONNX checker 和金样本输出对比；禁止使用来源不明的社区 ONNX。
 - JVM 推理候选为 `com.microsoft.onnxruntime:onnxruntime:1.29.0` 的 CPU 执行提供器。官方 JAR 已核实包含 Windows x64 和 macOS arm64 原生库；B3 必须验证 Compose 打包、签名、公证以及是否剔除无关平台原生库。
 - 该版本官方 `Privacy.md` 明确说明受支持平台的官方二进制默认开启遥测。项目必须在原生库初始化前设置 `ORT_DISABLE_TELEMETRY=1`，或改用通过 `--no_telemetry` 构建并完成供应链记录的目标平台制品；只在初始化后调用关闭 API 不满足本项目的本地处理边界。Windows/macOS 产品启动器完成并验证该约束前，不得启用真实桌面 OCR。
+- Desktop PoC 采用独立本地工作进程隔离 ONNX Runtime：普通 UI 主进程不加载运行时，父进程在创建子进程时注入 `ORT_DISABLE_TELEMETRY=1`，子进程随后再次调用关闭遥测 API。运行时健康检查协议只返回版本和执行提供器，拒绝额外输出；macOS arm64 分发启动器已通过该路径，Windows x64 仍需在实际分发包中验收。
 - 三个官方 Paddle 模型的下载体积量级约 22 MB，ONNX Runtime 官方全平台 JAR 实测约 54.4 MB。转换后的 ONNX、目标平台裁剪和最终安装包体积只能以 B3 实测为准，不在设计阶段承诺。
 - 模型随安装包离线提供，运行时不联网下载；加载前校验版本和 SHA-256。
 - PaddleOCR、模型和 Paddle2ONNX 使用 Apache-2.0，ONNX Runtime 使用 MIT。发行包必须附带许可证正文、第三方声明、模型来源、版本、哈希和转换说明。
