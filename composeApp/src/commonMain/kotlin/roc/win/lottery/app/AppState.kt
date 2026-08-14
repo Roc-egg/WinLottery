@@ -29,13 +29,13 @@ sealed interface AppScreen {
      * 票面人工校正与确认页。
      *
      * @property editor 当前不可变编辑状态。
-     * @property imageRef 当前流程的临时图片引用，用于原图区域对照。
+     * @property imageRef OCR 流程的临时图片引用，手动录入时为 `null`。
      * @property evaluation 当前编辑状态的领域评估。
      * @property fieldRegions 可在原图中定位的 OCR 字段区域。
      */
     data class Review(
         val editor: TicketReviewState,
-        val imageRef: ImageRef,
+        val imageRef: ImageRef?,
         val evaluation: TicketReviewEvaluation,
         val fieldRegions: List<TicketFieldRegion>,
     ) : AppScreen

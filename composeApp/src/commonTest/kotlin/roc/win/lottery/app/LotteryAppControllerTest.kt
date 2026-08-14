@@ -41,10 +41,131 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /** 应用确认闸门和流程状态测试。 */
 class LotteryAppControllerTest {
+    /** 手动大乐透必须逐项通过确认闸门，并按精确期号查询且不触碰图片生命周期。 */
+    @Test
+    fun manualSuperLottoRequiresExplicitFieldsBeforeExactQuery() =
+        runTest {
+            val repository = SequenceDrawRepository(DrawQueryResult.Success(verifiedDraw()))
+            val paths = TrackingAppPaths()
+            val imageAcquirer = TrackingImageAcquirer()
+            val controller =
+                createController(
+                    repository = repository,
+                    appPaths = paths,
+                    usesRealDrawData = true,
+                    imageAcquirer = imageAcquirer,
+                )
+
+            controller.startManualEntry()
+
+            val initialReview = assertIs<AppScreen.Review>(controller.uiState.value.screen)
+            assertNull(initialReview.imageRef)
+            assertTrue(initialReview.fieldRegions.isEmpty())
+            assertFalse(initialReview.evaluation.canConfirm)
+            controller.updateTicketReview(TicketReviewAction.ChangeLotteryType(LotteryType.SUPER_LOTTO))
+            controller.updateTicketReview(TicketReviewAction.ChangeIssue("26091"))
+            enterManualLine(
+                controller = controller,
+                lineIndex = 0,
+                primaryNumbers = listOf(2, 7, 14, 21, 33),
+                secondaryNumbers = listOf(4, 9),
+            )
+
+            controller.confirmTicket()
+            assertEquals(0, repository.queryCount)
+
+            controller.updateTicketReview(TicketReviewAction.ChangeMultiplier(1))
+            controller.confirmTicket()
+            assertEquals(0, repository.queryCount)
+
+            controller.updateTicketReview(TicketReviewAction.ChangeAdditional(true))
+            controller.confirmTicket()
+            assertEquals(0, repository.queryCount)
+
+            controller.updateTicketReview(TicketReviewAction.UseCalculatedAmount)
+            assertTrue(assertIs<AppScreen.Review>(controller.uiState.value.screen).evaluation.canConfirm)
+            controller.confirmTicket()
+
+            val result = assertIs<AppScreen.VerificationResult>(controller.uiState.value.screen)
+            assertEquals(PrizeCheckStatus.WIN, result.prizeCheckResult.status)
+            assertEquals(LotteryType.SUPER_LOTTO, repository.lastLotteryType)
+            assertEquals(Issue("26091"), repository.lastIssue)
+            assertEquals(1, repository.queryCount)
+            assertEquals(0, imageAcquirer.acquisitionCount)
+            assertTrue(paths.deletedImageIds.isEmpty())
+        }
+
+    /** 完整手动双色球应自动固定非追加属性，并按七位精确期号进入真实测算。 */
+    @Test
+    fun manualDoubleColorBallQueriesExactIssueWithoutImage() =
+        runTest {
+            val repository =
+                SequenceDrawRepository(
+                    DrawQueryResult.Success(verifiedDoubleColorBallDraw()),
+                )
+            val paths = TrackingAppPaths()
+            val imageAcquirer = TrackingImageAcquirer()
+            val controller =
+                createController(
+                    repository = repository,
+                    appPaths = paths,
+                    usesRealDrawData = true,
+                    imageAcquirer = imageAcquirer,
+                )
+            controller.startManualEntry()
+            controller.updateTicketReview(TicketReviewAction.ChangeLotteryType(LotteryType.DOUBLE_COLOR_BALL))
+            controller.updateTicketReview(TicketReviewAction.ChangeIssue("2026092"))
+            val lines =
+                listOf(
+                    listOf(1, 2, 3, 4, 5, 6) to listOf(7),
+                    listOf(7, 8, 9, 10, 11, 12) to listOf(8),
+                    listOf(13, 14, 15, 16, 17, 18) to listOf(9),
+                    listOf(19, 20, 21, 22, 23, 24) to listOf(10),
+                    listOf(25, 26, 27, 28, 29, 30) to listOf(11),
+                )
+            lines.forEachIndexed { index, (primaryNumbers, secondaryNumbers) ->
+                if (index > 0) {
+                    controller.updateTicketReview(TicketReviewAction.AddBetLine)
+                }
+                enterManualLine(
+                    controller = controller,
+                    lineIndex = index,
+                    primaryNumbers = primaryNumbers,
+                    secondaryNumbers = secondaryNumbers,
+                )
+            }
+            controller.updateTicketReview(TicketReviewAction.ChangeMultiplier(1))
+            controller.updateTicketReview(TicketReviewAction.UseCalculatedAmount)
+
+            val review = assertIs<AppScreen.Review>(controller.uiState.value.screen)
+            assertFalse(checkNotNull(review.editor.isAdditional))
+            assertEquals(5, review.editor.betLines.size)
+            assertEquals(1_000L, review.editor.calculatedAmountFen)
+            assertTrue(review.evaluation.canConfirm)
+            controller.confirmTicket()
+
+            val result = assertIs<AppScreen.VerificationResult>(controller.uiState.value.screen)
+            assertEquals(PrizeCheckStatus.WIN, result.prizeCheckResult.status)
+            assertEquals(5, result.ticket.betLines.size)
+            assertEquals(1_000L, result.ticket.paidAmountFen.value)
+            assertEquals(
+                PrizeTierCodes.FIRST,
+                result.prizeCheckResult.lineResults
+                    .first()
+                    .prizeTierCode,
+            )
+            assertEquals(LotteryType.DOUBLE_COLOR_BALL, repository.lastLotteryType)
+            assertEquals(Issue("2026092"), repository.lastIssue)
+            assertEquals(1, repository.queryCount)
+            assertEquals(0, imageAcquirer.acquisitionCount)
+            assertTrue(paths.deletedImageIds.isEmpty())
+        }
+
     /** 导入分析完成后必须停留在人工确认页，不能自动查询开奖。 */
     @Test
     fun analysisStopsAtReviewGate() =
@@ -441,6 +562,25 @@ class LotteryAppControllerTest {
             paidAmountFen = 300L,
         )
 
+    /** 向手动录入页的指定行写入一注号码。 */
+    private fun enterManualLine(
+        controller: LotteryAppController,
+        lineIndex: Int,
+        primaryNumbers: List<Int>,
+        secondaryNumbers: List<Int>,
+    ) {
+        primaryNumbers.forEach { number ->
+            controller.updateTicketReview(
+                TicketReviewAction.ToggleNumber(lineIndex, TicketNumberArea.PRIMARY, number),
+            )
+        }
+        secondaryNumbers.forEach { number ->
+            controller.updateTicketReview(
+                TicketReviewAction.ToggleNumber(lineIndex, TicketNumberArea.SECONDARY, number),
+            )
+        }
+    }
+
     /** 创建与合法测试票完全匹配的双证据大乐透开奖结果。 */
     private fun verifiedDraw(): DrawResult =
         DrawResult(
@@ -460,6 +600,45 @@ class LotteryAppControllerTest {
                         displayName = "一等奖",
                         singlePrizeFen = 1_000_000L,
                         additionalPrizeFen = 800_000L,
+                    ),
+                ),
+            evidence =
+                SourceEvidence(
+                    sourceName = "测试主源",
+                    sourceUrl = "https://example.invalid/main",
+                    fetchedAtEpochMillis = 1L,
+                    contentSha256 = "main-hash",
+                ),
+            supportingEvidence =
+                listOf(
+                    SourceEvidence(
+                        sourceName = "测试辅助源",
+                        sourceUrl = "https://example.invalid/supporting",
+                        fetchedAtEpochMillis = 1L,
+                        contentSha256 = "supporting-hash",
+                    ),
+                ),
+        )
+
+    /** 创建与手动测试票完全匹配的双证据双色球开奖结果。 */
+    private fun verifiedDoubleColorBallDraw(): DrawResult =
+        DrawResult(
+            lotteryType = LotteryType.DOUBLE_COLOR_BALL,
+            issue = Issue("2026092"),
+            drawDate = "2026-08-13",
+            primaryNumbers = listOf(1, 2, 3, 4, 5, 6),
+            secondaryNumbers = listOf(7),
+            status = DrawStatus.FINAL_PAYOUT,
+            revision = 1,
+            ruleVersion = RuleVersion.SSQ_2026_01.code,
+            policy = DrawPolicy.STANDARD,
+            prizeTiers =
+                listOf(
+                    PrizeTier(
+                        code = PrizeTierCodes.FIRST,
+                        displayName = "一等奖",
+                        singlePrizeFen = 1_000_000_000L,
+                        additionalPrizeFen = null,
                     ),
                 ),
             evidence =
@@ -528,6 +707,22 @@ class LotteryAppControllerTest {
         ): roc.win.lottery.data.DrawQueryResult {
             queryCount += 1
             return delegate.getDraw(lotteryType, issue)
+        }
+    }
+
+    /** 记录是否意外进入图片采集流程。 */
+    private class TrackingImageAcquirer : ImageAcquirer {
+        /** 手动流程测试不提供相机。 */
+        override val supportsCamera: Boolean = false
+
+        /** 实际收到的图片采集次数。 */
+        var acquisitionCount: Int = 0
+            private set
+
+        /** 记录异常采集并返回取消结果。 */
+        override suspend fun acquire(source: ImageAcquisitionSource): ImageAcquisitionResult {
+            acquisitionCount += 1
+            return ImageAcquisitionResult.Cancelled
         }
     }
 

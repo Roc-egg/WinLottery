@@ -64,6 +64,18 @@ sealed interface TicketReviewAction {
         val number: Int,
     ) : TicketReviewAction
 
+    /** 在手动录入票据末尾增加一行空的单式投注。 */
+    data object AddBetLine : TicketReviewAction
+
+    /**
+     * 删除一行手动录入的单式投注。
+     *
+     * @property lineIndex 待删除的投注行下标。
+     */
+    data class RemoveBetLine(
+        val lineIndex: Int,
+    ) : TicketReviewAction
+
     /**
      * 修改投注倍数。
      *
@@ -173,6 +185,8 @@ data class TicketReviewState(
             is TicketReviewAction.ChangeLotteryType -> changeLotteryType(action.lotteryType)
             is TicketReviewAction.ChangeIssue -> changeIssue(action.value)
             is TicketReviewAction.ToggleNumber -> toggleNumber(action)
+            TicketReviewAction.AddBetLine -> addBetLine()
+            is TicketReviewAction.RemoveBetLine -> removeBetLine(action.lineIndex)
             is TicketReviewAction.ChangeMultiplier -> changeMultiplier(action.value)
             is TicketReviewAction.ChangeAdditional -> changeAdditional(action.value)
             is TicketReviewAction.ChangePaidAmount -> changePaidAmount(action.value)
@@ -227,6 +241,7 @@ data class TicketReviewState(
 
     /** 切换指定投注行中的号码。 */
     private fun toggleNumber(action: TicketReviewAction.ToggleNumber): TicketReviewState {
+        if (lotteryType.value == null) return this
         val line = betLines.getOrNull(action.lineIndex) ?: return this
         val globalRange =
             when (action.area) {
@@ -246,6 +261,44 @@ data class TicketReviewState(
                 }
             }
         return copy(betLines = betLines.replaceAt(action.lineIndex, updatedLine))
+    }
+
+    /** 增加一行空单式投注，并继承当前全票追加属性。 */
+    private fun addBetLine(): TicketReviewState {
+        val additionalField: TicketReviewField<Boolean?> =
+            when (lotteryType.value) {
+                LotteryType.DOUBLE_COLOR_BALL -> {
+                    TicketReviewField(false, TicketFieldOrigin.DERIVED)
+                }
+
+                LotteryType.SUPER_LOTTO -> {
+                    betLines
+                        .firstOrNull()
+                        ?.isAdditional
+                        ?.takeIf { isAdditional != null }
+                        ?: TicketReviewField(null, TicketFieldOrigin.USER)
+                }
+
+                null -> {
+                    TicketReviewField(null, TicketFieldOrigin.USER)
+                }
+            }
+        return copy(
+            betLines =
+                betLines +
+                    TicketLineReviewState(
+                        primaryNumbers = TicketReviewField(emptyList(), TicketFieldOrigin.USER),
+                        secondaryNumbers = TicketReviewField(emptyList(), TicketFieldOrigin.USER),
+                        isAdditional = additionalField,
+                        originalText = "",
+                    ),
+        )
+    }
+
+    /** 删除指定投注行，但始终保留至少一行供用户继续录入。 */
+    private fun removeBetLine(lineIndex: Int): TicketReviewState {
+        if (betLines.size <= 1 || lineIndex !in betLines.indices) return this
+        return copy(betLines = betLines.filterIndexed { index, _ -> index != lineIndex })
     }
 
     /** 接受 V1 范围内的投注倍数。 */
@@ -341,8 +394,31 @@ data class TicketReviewState(
         )
     }
 
-    /** 从保守解析器输出的草稿创建初始校正状态。 */
+    /** 创建手动录入或 OCR 校正所需的初始状态。 */
     companion object {
+        /**
+         * 创建一张等待用户完整录入的单期单式彩票。
+         *
+         * 所有影响查询和金额的字段均保持未确认，只有固定为 1 的期数使用推导来源。
+         */
+        fun createManual(): TicketReviewState =
+            TicketReviewState(
+                lotteryType = TicketReviewField(null, TicketFieldOrigin.USER),
+                issue = TicketReviewField("", TicketFieldOrigin.USER),
+                betLines =
+                    listOf(
+                        TicketLineReviewState(
+                            primaryNumbers = TicketReviewField(emptyList(), TicketFieldOrigin.USER),
+                            secondaryNumbers = TicketReviewField(emptyList(), TicketFieldOrigin.USER),
+                            isAdditional = TicketReviewField(null, TicketFieldOrigin.USER),
+                            originalText = "",
+                        ),
+                    ),
+                multiplier = TicketReviewField(null, TicketFieldOrigin.USER),
+                periodCount = TicketReviewField(V1_PERIOD_COUNT, TicketFieldOrigin.DERIVED),
+                paidAmountYuan = TicketReviewField("", TicketFieldOrigin.USER),
+            )
+
         /**
          * 把 OCR 草稿映射为可编辑字段；未知倍数和追加属性保持为空，V1 固定期数使用推导来源。
          *

@@ -69,6 +69,19 @@ class LotteryAppController(
         }
     }
 
+    /** 直接进入不依赖 OCR 的单期单式彩票手动录入页。 */
+    suspend fun startManualEntry() {
+        if (!container.usesRealDrawData) return
+        flowGeneration += 1L
+        clearTemporaryImage()
+        val editor = TicketReviewState.createManual()
+        mutableUiState.value =
+            AppUiState(
+                screen = createReviewScreen(editor, imageRef = null, fieldRegions = emptyList()),
+                isDemo = container.isDemo,
+            )
+    }
+
     /** 在 OCR 前执行本地质量闸门，并在拒绝时立即清理临时图片。 */
     private suspend fun inspectImage(
         acquisition: ImageAcquisitionResult.Success,
@@ -218,7 +231,7 @@ class LotteryAppController(
                                 it.copy(
                                     screen =
                                         createReviewScreen(
-                                            draft = draft,
+                                            editor = TicketReviewState.fromDraft(draft),
                                             imageRef = acquisition.imageRef,
                                             fieldRegions = parsed.fieldRegions,
                                         ),
@@ -237,7 +250,7 @@ class LotteryAppController(
                                 it.copy(
                                     screen =
                                         createReviewScreen(
-                                            draft = parsed.draft,
+                                            editor = TicketReviewState.fromDraft(parsed.draft),
                                             imageRef = acquisition.imageRef,
                                             fieldRegions = parsed.fieldRegions,
                                         ),
@@ -250,20 +263,18 @@ class LotteryAppController(
         }
     }
 
-    /** 从解析草稿创建带实时领域评估的校正页状态。 */
+    /** 从编辑状态创建带实时领域评估的校正页。 */
     private fun createReviewScreen(
-        draft: roc.win.lottery.domain.TicketDraft,
-        imageRef: ImageRef,
+        editor: TicketReviewState,
+        imageRef: ImageRef?,
         fieldRegions: List<TicketFieldRegion>,
-    ): AppScreen.Review {
-        val editor = TicketReviewState.fromDraft(draft)
-        return AppScreen.Review(
+    ): AppScreen.Review =
+        AppScreen.Review(
             editor = editor,
             imageRef = imageRef,
             evaluation = editor.evaluate(container.ticketValidator),
             fieldRegions = fieldRegions,
         )
-    }
 
     /** 只在当前流程仍有效时展示错误。 */
     private suspend fun showError(

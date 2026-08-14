@@ -14,6 +14,54 @@ import kotlin.test.assertTrue
 
 /** 移动端共用票面校正状态测试。 */
 class TicketReviewStateTest {
+    /** 手动录入必须从完全未确认状态开始，且选择彩种前不能写入号码。 */
+    @Test
+    fun manualEntryStartsIncompleteAndBlocksEarlyNumbers() {
+        val state = TicketReviewState.createManual()
+
+        val evaluation = state.evaluate(validator)
+        val unchanged = state.applyAction(TicketReviewAction.ToggleNumber(0, TicketNumberArea.PRIMARY, 1))
+
+        assertFalse(evaluation.canConfirm)
+        assertNull(state.lotteryType.value)
+        assertEquals("", state.issue.value)
+        assertEquals(1, state.betLines.size)
+        assertTrue(
+            state.betLines
+                .single()
+                .primaryNumbers.value
+                .isEmpty(),
+        )
+        assertNull(state.multiplier.value)
+        assertNull(state.isAdditional)
+        assertEquals("", state.paidAmountYuan.value)
+        assertEquals(state, unchanged)
+        assertTrue(evaluation.problems.any { it.field == "lotteryType" })
+        assertTrue(evaluation.problems.any { it.field == "multiplier" })
+        assertTrue(evaluation.problems.any { it.field == "isAdditional" })
+        assertTrue(evaluation.problems.any { it.field == "paidAmountFen" })
+    }
+
+    /** 手动多注应继承全票追加属性，并且删除时始终保留至少一行。 */
+    @Test
+    fun manualBetLinesCanBeAddedAndRemovedSafely() {
+        val state =
+            TicketReviewState
+                .createManual()
+                .applyAction(TicketReviewAction.ChangeLotteryType(LotteryType.SUPER_LOTTO))
+                .applyAction(TicketReviewAction.ChangeAdditional(true))
+                .applyAction(TicketReviewAction.AddBetLine)
+
+        assertEquals(2, state.betLines.size)
+        assertTrue(state.betLines.all { it.isAdditional.value == true })
+
+        val reduced = state.applyAction(TicketReviewAction.RemoveBetLine(0))
+        val unchanged = reduced.applyAction(TicketReviewAction.RemoveBetLine(0))
+
+        assertEquals(1, reduced.betLines.size)
+        assertEquals(reduced, unchanged)
+    }
+
     /** 未修改字段生成票据后必须保留 OCR 来源。 */
     @Test
     fun unchangedFieldsKeepOcrOrigin() {

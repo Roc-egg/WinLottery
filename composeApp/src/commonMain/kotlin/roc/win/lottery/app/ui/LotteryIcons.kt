@@ -7,8 +7,10 @@ import com.composables.icons.lucide.Image
 import com.composables.icons.lucide.Info
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Minus
+import com.composables.icons.lucide.Pencil
 import com.composables.icons.lucide.Plus
 import com.composables.icons.lucide.ShieldCheck
+import com.composables.icons.lucide.Trash2
 
 /** 从 Lucide 图标集集中暴露应用使用的图标。 */
 object LotteryIcons {
@@ -24,6 +26,9 @@ object LotteryIcons {
     /** 图片导入图标。 */
     val Image: ImageVector = Lucide.Image
 
+    /** 手动录入图标。 */
+    val Edit: ImageVector = Lucide.Pencil
+
     /** 隐私盾牌图标。 */
     val Privacy: ImageVector = Lucide.ShieldCheck
 
@@ -32,4 +37,7 @@ object LotteryIcons {
 
     /** 增加数值图标。 */
     val Plus: ImageVector = Lucide.Plus
+
+    /** 删除投注行图标。 */
+    val Delete: ImageVector = Lucide.Trash2
 }

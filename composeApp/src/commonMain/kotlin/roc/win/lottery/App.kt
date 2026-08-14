@@ -51,6 +51,9 @@ fun App(container: AppContainer = remember { AppContainer.createDemo(getPlatform
                     onImport = {
                         scope.launch { controller.startAnalysis(ImageAcquisitionSource.SYSTEM_PICKER) }
                     },
+                    onManualEntry = {
+                        scope.launch { controller.startManualEntry() }
+                    },
                     onAbout = controller::showAbout,
                 )
             }
@@ -84,6 +87,12 @@ fun App(container: AppContainer = remember { AppContainer.createDemo(getPlatform
                         controller.updateTicketReview(
                             TicketReviewAction.ToggleNumber(lineIndex, area, number),
                         )
+                    },
+                    onAddBetLine = {
+                        controller.updateTicketReview(TicketReviewAction.AddBetLine)
+                    },
+                    onRemoveBetLine = { lineIndex ->
+                        controller.updateTicketReview(TicketReviewAction.RemoveBetLine(lineIndex))
                     },
                     onMultiplierChange = {
                         controller.updateTicketReview(TicketReviewAction.ChangeMultiplier(it))

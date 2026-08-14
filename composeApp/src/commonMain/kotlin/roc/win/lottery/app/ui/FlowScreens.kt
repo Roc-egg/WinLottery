@@ -84,7 +84,7 @@ fun AnalysisScreen(
  *
  * @param editor 当前不可变编辑状态。
  * @param evaluation 当前领域评估。
- * @param imageRef 当前流程的私有临时图片引用。
+ * @param imageRef OCR 流程的私有临时图片引用，手动录入时为 `null`。
  * @param fieldRegions 可在原图中定位的 OCR 字段区域。
  * @param isDemo 开奖等后续能力是否仍为开发演示实现。
  * @param usesRealRecognition 当前草稿是否来自真实图片导入和本地 OCR。
@@ -93,6 +93,8 @@ fun AnalysisScreen(
  * @param onLotteryTypeChange 修改彩种。
  * @param onIssueChange 修改期号。
  * @param onNumberToggle 切换指定投注行的号码球。
+ * @param onAddBetLine 新增一行手动单式投注。
+ * @param onRemoveBetLine 删除一行手动单式投注。
  * @param onMultiplierChange 修改倍数。
  * @param onAdditionalChange 修改大乐透追加属性。
  * @param onPaidAmountChange 修改票面金额。
@@ -103,7 +105,7 @@ fun AnalysisScreen(
 fun ReviewScreen(
     editor: TicketReviewState,
     evaluation: TicketReviewEvaluation,
-    imageRef: ImageRef,
+    imageRef: ImageRef?,
     fieldRegions: List<TicketFieldRegion>,
     isDemo: Boolean,
     usesRealRecognition: Boolean,
@@ -112,21 +114,28 @@ fun ReviewScreen(
     onLotteryTypeChange: (LotteryType) -> Unit,
     onIssueChange: (String) -> Unit,
     onNumberToggle: (Int, TicketNumberArea, Int) -> Unit,
+    onAddBetLine: () -> Unit,
+    onRemoveBetLine: (Int) -> Unit,
     onMultiplierChange: (Int) -> Unit,
     onAdditionalChange: (Boolean) -> Unit,
     onPaidAmountChange: (String) -> Unit,
     onUseCalculatedAmount: () -> Unit,
     onConfirm: () -> Unit,
 ) {
-    val previewState = if (usesRealRecognition) rememberTicketPreviewState(imageRef) else null
+    val isManualEntry = imageRef == null
+    val previewState = if (usesRealRecognition && imageRef != null) rememberTicketPreviewState(imageRef) else null
     AppShell(
-        title = "确认票面信息",
+        title = if (isManualEntry) "手动录入彩票" else "确认票面信息",
         navigationIcon = LotteryIcons.Back,
         onNavigate = onBack,
     ) {
         if (isDemo) {
             StatusBanner(
                 when {
+                    isManualEntry && usesRealDrawData -> {
+                        "手动录入会绕过 OCR；确认后会精确查询该期官网数据并在本机测算。当前仍是未通过正式对账的移动验证版。"
+                    }
+
                     usesRealRecognition && usesRealDrawData -> {
                         "票面来自本地 OCR；确认后会精确查询该期官网数据并在本机测算。当前仍是未通过正式对账的移动验证版。"
                     }
@@ -168,6 +177,9 @@ fun ReviewScreen(
                 )
             }
         }
+        evaluation.problems.firstMessageFor("lotteryType")?.let { message ->
+            FieldProblem(message)
+        }
         Spacer(Modifier.height(18.dp))
         OutlinedTextField(
             value = editor.issue.value,
@@ -181,18 +193,40 @@ fun ReviewScreen(
         evaluation.problems.firstMessageFor("issue")?.let { message ->
             FieldProblem(message)
         }
-        Spacer(Modifier.height(24.dp))
-        Text("投注号码", style = MaterialTheme.typography.titleLarge)
-        Spacer(Modifier.height(12.dp))
-        editor.betLines.forEachIndexed { index, line ->
-            TicketLineEditor(
-                lineIndex = index,
-                line = line,
-                lotteryType = editor.lotteryType.value,
-                problems = evaluation.problems,
-                onNumberToggle = onNumberToggle,
-            )
-            Spacer(Modifier.height(10.dp))
+        val selectedLotteryType = editor.lotteryType.value
+        if (selectedLotteryType != null) {
+            Spacer(Modifier.height(24.dp))
+            Text("投注号码", style = MaterialTheme.typography.titleLarge)
+            Spacer(Modifier.height(12.dp))
+            editor.betLines.forEachIndexed { index, line ->
+                val removeAction: (() -> Unit)? =
+                    if (isManualEntry) {
+                        { onRemoveBetLine(index) }
+                    } else {
+                        null
+                    }
+                TicketLineEditor(
+                    lineIndex = index,
+                    line = line,
+                    lotteryType = selectedLotteryType,
+                    problems = evaluation.problems,
+                    canRemove = isManualEntry && editor.betLines.size > 1,
+                    onRemove = removeAction,
+                    onNumberToggle = onNumberToggle,
+                )
+                Spacer(Modifier.height(10.dp))
+            }
+            if (isManualEntry) {
+                OutlinedButton(
+                    onClick = onAddBetLine,
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                    shape = MaterialTheme.shapes.small,
+                ) {
+                    Icon(LotteryIcons.Plus, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("添加一注")
+                }
+            }
         }
         Spacer(Modifier.height(14.dp))
         Text("投注属性", style = MaterialTheme.typography.titleLarge)
@@ -294,14 +328,18 @@ fun ReviewScreen(
  * @param line 当前行编辑状态。
  * @param lotteryType 当前玩法。
  * @param problems 当前领域问题。
+ * @param canRemove 当前投注行是否允许删除。
+ * @param onRemove 删除当前投注行的操作；OCR 校正模式为 `null`。
  * @param onNumberToggle 切换号码球的操作。
  */
 @Composable
 private fun TicketLineEditor(
     lineIndex: Int,
     line: TicketLineReviewState,
-    lotteryType: LotteryType?,
+    lotteryType: LotteryType,
     problems: List<TicketValidationProblem>,
+    canRemove: Boolean,
+    onRemove: (() -> Unit)?,
     onNumberToggle: (Int, TicketNumberArea, Int) -> Unit,
 ) {
     val spec = LotteryNumberSpec.forLottery(lotteryType)
@@ -318,11 +356,18 @@ private fun TicketLineEditor(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text("第 ${lineIndex + 1} 注", style = MaterialTheme.typography.titleMedium)
-                Text(
-                    line.displayOrigin().displayName(),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        line.displayOrigin().displayName(),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    onRemove?.let { remove ->
+                        IconButton(onClick = remove, enabled = canRemove) {
+                            Icon(LotteryIcons.Delete, contentDescription = "删除本注")
+                        }
+                    }
+                }
             }
             NumberAreaEditor(
                 title = spec.primaryName,
@@ -766,7 +811,7 @@ private fun List<TicketValidationProblem>.firstMessageFor(field: String): String
 private fun TicketFieldOrigin.displayName(): String =
     when (this) {
         TicketFieldOrigin.OCR -> "OCR 识别"
-        TicketFieldOrigin.USER -> "用户已修改"
+        TicketFieldOrigin.USER -> "用户输入"
         TicketFieldOrigin.DERIVED -> "规则推导"
     }
 
@@ -804,16 +849,14 @@ private data class LotteryNumberSpec(
 ) {
     /** 创建当前玩法的 V1 单式号码规格。 */
     companion object {
-        /** 返回当前玩法的号码规格，玩法待确认时先展示大乐透范围。 */
-        fun forLottery(lotteryType: LotteryType?): LotteryNumberSpec =
+        /** 返回当前玩法的号码规格。 */
+        fun forLottery(lotteryType: LotteryType): LotteryNumberSpec =
             when (lotteryType) {
                 LotteryType.DOUBLE_COLOR_BALL -> {
                     LotteryNumberSpec("红球", 6, 1..33, "蓝球", 1, 1..16)
                 }
 
-                LotteryType.SUPER_LOTTO,
-                null,
-                -> {
+                LotteryType.SUPER_LOTTO -> {
                     LotteryNumberSpec("前区", 5, 1..35, "后区", 2, 1..12)
                 }
             }

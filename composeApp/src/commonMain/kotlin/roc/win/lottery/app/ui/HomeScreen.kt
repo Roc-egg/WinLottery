@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.dp
  * @param usesRealDrawData 是否已接入真实官网开奖查询。
  * @param onCamera 拍照操作。
  * @param onImport 图片导入操作。
+ * @param onManualEntry 手动录入彩票操作。
  * @param onAbout 关于与隐私操作。
  */
 @Composable
@@ -46,6 +47,7 @@ fun HomeScreen(
     usesRealDrawData: Boolean,
     onCamera: () -> Unit,
     onImport: () -> Unit,
+    onManualEntry: () -> Unit,
     onAbout: () -> Unit,
 ) {
     AppShell(
@@ -90,6 +92,23 @@ fun HomeScreen(
                     Icon(LotteryIcons.Image, contentDescription = null)
                     Spacer(Modifier.width(10.dp))
                     Text("导入彩票图片")
+                }
+                if (usesRealDrawData) {
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedButton(
+                        onClick = onManualEntry,
+                        modifier = Modifier.fillMaxWidth().height(54.dp),
+                        shape = MaterialTheme.shapes.small,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                        colors =
+                            ButtonDefaults.outlinedButtonColors(
+                                contentColor = MaterialTheme.colorScheme.secondary,
+                            ),
+                    ) {
+                        Icon(LotteryIcons.Edit, contentDescription = null)
+                        Spacer(Modifier.width(10.dp))
+                        Text("手动录入彩票")
+                    }
                 }
                 Spacer(Modifier.height(32.dp))
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
