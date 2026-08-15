@@ -57,13 +57,26 @@ class DoubleColorBallSourceAdapterTest {
         )
     }
 
+    /** 最新固化期应按普通状态解析，不得继续停留在发布中。 */
+    @Test
+    fun latestConfirmedStandardIssueIsNormalized() {
+        val raw = DrawContractFixtures.doubleColorBallMain(issue = "2026093")
+
+        val snapshot =
+            assertIs<SourceParseResult.Success<MainDrawSnapshot>>(
+                DoubleColorBallSourceAdapter.parseMain(raw, "2026093", MAIN_URL),
+            ).value
+
+        assertEquals(DrawPolicy.STANDARD, snapshot.policy)
+    }
+
     /** 超过已固化政策证据末期时不能把空字段猜成普通状态。 */
     @Test
     fun futurePolicyWithoutEvidenceIsPublishing() {
-        val raw = DrawContractFixtures.doubleColorBallMain(issue = "2026093")
+        val raw = DrawContractFixtures.doubleColorBallMain(issue = "2026094")
 
         assertIs<SourceParseResult.Publishing>(
-            DoubleColorBallSourceAdapter.parseMain(raw, "2026093", MAIN_URL),
+            DoubleColorBallSourceAdapter.parseMain(raw, "2026094", MAIN_URL),
         )
     }
 

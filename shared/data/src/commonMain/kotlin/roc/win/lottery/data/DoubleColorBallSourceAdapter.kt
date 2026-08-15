@@ -414,8 +414,8 @@ internal object DoubleColorBallSourceAdapter {
     /** 本轮特别规定退出后的首个普通期号。 */
     private const val FIRST_CONFIRMED_STANDARD_ISSUE = "2026076"
 
-    /** 截至核查日已由主、详情接口和官方退出公告共同确认的普通末期。 */
-    private const val LAST_CONFIRMED_STANDARD_ISSUE = "2026092"
+    /** 截至核查日已由前期奖池、主详情接口和规则阈值共同确认的普通末期。 */
+    private const val LAST_CONFIRMED_STANDARD_ISSUE = "2026093"
 
     /** 福彩奖级类型到领域编码的映射。 */
     private val DOUBLE_COLOR_BALL_TIER_TYPES =

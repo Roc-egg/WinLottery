@@ -14,7 +14,6 @@ import roc.win.lottery.domain.PrizeTierCodes
 import roc.win.lottery.domain.TicketFieldOrigin
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
 /** 只在开发者显式启用时访问官网的低频单期 smoke 测试。 */
@@ -33,13 +32,13 @@ class OfficialDrawRepositoryLiveSmokeTest {
             val repository = OfficialDrawRepository()
 
             val superLotto =
-                assertIs<DrawQueryResult.Success>(
-                    repository.getDraw(LotteryType.SUPER_LOTTO, Issue(superLottoIssue)),
-                ).drawResult
+                repository
+                    .getDraw(LotteryType.SUPER_LOTTO, Issue(superLottoIssue))
+                    .requireSuccess("大乐透", superLottoIssue)
             val doubleColorBall =
-                assertIs<DrawQueryResult.Success>(
-                    repository.getDraw(LotteryType.DOUBLE_COLOR_BALL, Issue(doubleColorBallIssue)),
-                ).drawResult
+                repository
+                    .getDraw(LotteryType.DOUBLE_COLOR_BALL, Issue(doubleColorBallIssue))
+                    .requireSuccess("双色球", doubleColorBallIssue)
 
             assertTrue(superLotto.status in VERIFIED_STATUSES)
             assertTrue(doubleColorBall.status in VERIFIED_STATUSES)
@@ -52,6 +51,16 @@ class OfficialDrawRepositoryLiveSmokeTest {
                 assertEquals(PrizeCheckStatus.WIN, prizeCheck.status)
                 assertEquals(PrizeTierCodes.FIRST, prizeCheck.lineResults.single().prizeTierCode)
             }
+        }
+
+    /** 取得成功结果；失败时只报告规范化状态和安全说明，不泄露官网正文。 */
+    private fun DrawQueryResult.requireSuccess(
+        lotteryName: String,
+        issue: String,
+    ): DrawResult =
+        when (this) {
+            is DrawQueryResult.Success -> drawResult
+            is DrawQueryResult.Unavailable -> error("$lotteryName $issue 查询未就绪：$status，$message")
         }
 
     /** 使用规范化开奖号码在内存构造一张单倍基本投注头奖票。 */

@@ -458,7 +458,6 @@ class OfficialDrawHistoricalReconciliationLiveTest {
         val DOUBLE_COLOR_BALL_ISSUES =
             listOf(
                 "2026014",
-                "2026015",
                 "2026075",
                 "2026076",
                 "2026077",
@@ -477,6 +476,7 @@ class OfficialDrawHistoricalReconciliationLiveTest {
                 "2026090",
                 "2026091",
                 "2026092",
+                "2026093",
             )
 
         /** 大乐透期号格式。 */
@@ -501,7 +501,7 @@ class OfficialDrawHistoricalReconciliationLiveTest {
         const val DOUBLE_COLOR_BALL_FIRST_SUPPORTED_ISSUE = "2026014"
 
         /** 双色球本轮最新期。 */
-        const val DOUBLE_COLOR_BALL_LATEST_ISSUE = "2026092"
+        const val DOUBLE_COLOR_BALL_LATEST_ISSUE = "2026093"
 
         /** 双色球特别规定最后一期。 */
         const val DOUBLE_COLOR_BALL_SPECIAL_LAST_ISSUE = "2026075"
