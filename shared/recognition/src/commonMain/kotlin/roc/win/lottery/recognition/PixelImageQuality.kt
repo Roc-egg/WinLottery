@@ -3,6 +3,7 @@ package roc.win.lottery.recognition
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.atan2
+import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
 /**
@@ -34,7 +35,7 @@ fun interface LuminanceImageDecoder {
 }
 
 /**
- * 使用固定尺寸亮度样本拒绝严重曝光异常、全局明显模糊和明显画面倾斜。
+ * 使用固定尺寸亮度样本拒绝严重曝光异常、全局明显模糊、关键内容裁切和明显画面倾斜。
  *
  * @property decoder 只在设备本地运行的平台亮度解码器。
  * @property maximumLongEdgePixels 参与指标计算的最长边，固定尺寸可保持平台阈值一致。
@@ -83,7 +84,7 @@ class PixelImageQualityAnalyzer(
         }
     }
 
-    /** 解码匿名亮度样本，并按曝光、清晰度、倾斜的顺序返回可操作问题。 */
+    /** 解码匿名亮度样本，并按曝光、清晰度、裁切、倾斜的顺序返回可操作问题。 */
     override suspend fun analyze(imageRef: ImageRef): ImageQualityResult {
         val sample =
             decoder.decode(imageRef, maximumLongEdgePixels)
@@ -113,6 +114,11 @@ class PixelImageQualityAnalyzer(
                 listOf("图片明显模糊，请保持手机稳定并重新拍摄"),
             )
         }
+        if (metrics.hasLikelyCroppedContent) {
+            return ImageQualityResult.PoorImage(
+                listOf("图片内容贴近边缘且可能被裁切，请完整拍下整张彩票"),
+            )
+        }
         if (
             metrics.strongEdgePixelRatio >= minimumSkewEdgePixelRatio &&
             metrics.axisCoherence >= minimumSkewCoherence &&
@@ -125,7 +131,7 @@ class PixelImageQualityAnalyzer(
         return ImageQualityResult.Passed
     }
 
-    /** 在线性时间内计算曝光、清晰度及水平或垂直边缘主轴。 */
+    /** 在线性时间内计算曝光、清晰度、边框印刷密度及水平或垂直边缘主轴。 */
     private fun calculateMetrics(sample: LuminanceImageSample): PixelImageMetrics? {
         val width = sample.widthPixels
         val height = sample.heightPixels
@@ -154,6 +160,9 @@ class PixelImageQualityAnalyzer(
         var strongEdgeWeight = 0.0
         var axisVectorX = 0.0
         var axisVectorY = 0.0
+        val cropBorderWidth =
+            maxOf(MINIMUM_CROP_BORDER_WIDTH_PIXELS, (minOf(width, height) * CROP_BORDER_RATIO).roundToInt())
+        val cropBorders = Array(CROP_BORDER_SIDE_COUNT) { CropBorderAccumulator() }
         for (y in 1 until height - 1) {
             val rowStart = y * width
             for (x in 1 until width - 1) {
@@ -184,7 +193,26 @@ class PixelImageQualityAnalyzer(
                     -topLeft - SOBEL_CENTER_WEIGHT * top - topRight +
                         bottomLeft + SOBEL_CENTER_WEIGHT * bottom + bottomRight
                 val edgeMagnitude = abs(gradientX) + abs(gradientY)
-                if (edgeMagnitude >= STRONG_EDGE_MAGNITUDE_THRESHOLD) {
+                val isStrongEdge = edgeMagnitude >= STRONG_EDGE_MAGNITUDE_THRESHOLD
+                val isInkEdge =
+                    isStrongEdge &&
+                        minOf(topLeft, top, topRight, left, right, bottomLeft, bottom, bottomRight) <=
+                        CROP_INK_LUMINANCE_MAXIMUM &&
+                        maxOf(topLeft, top, topRight, left, right, bottomLeft, bottom, bottomRight) >=
+                        CROP_PAPER_LUMINANCE_MINIMUM
+                if (y <= cropBorderWidth) {
+                    cropBorders[CROP_TOP_SIDE].record(x, width, isStrongEdge, isInkEdge)
+                }
+                if (y >= height - cropBorderWidth - 1) {
+                    cropBorders[CROP_BOTTOM_SIDE].record(x, width, isStrongEdge, isInkEdge)
+                }
+                if (x <= cropBorderWidth) {
+                    cropBorders[CROP_LEFT_SIDE].record(y, height, isStrongEdge, isInkEdge)
+                }
+                if (x >= width - cropBorderWidth - 1) {
+                    cropBorders[CROP_RIGHT_SIDE].record(y, height, isStrongEdge, isInkEdge)
+                }
+                if (isStrongEdge) {
                     val edgeWeight = edgeMagnitude.toDouble()
                     val gradientXDouble = gradientX.toDouble()
                     val gradientYDouble = gradientY.toDouble()
@@ -225,6 +253,9 @@ class PixelImageQualityAnalyzer(
             } else {
                 sqrt(axisVectorX * axisVectorX + axisVectorY * axisVectorY) / strongEdgeWeight
             }
+        val hasLikelyCroppedContent =
+            axisCoherence >= DEFAULT_MINIMUM_CROP_AXIS_COHERENCE &&
+                cropBorders.any(CropBorderAccumulator::indicatesLikelyCrop)
         return PixelImageMetrics(
             meanLuminance = luminanceSum / pixelCount,
             darkPixelRatio = darkPixelCount / pixelCount,
@@ -233,7 +264,73 @@ class PixelImageQualityAnalyzer(
             strongEdgePixelRatio = strongEdgePixelCount / pixelCount,
             dominantAxisAngleDegrees = dominantAxisAngleDegrees,
             axisCoherence = axisCoherence,
+            hasLikelyCroppedContent = hasLikelyCroppedContent,
         )
+    }
+
+    /**
+     * 单侧画面边框的可变统计器。
+     *
+     * @property segmentPixelCounts 各连续边框段的有效像素数。
+     * @property segmentInkEdgeCounts 各连续边框段的黑白印刷边缘数。
+     */
+    private class CropBorderAccumulator {
+        /** 当前侧边框带的有效像素总数。 */
+        private var pixelCount = 0L
+
+        /** 当前侧边框带的强 Sobel 边缘总数。 */
+        private var strongEdgeCount = 0L
+
+        /** 当前侧边框带的黑白印刷边缘总数。 */
+        private var inkEdgeCount = 0L
+
+        /** 各连续边框段的有效像素数。 */
+        private val segmentPixelCounts = LongArray(CROP_BORDER_SEGMENT_COUNT)
+
+        /** 各连续边框段的黑白印刷边缘数。 */
+        private val segmentInkEdgeCounts = LongArray(CROP_BORDER_SEGMENT_COUNT)
+
+        /** 记录一个边框像素及其所属连续段。 */
+        fun record(
+            coordinate: Int,
+            fullLength: Int,
+            isStrongEdge: Boolean,
+            isInkEdge: Boolean,
+        ) {
+            val segmentIndex =
+                (coordinate * CROP_BORDER_SEGMENT_COUNT / fullLength)
+                    .coerceIn(0, CROP_BORDER_SEGMENT_COUNT - 1)
+            pixelCount += 1
+            segmentPixelCounts[segmentIndex] += 1
+            if (isStrongEdge) strongEdgeCount += 1
+            if (isInkEdge) {
+                inkEdgeCount += 1
+                segmentInkEdgeCounts[segmentIndex] += 1
+            }
+        }
+
+        /** 根据同侧整体密度和连续段密度判断关键印刷内容是否可能被切断。 */
+        fun indicatesLikelyCrop(): Boolean {
+            if (pixelCount == 0L) return false
+            val strongEdgeRatio = strongEdgeCount.toDouble() / pixelCount
+            val inkEdgeRatio = inkEdgeCount.toDouble() / pixelCount
+            var maximumSegmentInkEdgeRatio = 0.0
+            var denseSegmentCount = 0
+            segmentPixelCounts.indices.forEach { index ->
+                val segmentPixelCount = segmentPixelCounts[index]
+                if (segmentPixelCount > 0L) {
+                    val segmentInkEdgeRatio = segmentInkEdgeCounts[index].toDouble() / segmentPixelCount
+                    maximumSegmentInkEdgeRatio = maxOf(maximumSegmentInkEdgeRatio, segmentInkEdgeRatio)
+                    if (segmentInkEdgeRatio >= MINIMUM_CROP_DENSE_SEGMENT_INK_EDGE_RATIO) {
+                        denseSegmentCount += 1
+                    }
+                }
+            }
+            return strongEdgeRatio >= MINIMUM_CROP_STRONG_EDGE_RATIO &&
+                inkEdgeRatio >= MINIMUM_CROP_INK_EDGE_RATIO &&
+                maximumSegmentInkEdgeRatio >= MINIMUM_CROP_SEGMENT_INK_EDGE_RATIO &&
+                denseSegmentCount >= MINIMUM_CROP_DENSE_SEGMENT_COUNT
+        }
     }
 
     /** 像素质量分析的固定阈值。 */
@@ -264,6 +361,54 @@ class PixelImageQualityAnalyzer(
 
         /** 主轴方向不集中时不推断倾斜，避免复杂背景主导结果。 */
         const val DEFAULT_MINIMUM_SKEW_COHERENCE = 0.18
+
+        /** 裁切判断同样要求稳定票面主轴，避免无序背景纹理触发。 */
+        const val DEFAULT_MINIMUM_CROP_AXIS_COHERENCE = 0.18
+
+        /** 只分析靠近画面四侧的 6% 区域，完整票样在该范围内均保留安全背景。 */
+        const val CROP_BORDER_RATIO = 0.06
+
+        /** 极小测试样本也至少保留一个像素宽的边框统计带。 */
+        const val MINIMUM_CROP_BORDER_WIDTH_PIXELS = 1
+
+        /** 上、下、左、右四个独立边框统计器。 */
+        const val CROP_BORDER_SIDE_COUNT = 4
+
+        /** 上边框统计器索引。 */
+        const val CROP_TOP_SIDE = 0
+
+        /** 下边框统计器索引。 */
+        const val CROP_BOTTOM_SIDE = 1
+
+        /** 左边框统计器索引。 */
+        const val CROP_LEFT_SIDE = 2
+
+        /** 右边框统计器索引。 */
+        const val CROP_RIGHT_SIDE = 3
+
+        /** 每侧分成固定段数，避免单个背景物体形成裁切结论。 */
+        const val CROP_BORDER_SEGMENT_COUNT = 12
+
+        /** 被认定为印刷黑白过渡时允许的局部暗部最高亮度。 */
+        const val CROP_INK_LUMINANCE_MAXIMUM = 110
+
+        /** 被认定为印刷黑白过渡时要求的局部纸面最低亮度。 */
+        const val CROP_PAPER_LUMINANCE_MINIMUM = 175
+
+        /** 疑似裁切侧至少需要 6% 像素属于强 Sobel 边缘。 */
+        const val MINIMUM_CROP_STRONG_EDGE_RATIO = 0.06
+
+        /** 疑似裁切侧至少需要 2% 像素属于黑白印刷边缘。 */
+        const val MINIMUM_CROP_INK_EDGE_RATIO = 0.02
+
+        /** 单个连续边框段至少需要 18% 黑白印刷边缘。 */
+        const val MINIMUM_CROP_SEGMENT_INK_EDGE_RATIO = 0.18
+
+        /** 边框段达到 8% 黑白印刷边缘时计为高密度段。 */
+        const val MINIMUM_CROP_DENSE_SEGMENT_INK_EDGE_RATIO = 0.08
+
+        /** 至少两个高密度段才能判定关键印刷内容延伸到画面边缘。 */
+        const val MINIMUM_CROP_DENSE_SEGMENT_COUNT = 2
 
         /** 亮度样本每条边至少需要三个像素才能计算拉普拉斯。 */
         const val MINIMUM_ANALYZABLE_EDGE_PIXELS = 3
@@ -328,6 +473,7 @@ class PixelImageQualityAnalyzer(
  * @property strongEdgePixelRatio 强 Sobel 边缘像素比例。
  * @property dominantAxisAngleDegrees 水平或垂直主轴的带符号偏角。
  * @property axisCoherence 主轴方向集中度，范围为 0 至 1。
+ * @property hasLikelyCroppedContent 是否有连续关键印刷内容延伸到画面边缘。
  */
 private data class PixelImageMetrics(
     val meanLuminance: Double,
@@ -337,4 +483,5 @@ private data class PixelImageMetrics(
     val strongEdgePixelRatio: Double,
     val dominantAxisAngleDegrees: Double,
     val axisCoherence: Double,
+    val hasLikelyCroppedContent: Boolean,
 )

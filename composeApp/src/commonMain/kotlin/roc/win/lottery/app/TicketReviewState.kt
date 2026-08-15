@@ -144,7 +144,7 @@ data class TicketReviewEvaluation(
  * @property issue 当前期号输入。
  * @property betLines 保留票面顺序的投注行。
  * @property multiplier 当前投注倍数，尚待用户确认时值为 `null`。
- * @property periodCount 当前投注期数，V1 固定为 1。
+ * @property periodCount 当前投注期数，多期值只用于展示和阻断不受支持的开奖测算。
  * @property paidAmountYuan 当前票面金额输入，单位为元。
  */
 data class TicketReviewState(
@@ -420,7 +420,7 @@ data class TicketReviewState(
             )
 
         /**
-         * 把 OCR 草稿映射为可编辑字段；未知倍数和追加属性保持为空，V1 固定期数使用推导来源。
+         * 把 OCR 草稿映射为可编辑字段；未知倍数和追加属性保持为空，缺失期数使用单期推导值。
          *
          * @param draft 等待人工核对的 OCR 草稿。
          */

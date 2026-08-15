@@ -289,8 +289,19 @@ fun ReviewScreen(
             }
             Spacer(Modifier.height(12.dp))
         }
-        SettingRow(title = "投注期数", detail = "V1 仅支持单期") {
-            Text("1 期", style = MaterialTheme.typography.titleMedium)
+        SettingRow(
+            title = "投注期数",
+            detail =
+                if (editor.periodCount.value == 1) {
+                    "当前支持单期开奖核对"
+                } else {
+                    "多期票字段可核对，暂不支持逐期开奖测算"
+                },
+        ) {
+            Text("${editor.periodCount.value} 期", style = MaterialTheme.typography.titleMedium)
+        }
+        evaluation.problems.firstMessageFor("periodCount")?.let { message ->
+            FieldProblem(message)
         }
         Spacer(Modifier.height(18.dp))
         Text("票面金额", style = MaterialTheme.typography.titleLarge)

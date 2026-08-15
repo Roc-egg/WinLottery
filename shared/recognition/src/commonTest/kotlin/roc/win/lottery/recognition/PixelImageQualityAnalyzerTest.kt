@@ -51,6 +51,25 @@ class PixelImageQualityAnalyzerTest {
             assertEquals(listOf("图片整体过亮，请避开强光和反光后重新拍摄"), poorImage.issues)
         }
 
+    /** 连续印刷内容延伸到任一画面边缘时应提示完整拍下整张彩票。 */
+    @Test
+    fun printedContentTouchingEachImageEdgeIsRejectedAsCropped() =
+        runTest {
+            val croppedSamples =
+                listOf(
+                    orientedGrid(0.0, topMargin = 0.0),
+                    orientedGrid(0.0, bottomMargin = 0.0),
+                    orientedGrid(0.0, leftMargin = 0.0),
+                    orientedGrid(0.0, rightMargin = 0.0),
+                )
+
+            croppedSamples.forEach { sample ->
+                val result = analyzer(sample).analyze(image())
+                val poorImage = assertIs<ImageQualityResult.PoorImage>(result)
+                assertEquals(listOf("图片内容贴近边缘且可能被裁切，请完整拍下整张彩票"), poorImage.issues)
+            }
+        }
+
     /** 轻微倾斜仍应放行，避免要求用户进行没有必要的精确对齐。 */
     @Test
     fun slightlySkewedGridPasses() =
@@ -178,8 +197,14 @@ class PixelImageQualityAnalyzerTest {
         )
     }
 
-    /** 创建包含两组相互垂直线条的指定角度亮度样本。 */
-    private fun orientedGrid(angleDegrees: Double): LuminanceImageSample {
+    /** 创建包含安全背景边距和两组相互垂直线条的指定角度亮度样本。 */
+    private fun orientedGrid(
+        angleDegrees: Double,
+        topMargin: Double = GRID_SAFE_MARGIN,
+        bottomMargin: Double = GRID_SAFE_MARGIN,
+        leftMargin: Double = GRID_SAFE_MARGIN,
+        rightMargin: Double = GRID_SAFE_MARGIN,
+    ): LuminanceImageSample {
         val angleRadians = angleDegrees / 180.0 * PI
         val angleCosine = cos(angleRadians)
         val angleSine = sin(angleRadians)
@@ -194,10 +219,17 @@ class PixelImageQualityAnalyzerTest {
                     val y = index / ORIENTED_SAMPLE_EDGE - centerY
                     val horizontalCoordinate = angleCosine * x + angleSine * y
                     val verticalCoordinate = -angleSine * x + angleCosine * y
+                    val isInsideTicket =
+                        x >= -centerX + leftMargin &&
+                            x <= centerX - rightMargin &&
+                            y >= -centerY + topMargin &&
+                            y <= centerY - bottomMargin
                     val isGridLine =
                         distanceToGridLine(horizontalCoordinate) <= GRID_LINE_HALF_WIDTH ||
                             distanceToGridLine(verticalCoordinate) <= GRID_LINE_HALF_WIDTH
-                    if (isGridLine) {
+                    if (!isInsideTicket) {
+                        GRID_BACKGROUND_LUMINANCE.toByte()
+                    } else if (isGridLine) {
                         DARK_GRID_LUMINANCE.toByte()
                     } else {
                         BRIGHT_GRID_LUMINANCE.toByte()
@@ -263,6 +295,12 @@ class PixelImageQualityAnalyzerTest {
 
         /** 倾斜网格线条半宽。 */
         const val GRID_LINE_HALF_WIDTH = 1.0
+
+        /** 完整票面印刷内容与画面边缘之间的安全背景宽度。 */
+        const val GRID_SAFE_MARGIN = 20.0
+
+        /** 票面安全边距外的中灰背景亮度。 */
+        const val GRID_BACKGROUND_LUMINANCE = 128
 
         /** 单条对角线半宽。 */
         const val DIAGONAL_LINE_HALF_WIDTH = 1

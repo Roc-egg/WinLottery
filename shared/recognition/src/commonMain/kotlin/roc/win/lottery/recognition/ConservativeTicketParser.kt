@@ -6,10 +6,10 @@ import roc.win.lottery.domain.TicketAmountCalculator
 import roc.win.lottery.domain.TicketDraft
 
 /**
- * 从平台标准 OCR 行中保守提取 V1 单式票字段。
+ * 从平台标准 OCR 行中保守提取单式票字段。
  *
- * 解析器只接受能够由票面原文直接证明的值。多期、补打、复式、胆拖、疑似字符混淆会被明确阻断；
- * 只有彩种与投注结构已经确定时，缺失期号、倍数、追加属性、金额或金额矛盾才会携带草稿进入人工校正。
+ * 解析器只接受能够由票面文字、坐标结构和金额关系共同证明的值。补打、复式和胆拖会被明确阻断；
+ * 多期票会保留已识别字段进入人工核对，但仍由领域层阻止当前版本执行逐期开奖测算。
  */
 class ConservativeTicketParser : TicketParser {
     /** 解析一份标准 OCR 文档，并返回等待确认或明确阻断状态。 */
@@ -34,10 +34,6 @@ class ConservativeTicketParser : TicketParser {
             return TicketParseResult.NeedsCorrection("识别到互相冲突的投注期数，请人工核对")
         }
         val explicitPeriodCount = explicitPeriodCounts.singleOrNull()
-        if (explicitPeriodCount != null && explicitPeriodCount != V1_PERIOD_COUNT) {
-            return TicketParseResult.Unsupported("识别到${explicitPeriodCount}期投注，V1 仅支持单期彩票")
-        }
-
         val issueCandidates = extractIssueCandidates(rows, lotteryType)
         if (issueCandidates.map { it.value }.toSet().size > 1) {
             return TicketParseResult.NeedsCorrection("识别到多个开奖期号，请重新拍摄或人工核对")
@@ -118,6 +114,9 @@ class ConservativeTicketParser : TicketParser {
                 if (issue.isEmpty()) {
                     add("期号缺失或格式错误，请在票面校正页补充")
                 }
+                if (periodCount != V1_PERIOD_COUNT) {
+                    add("已识别${periodCount}期投注，当前版本暂不支持多期逐期开奖核对")
+                }
                 if (multiplier == null) {
                     add("投注倍数缺失、存在字符混淆或多个候选值，请明确选择")
                 }
@@ -158,8 +157,16 @@ class ConservativeTicketParser : TicketParser {
             else -> null
         }?.let { return it }
 
-        val hasWelfareLotteryIssuer = compactTexts.any { it.contains(WELFARE_LOTTERY_ISSUER_KEYWORD) }
-        val hasSportsLotteryIssuer = compactTexts.any { it.contains(SPORTS_LOTTERY_ISSUER_KEYWORD) }
+        val hasWelfareLotteryIssuer =
+            compactTexts.any { text ->
+                text.contains(WELFARE_LOTTERY_ISSUER_KEYWORD) ||
+                    text.contains(WELFARE_LOTTERY_ISSUER_ABBREVIATION)
+            }
+        val hasSportsLotteryIssuer =
+            compactTexts.any { text ->
+                text.contains(SPORTS_LOTTERY_ISSUER_KEYWORD) ||
+                    text.contains(SPORTS_LOTTERY_ISSUER_ABBREVIATION)
+            }
         if (hasWelfareLotteryIssuer && hasSportsLotteryIssuer) {
             return LotteryTypeDetection.Failed("同时识别到福利彩票和体育彩票发行机构，请人工核对")
         }
@@ -183,37 +190,27 @@ class ConservativeTicketParser : TicketParser {
         }
     }
 
-    /**
-     * 从所有疑似投注行提取唯一合法的 `6+1` 或 `5+2` 结构；任何残缺或混合结构都会失败。
-     */
+    /** 从所有疑似投注行提取唯一合法的 `6+1` 或 `5+2` 结构；任何残缺或混合结构都会失败。 */
     private fun detectUniqueStrictBetStructure(rows: List<VisualRow>): LotteryType? {
         val detectedTypes = mutableSetOf<LotteryType>()
         var candidateFound = false
         rows.forEach { row ->
             val normalized = row.text.normalizedForParsing()
-            val plusIndex = normalized.indexOf(PLUS_SIGN)
-            if (plusIndex < 0) return@forEach
-
-            val primaryNumbers = extractTwoDigitNumbers(normalized.substring(0, plusIndex))
-            val secondaryNumbers =
-                extractTwoDigitNumbers(
-                    normalized
-                        .substring(plusIndex + 1)
-                        .replace(ROW_MULTIPLIER_REGEX, EMPTY_TEXT),
-                )
-            val resemblesBetRow =
-                primaryNumbers.size + secondaryNumbers.size >= MIN_NUMBER_TOKENS_FOR_BET_CANDIDATE
-            if (!resemblesBetRow) return@forEach
-            candidateFound = true
-
             val matchingTypes =
                 LotteryType.entries.filter { lotteryType ->
                     val spec = BetNumberSpec.forLottery(lotteryType)
-                    primaryNumbers.size == spec.primaryCount &&
-                        secondaryNumbers.size == spec.secondaryCount &&
-                        numbersAreValid(primaryNumbers, spec.primaryRange) &&
-                        numbersAreValid(secondaryNumbers, spec.secondaryRange)
+                    val split = extractBetNumberSplit(row, spec) ?: return@filter false
+                    numbersAreValid(split.primaryNumbers, spec.primaryRange) &&
+                        numbersAreValid(split.secondaryNumbers, spec.secondaryRange)
                 }
+            if (matchingTypes.isEmpty()) {
+                val explicitCandidate =
+                    normalized.contains(PLUS_SIGN) &&
+                        extractTwoDigitNumbers(normalized).size >= MIN_NUMBER_TOKENS_FOR_BET_CANDIDATE
+                if (explicitCandidate) return null
+                return@forEach
+            }
+            candidateFound = true
             if (matchingTypes.size != 1) return null
             detectedTypes += matchingTypes.single()
         }
@@ -247,14 +244,14 @@ class ConservativeTicketParser : TicketParser {
     private fun extractExplicitPeriodCounts(rows: List<VisualRow>): Set<Int> =
         rows
             .asSequence()
-            .map { it.text.normalizedForParsing() }
-            .filter { it.contains(MULTIPLIER_UNIT) }
-            .mapNotNull { text ->
+            .mapNotNull { row ->
+                val text = row.text.normalizedForParsing()
                 PERIOD_WITH_MULTIPLIER_REGEX
                     .find(text)
                     ?.groupValues
                     ?.get(1)
                     ?.toIntOrNull()
+                    ?: extractDegradedSummary(row)?.periodCount
             }.toSet()
 
     /** 提取所有与彩种长度一致的开奖期号候选，交由主流程判断缺失或冲突。 */
@@ -289,33 +286,26 @@ class ConservativeTicketParser : TicketParser {
         var malformedCandidateFound = false
         rows.forEach { row ->
             val normalized = row.text.normalizedForParsing()
-            val plusIndex = normalized.indexOf(PLUS_SIGN)
-            if (plusIndex < 0) return@forEach
-
-            val rowMultiplierMatch = ROW_MULTIPLIER_REGEX.find(normalized)
-            val primaryNumbers = extractTwoDigitNumbers(normalized.substring(0, plusIndex))
-            val secondaryText =
-                normalized
-                    .substring(plusIndex + 1)
-                    .replace(ROW_MULTIPLIER_REGEX, EMPTY_TEXT)
-            val secondaryNumbers = extractTwoDigitNumbers(secondaryText)
-            val resemblesBetRow =
-                primaryNumbers.size + secondaryNumbers.size >= MIN_NUMBER_TOKENS_FOR_BET_CANDIDATE
-            if (!resemblesBetRow) return@forEach
-            if (primaryNumbers.size != spec.primaryCount || secondaryNumbers.size != spec.secondaryCount) {
-                malformedCandidateFound = true
+            val split = extractBetNumberSplit(row, spec)
+            if (split == null) {
+                if (
+                    normalized.contains(PLUS_SIGN) &&
+                    extractTwoDigitNumbers(normalized).size >= MIN_NUMBER_TOKENS_FOR_BET_CANDIDATE
+                ) {
+                    malformedCandidateFound = true
+                }
                 return@forEach
             }
-            if (!numbersAreValid(primaryNumbers, spec.primaryRange) ||
-                !numbersAreValid(secondaryNumbers, spec.secondaryRange)
+            if (!numbersAreValid(split.primaryNumbers, spec.primaryRange) ||
+                !numbersAreValid(split.secondaryNumbers, spec.secondaryRange)
             ) {
                 return BetRowsResult.Failed("投注号码存在越界、重复或顺序异常，请人工核对")
             }
             parsedRows +=
                 ParsedBetRow(
-                    primaryNumbers = primaryNumbers,
-                    secondaryNumbers = secondaryNumbers,
-                    rowMultiplier = rowMultiplierMatch?.groupValues?.get(1)?.toIntOrNull(),
+                    primaryNumbers = split.primaryNumbers,
+                    secondaryNumbers = split.secondaryNumbers,
+                    rowMultiplier = split.rowMultiplier,
                     originalText = row.text,
                     bounds = row.bounds,
                 )
@@ -325,6 +315,93 @@ class ConservativeTicketParser : TicketParser {
             parsedRows.isEmpty() -> BetRowsResult.Failed("未识别到完整的单式投注号码")
             else -> BetRowsResult.Success(parsedRows.toList())
         }
+    }
+
+    /**
+     * 提取一行投注号码；加号缺失时只接受数量、范围、顺序和横向大间隔同时吻合的结构。
+     */
+    private fun extractBetNumberSplit(
+        row: VisualRow,
+        spec: BetNumberSpec,
+    ): BetNumberSplit? {
+        val normalized = row.text.normalizedForParsing()
+        val rowMultiplier =
+            ROW_MULTIPLIER_REGEX
+                .find(normalized)
+                ?.groupValues
+                ?.get(1)
+                ?.toIntOrNull()
+        val plusIndex = normalized.indexOf(PLUS_SIGN)
+        if (plusIndex >= 0) {
+            val primaryNumbers = extractTwoDigitNumbers(normalized.substring(0, plusIndex))
+            val secondaryNumbers =
+                extractTwoDigitNumbers(
+                    normalized
+                        .substring(plusIndex + 1)
+                        .replace(ROW_MULTIPLIER_REGEX, EMPTY_TEXT),
+                )
+            if (primaryNumbers.size != spec.primaryCount || secondaryNumbers.size != spec.secondaryCount) {
+                return null
+            }
+            return BetNumberSplit(primaryNumbers, secondaryNumbers, rowMultiplier)
+        }
+
+        val locatedNumbers = extractLocatedTwoDigitNumbers(row)
+        val totalNumberCount = spec.primaryCount + spec.secondaryCount
+        if (locatedNumbers.size != totalNumberCount ||
+            !hasReliableInferredSeparator(locatedNumbers, spec.primaryCount)
+        ) {
+            return null
+        }
+        return BetNumberSplit(
+            primaryNumbers = locatedNumbers.take(spec.primaryCount).map(LocatedNumber::value),
+            secondaryNumbers = locatedNumbers.drop(spec.primaryCount).map(LocatedNumber::value),
+            rowMultiplier = rowMultiplier,
+        )
+    }
+
+    /** 提取带横向中心位置的两位号码，并排除双色球行尾倍数。 */
+    private fun extractLocatedTwoDigitNumbers(row: VisualRow): List<LocatedNumber> =
+        row.fragments
+            .flatMap { fragment ->
+                val text = fragment.text.normalizedForParsing()
+                if (text.isEmpty()) return@flatMap emptyList()
+                val multiplierRanges = ROW_MULTIPLIER_REGEX.findAll(text).map { it.range }.toList()
+                TWO_DIGIT_NUMBER_REGEX
+                    .findAll(text)
+                    .filterNot { match ->
+                        multiplierRanges.any { range ->
+                            match.range.first <= range.last && range.first <= match.range.last
+                        }
+                    }.map { match ->
+                        val relativeCenter =
+                            (match.range.first + match.range.last + 1).toFloat() /
+                                (2f * text.length.toFloat())
+                        LocatedNumber(
+                            value = match.value.toInt(),
+                            horizontalCenter =
+                                fragment.bounds.left +
+                                    (fragment.bounds.right - fragment.bounds.left) * relativeCenter,
+                        )
+                    }.toList()
+            }.sortedBy(LocatedNumber::horizontalCenter)
+
+    /** 只有主区与次区之间是唯一明显横向大间隔时，才补偿 OCR 漏掉的加号。 */
+    private fun hasReliableInferredSeparator(
+        numbers: List<LocatedNumber>,
+        primaryCount: Int,
+    ): Boolean {
+        if (primaryCount <= 0 || primaryCount >= numbers.size) return false
+        val gaps = numbers.zipWithNext { left, right -> right.horizontalCenter - left.horizontalCenter }
+        val separatorIndex = primaryCount - 1
+        val separatorGap = gaps[separatorIndex]
+        val largestOtherGap =
+            gaps
+                .filterIndexed { index, _ -> index != separatorIndex }
+                .maxOrNull()
+                ?: 0f
+        return separatorGap >= MIN_INFERRED_SEPARATOR_GAP &&
+            separatorGap >= largestOtherGap * MIN_INFERRED_SEPARATOR_DOMINANCE
     }
 
     /** 提取独立的两位数字，不把流水号、单个数字或字符混淆解释为投注号码。 */
@@ -354,12 +431,14 @@ class ConservativeTicketParser : TicketParser {
                 .asSequence()
                 .mapNotNull { row ->
                     val text = row.text.normalizedForParsing()
-                    EXACT_MULTIPLIER_REGEX
-                        .find(text)
-                        ?.groupValues
-                        ?.get(1)
-                        ?.toIntOrNull()
-                        ?.let { value -> LocatedValue(value, row.bounds) }
+                    val value =
+                        EXACT_MULTIPLIER_REGEX
+                            .find(text)
+                            ?.groupValues
+                            ?.get(1)
+                            ?.toIntOrNull()
+                            ?: extractDegradedSummary(row)?.multiplier
+                    value?.let { LocatedValue(it, row.bounds) }
                 }.toList()
         if (summaryCandidates.isNotEmpty()) {
             val values = summaryCandidates.map { it.value }.toSet()
@@ -390,7 +469,12 @@ class ConservativeTicketParser : TicketParser {
                 .mapNotNull { row ->
                     val text = row.text.normalizedForParsing()
                     val compactText = text.compactForKeywords()
-                    if (EXACT_MULTIPLIER_REGEX.containsMatchIn(text) || compactText.contains(ADDITIONAL_KEYWORD)) {
+                    if (
+                        EXACT_MULTIPLIER_REGEX.containsMatchIn(text) ||
+                        extractDegradedSummary(row) != null ||
+                        compactText.contains(ADDITIONAL_KEYWORD) ||
+                        compactText.contains(SINGLE_PLAY_KEYWORD)
+                    ) {
                         LocatedValue(compactText.contains(ADDITIONAL_KEYWORD), row.bounds)
                     } else {
                         null
@@ -400,6 +484,15 @@ class ConservativeTicketParser : TicketParser {
             value = summaries.map { it.value }.toSet().singleOrNull(),
             bounds = summaries.map { it.bounds }.coveringBoundsOrNull(),
         )
+    }
+
+    /** 仅在“单式票或追加投注 + 两个数值 + 合计”完整锚点内恢复被 OCR 损坏的期数和倍数单位。 */
+    private fun extractDegradedSummary(row: VisualRow): DegradedSummary? {
+        val match = DEGRADED_SUMMARY_REGEX.find(row.text.normalizedForParsing()) ?: return null
+        val periodCount = match.groupValues[1].toIntOrNull() ?: return null
+        val multiplier = match.groupValues[2].toIntOrNull() ?: return null
+        if (periodCount !in VALID_PERIOD_COUNT_RANGE || multiplier !in VALID_MULTIPLIER_RANGE) return null
+        return DegradedSummary(periodCount, multiplier)
     }
 
     /** 提取所有带“合计”锚点的金额候选，并精确转换为分。 */
@@ -479,6 +572,7 @@ class ConservativeTicketParser : TicketParser {
                         right = ordered.maxOf { it.bounds.right },
                         bottom = ordered.maxOf { it.bounds.bottom },
                     ),
+                fragments = ordered,
             )
         }
     }
@@ -488,11 +582,20 @@ class ConservativeTicketParser : TicketParser {
         group: List<OcrTextLine>,
         candidate: OcrTextLine,
     ): Boolean {
+        if (candidate.isLikelyVerticalText || group.any { line -> line.isLikelyVerticalText }) {
+            return false
+        }
         val groupCenter = group.map { it.bounds.verticalCenter }.average().toFloat()
         val tallestHeight = (group.maxOfOrNull { it.bounds.height } ?: 0f).coerceAtLeast(candidate.bounds.height)
         val tolerance = (tallestHeight * SAME_ROW_HEIGHT_RATIO).coerceAtLeast(MIN_SAME_ROW_TOLERANCE)
         return kotlin.math.abs(groupCenter - candidate.bounds.verticalCenter) <= tolerance
     }
+
+    /** 判断 OCR 行是否是票面侧边纵排文字，避免它把多行号码错误粘连。 */
+    private val OcrTextLine.isLikelyVerticalText: Boolean
+        get() =
+            text.count { character -> !character.isWhitespace() } >= MIN_VERTICAL_TEXT_LENGTH &&
+                bounds.height >= bounds.width * VERTICAL_TEXT_ASPECT_RATIO
 
     /** 归一化边界的垂直中心。 */
     private val NormalizedBounds.verticalCenter: Float
@@ -501,6 +604,10 @@ class ConservativeTicketParser : TicketParser {
     /** 归一化边界的非负高度。 */
     private val NormalizedBounds.height: Float
         get() = kotlin.math.abs(bottom - top)
+
+    /** 归一化边界的非负宽度。 */
+    private val NormalizedBounds.width: Float
+        get() = kotlin.math.abs(right - left)
 
     /** 返回所有区域的最小覆盖矩形；列表为空时返回 `null`。 */
     private fun List<NormalizedBounds>.coveringBoundsOrNull(): NormalizedBounds? {
@@ -573,6 +680,30 @@ class ConservativeTicketParser : TicketParser {
     )
 
     /**
+     * 一行按彩票规则分区后的号码。
+     *
+     * @property primaryNumbers 前区或红球号码。
+     * @property secondaryNumbers 后区或蓝球号码。
+     * @property rowMultiplier 双色球行尾倍数，未识别时为 `null`。
+     */
+    private data class BetNumberSplit(
+        val primaryNumbers: List<Int>,
+        val secondaryNumbers: List<Int>,
+        val rowMultiplier: Int?,
+    )
+
+    /**
+     * 保留横向位置的两位号码。
+     *
+     * @property value 两位号码值。
+     * @property horizontalCenter 号码在原图中的归一化横向中心。
+     */
+    private data class LocatedNumber(
+        val value: Int,
+        val horizontalCenter: Float,
+    )
+
+    /**
      * 一个保留 OCR 视觉行位置的已解析值。
      *
      * @property value 已解析字段值。
@@ -595,14 +726,27 @@ class ConservativeTicketParser : TicketParser {
     )
 
     /**
+     * 投注摘要单位损坏后，仍由稳定锚点限定的期数和倍数。
+     *
+     * @property periodCount 投注期数。
+     * @property multiplier 投注倍数。
+     */
+    private data class DegradedSummary(
+        val periodCount: Int,
+        val multiplier: Int,
+    )
+
+    /**
      * 合并后的视觉文字行。
      *
      * @property text 按横向顺序连接的原始 OCR 片段。
      * @property bounds 合并后覆盖所有片段的归一化边界。
+     * @property fragments 按横向位置排序的原始 OCR 片段。
      */
     private data class VisualRow(
         val text: String,
         val bounds: NormalizedBounds,
+        val fragments: List<OcrTextLine>,
     )
 
     /** 彩票单式号码规格。 */
@@ -638,8 +782,14 @@ class ConservativeTicketParser : TicketParser {
         /** 福利彩票发行机构关键词。 */
         const val WELFARE_LOTTERY_ISSUER_KEYWORD = "福利彩票"
 
+        /** 只能与唯一合法号码结构联合使用的福利彩票简称。 */
+        const val WELFARE_LOTTERY_ISSUER_ABBREVIATION = "福彩"
+
         /** 体育彩票发行机构关键词。 */
         const val SPORTS_LOTTERY_ISSUER_KEYWORD = "中国体育彩票"
+
+        /** 只能与唯一合法号码结构联合使用的体育彩票简称。 */
+        const val SPORTS_LOTTERY_ISSUER_ABBREVIATION = "体彩"
 
         /** 补打票关键词。 */
         const val REPRINT_KEYWORD = "补打票"
@@ -649,6 +799,9 @@ class ConservativeTicketParser : TicketParser {
 
         /** 大乐透追加投注关键词。 */
         const val ADDITIONAL_KEYWORD = "追加投注"
+
+        /** 明确表示基本单式投注的关键词。 */
+        const val SINGLE_PLAY_KEYWORD = "单式票"
 
         /** 不支持的复杂玩法关键词。 */
         val UNSUPPORTED_PLAY_KEYWORDS = listOf("复式", "胆拖")
@@ -668,6 +821,10 @@ class ConservativeTicketParser : TicketParser {
         /** 只接受阿拉伯数字组成的明确倍数。 */
         val EXACT_MULTIPLIER_REGEX = Regex("(?<![\\dA-Za-z])(\\d{1,2})\\s*倍")
 
+        /** 期、倍单位损坏时，只在完整投注摘要锚点之间提取两个数值。 */
+        val DEGRADED_SUMMARY_REGEX =
+            Regex("(?:单式票|追加投注)\\s*(\\d{1,2})\\D{1,4}(\\d{1,2})\\D{0,4}(?=(?:合计|总计))")
+
         /** 双色球投注行末尾的倍数。 */
         val ROW_MULTIPLIER_REGEX = Regex("[xX]\\s*(\\d{1,2})(?!\\d)")
 
@@ -680,11 +837,20 @@ class ConservativeTicketParser : TicketParser {
         /** 合法投注倍数范围。 */
         val VALID_MULTIPLIER_RANGE = 1..99
 
+        /** 票面摘要允许识别的投注期数范围。 */
+        val VALID_PERIOD_COUNT_RANGE = 1..99
+
         /** V1 只支持一期投注。 */
         const val V1_PERIOD_COUNT = 1
 
         /** 一行至少出现这些两位数字才视为疑似投注行。 */
         const val MIN_NUMBER_TOKENS_FOR_BET_CANDIDATE = 5
+
+        /** 漏识别加号时，主区与次区之间至少需要的归一化横向间隔。 */
+        const val MIN_INFERRED_SEPARATOR_GAP = 0.055f
+
+        /** 主次区间隔相对其他号码间隔至少需要达到的倍数。 */
+        const val MIN_INFERRED_SEPARATOR_DOMINANCE = 1.35f
 
         /** 同一视觉行允许的相对字符高度偏差。 */
         const val SAME_ROW_HEIGHT_RATIO = 0.6f
@@ -692,14 +858,17 @@ class ConservativeTicketParser : TicketParser {
         /** 同一视觉行允许的最小归一化中心偏差。 */
         const val MIN_SAME_ROW_TOLERANCE = 0.008f
 
+        /** 纵排文字至少包含的非空白字符数。 */
+        const val MIN_VERTICAL_TEXT_LENGTH = 2
+
+        /** 高宽比达到该值时把文字框视为纵排版式。 */
+        const val VERTICAL_TEXT_ASPECT_RATIO = 1.5f
+
         /** 每元包含的分数。 */
         const val FEN_PER_YUAN = 100L
 
         /** 金额最多允许两位小数。 */
         const val MAX_FRACTION_DIGITS = 2
-
-        /** 倍数中文单位。 */
-        const val MULTIPLIER_UNIT = '倍'
 
         /** 加号分隔符。 */
         const val PLUS_SIGN = '+'
