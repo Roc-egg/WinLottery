@@ -6,6 +6,10 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import roc.win.lottery.data.DrawQueryResult
 import roc.win.lottery.domain.ConfirmedTicket
+import roc.win.lottery.domain.DrawStatus
+import roc.win.lottery.domain.Issue
+import roc.win.lottery.domain.IssueSequenceResolver
+import roc.win.lottery.domain.IssueSequenceResult
 import roc.win.lottery.recognition.ImageAcquisitionResult
 import roc.win.lottery.recognition.ImageAcquisitionSource
 import roc.win.lottery.recognition.ImageQualityResult
@@ -30,6 +34,9 @@ class LotteryAppController(
 
     /** 当前流程持有的临时图片，确认或退出后立即清理。 */
     private var activeImageRef: ImageRef? = null
+
+    /** 将多期票限制在已验证期号边界并展开为逐期查询。 */
+    private val issueSequenceResolver = IssueSequenceResolver()
 
     /**
      * 从拍照或导图开始一次全新的本地分析。
@@ -145,19 +152,45 @@ class LotteryAppController(
         queryDraw(ticket, generation)
     }
 
-    /** 从结果页或不可用页保留用户确认票据并主动重新查询同一期开奖。 */
+    /** 从结果页或不可用页保留用户确认票据并主动重新查询开奖。 */
     suspend fun retryDrawQuery() {
-        val ticket =
-            when (val screen = mutableUiState.value.screen) {
-                is AppScreen.DrawUnavailable -> screen.ticket
-                is AppScreen.VerificationResult -> screen.ticket
-                else -> return
+        when (val screen = mutableUiState.value.screen) {
+            is AppScreen.DrawUnavailable -> {
+                queryDraw(screen.ticket, flowGeneration)
             }
-        queryDraw(ticket, flowGeneration)
+
+            is AppScreen.VerificationResult -> {
+                queryDraw(screen.ticket, flowGeneration)
+            }
+
+            is AppScreen.MultiPeriodVerificationResult -> {
+                queryMultipleDraws(
+                    ticket = screen.ticket,
+                    generation = flowGeneration,
+                    previousResults = screen.periodResults,
+                )
+            }
+
+            else -> {
+                return
+            }
+        }
     }
 
-    /** 查询精确期号，并把真实数据交给本地规则引擎。 */
+    /** 根据票面期数分派单期或多期查询，并把真实数据交给本地规则引擎。 */
     private suspend fun queryDraw(
+        ticket: ConfirmedTicket,
+        generation: Long,
+    ) {
+        if (container.usesRealDrawData && ticket.periodCount.value > 1) {
+            queryMultipleDraws(ticket, generation)
+            return
+        }
+        querySingleDraw(ticket, generation)
+    }
+
+    /** 查询一个精确期号，并保持既有单期结果交互。 */
+    private suspend fun querySingleDraw(
         ticket: ConfirmedTicket,
         generation: Long,
     ) {
@@ -196,6 +229,134 @@ class LotteryAppController(
             }
         }
     }
+
+    /**
+     * 按时间顺序查询一张多期票，并保留每一期独立状态。
+     *
+     * 明确尚未开奖、网络断开或数据源整体不可用时停止本轮后续请求；发布核对中和单期冲突只影响对应期次。
+     */
+    private suspend fun queryMultipleDraws(
+        ticket: ConfirmedTicket,
+        generation: Long,
+        previousResults: List<PeriodVerification>? = null,
+    ) {
+        if (generation != flowGeneration) return
+        val issues =
+            when (
+                val resolution =
+                    issueSequenceResolver.resolve(
+                        lotteryType = ticket.lotteryType.value,
+                        firstIssue = ticket.issue.value,
+                        periodCount = ticket.periodCount.value,
+                    )
+            ) {
+                is IssueSequenceResult.Success -> {
+                    resolution.issues
+                }
+
+                is IssueSequenceResult.Unsupported -> {
+                    mutableUiState.update {
+                        it.copy(screen = AppScreen.Error("无法展开多期期号", resolution.message))
+                    }
+                    return
+                }
+            }
+        val previousByIssue = previousResults.orEmpty().associateBy { it.issue }
+        val targetIssues = selectMultiPeriodRetryTargets(issues, previousResults)
+        val updatedByIssue = previousByIssue.toMutableMap()
+        var stopResult: DrawQueryResult.Unavailable? = null
+        var completedCount = 0
+
+        for (issue in issues) {
+            if (generation != flowGeneration) return
+            if (issue !in targetIssues) continue
+            mutableUiState.update {
+                it.copy(
+                    screen =
+                        AppScreen.DrawQuery(
+                            ticket = ticket,
+                            currentIssue = issue,
+                            completedPeriodCount = completedCount,
+                            totalPeriodCount = targetIssues.size,
+                        ),
+                )
+            }
+            val stopped = stopResult
+            if (stopped != null) {
+                updatedByIssue[issue] =
+                    PeriodVerification.Unavailable(
+                        issue = issue,
+                        status = stopped.status,
+                        message = stopped.skippedPeriodMessage(),
+                        wasQueried = false,
+                    )
+                completedCount += 1
+                continue
+            }
+
+            when (val result = container.drawRepository.getDraw(ticket.lotteryType.value, issue)) {
+                is DrawQueryResult.Success -> {
+                    val periodTicket = ticket.copy(issue = ticket.issue.copy(value = issue))
+                    updatedByIssue[issue] =
+                        PeriodVerification.Verified(
+                            issue = issue,
+                            drawResult = result.drawResult,
+                            prizeCheckResult = container.prizeCalculator.calculate(periodTicket, result.drawResult),
+                        )
+                }
+
+                is DrawQueryResult.Unavailable -> {
+                    updatedByIssue[issue] =
+                        PeriodVerification.Unavailable(
+                            issue = issue,
+                            status = result.status,
+                            message = result.message,
+                            wasQueried = true,
+                        )
+                    if (result.status in STOP_REMAINING_PERIOD_STATUSES) {
+                        stopResult = result
+                    }
+                }
+            }
+            completedCount += 1
+        }
+        if (generation != flowGeneration) return
+        val periodResults =
+            issues.map { issue ->
+                updatedByIssue[issue]
+                    ?: PeriodVerification.Unavailable(
+                        issue = issue,
+                        status = DrawStatus.SOURCE_UNAVAILABLE,
+                        message = "本轮未能生成该期查询状态，请主动重试",
+                        wasQueried = false,
+                    )
+            }
+        mutableUiState.update {
+            it.copy(screen = AppScreen.MultiPeriodVerificationResult(ticket, periodResults))
+        }
+    }
+
+    /** 选择多期结果页本轮需要重新查询的期号。 */
+    private fun selectMultiPeriodRetryTargets(
+        issues: List<Issue>,
+        previousResults: List<PeriodVerification>?,
+    ): Set<Issue> {
+        if (previousResults == null) return issues.toSet()
+        val unfinished =
+            previousResults
+                .filter { it.requiresRetry }
+                .mapTo(mutableSetOf()) { it.issue }
+        return unfinished.ifEmpty { issues.toMutableSet() }
+    }
+
+    /** 为因前序状态停止查询的后续期次生成明确说明。 */
+    private fun DrawQueryResult.Unavailable.skippedPeriodMessage(): String =
+        when (status) {
+            DrawStatus.NOT_PUBLISHED -> "前一期次尚未发布，本期本轮未发起官网查询"
+            DrawStatus.NETWORK_UNAVAILABLE -> "前一期次查询时网络不可用，本期本轮未发起官网查询"
+            DrawStatus.SOURCE_UNAVAILABLE -> "前一期次查询时官网数据源不可用，本期本轮未发起查询"
+            else -> "前一期次未完成，本期本轮未发起官网查询"
+        }
 
     /** 对已取得的临时图片执行本地 OCR 和结构解析。 */
     private suspend fun recognize(
@@ -304,5 +465,16 @@ class LotteryAppController(
     private suspend fun clearTemporaryImage() {
         activeImageRef?.let { container.appPaths.deleteTemporaryImage(it) }
         activeImageRef = null
+    }
+
+    /** 多期查询和重试使用的状态集合。 */
+    private companion object {
+        /** 遇到这些状态后继续请求更晚期次没有可靠收益。 */
+        val STOP_REMAINING_PERIOD_STATUSES =
+            setOf(
+                DrawStatus.NOT_PUBLISHED,
+                DrawStatus.NETWORK_UNAVAILABLE,
+                DrawStatus.SOURCE_UNAVAILABLE,
+            )
     }
 }

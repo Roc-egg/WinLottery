@@ -5,6 +5,8 @@ import roc.win.lottery.domain.DrawPolicy
 import roc.win.lottery.domain.LotteryType
 import roc.win.lottery.domain.PrizeTier
 import roc.win.lottery.domain.PrizeTierCodes
+import roc.win.lottery.domain.SuperLottoPrizeTierValidationStatus
+import roc.win.lottery.domain.SuperLottoPrizeTierValidator
 
 /** 体彩超级大乐透官网 JSON 适配器。 */
 internal object SuperLottoSourceAdapter {
@@ -262,6 +264,12 @@ internal object SuperLottoSourceAdapter {
                     additionalPrizeRaw = additional?.prizeRaw,
                 )
             }
+        val validation = SuperLottoPrizeTierValidator.validate(tiers)
+        if (validation.status == SuperLottoPrizeTierValidationStatus.INVALID) {
+            return PrizeTierParseResult.Failure(
+                validation.message ?: "大乐透奖级数据不符合现行规则",
+            )
+        }
         return PrizeTierParseResult.Success(tiers)
     }
 
@@ -281,10 +289,7 @@ internal object SuperLottoSourceAdapter {
 
     /** 判断所有基础奖级以及一、二等奖追加奖级是否已有确定单注金额。 */
     private fun hasCompletePayouts(tiers: List<PrizeTier>): Boolean =
-        tiers.all { tier ->
-            tier.singlePrizeFen != null &&
-                (tier.code !in ADDITIONAL_TIER_CODES || tier.additionalPrizeFen != null)
-        }
+        SuperLottoPrizeTierValidator.validate(tiers).status == SuperLottoPrizeTierValidationStatus.COMPLETE
 
     /** 只接受 V1 期号使用的中国体彩网官方 PDF 公告地址。 */
     private fun normalizeDetailUrl(raw: String?): String? =
@@ -363,9 +368,6 @@ internal object SuperLottoSourceAdapter {
 
     /** 大乐透必须具备的两个追加奖级。 */
     private val REQUIRED_ADDITIONAL_TIER_CODES = linkedSetOf(PrizeTierCodes.FIRST, PrizeTierCodes.SECOND)
-
-    /** 需要追加单注奖金才能达到最终金额状态的奖级。 */
-    private val ADDITIONAL_TIER_CODES = setOf(PrizeTierCodes.FIRST, PrizeTierCodes.SECOND)
 
     /** 体彩接口业务成功码。 */
     private const val SUCCESS_ERROR_CODE = "0"

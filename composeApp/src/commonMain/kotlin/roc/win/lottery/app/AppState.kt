@@ -3,7 +3,9 @@ package roc.win.lottery.app
 import roc.win.lottery.domain.ConfirmedTicket
 import roc.win.lottery.domain.DrawResult
 import roc.win.lottery.domain.DrawStatus
+import roc.win.lottery.domain.Issue
 import roc.win.lottery.domain.PrizeCheckResult
+import roc.win.lottery.domain.PrizeCheckStatus
 import roc.win.lottery.recognition.ImageRef
 import roc.win.lottery.recognition.TicketFieldRegion
 
@@ -46,9 +48,15 @@ sealed interface AppScreen {
      * 开奖查询状态页。
      *
      * @property ticket 已通过领域校验的用户确认票据。
+     * @property currentIssue 当前正在查询的精确期号。
+     * @property completedPeriodCount 本轮已经处理的期次数量。
+     * @property totalPeriodCount 本轮需要处理的期次数量。
      */
     data class DrawQuery(
         val ticket: ConfirmedTicket,
+        val currentIssue: Issue = ticket.issue.value,
+        val completedPeriodCount: Int = 0,
+        val totalPeriodCount: Int = 1,
     ) : AppScreen
 
     /**
@@ -87,6 +95,65 @@ sealed interface AppScreen {
     ) : AppScreen
 
     /**
+     * 多期票逐期开奖核对结果页。
+     *
+     * @property ticket 用户确认的多期票据。
+     * @property periodResults 按票面起始期号顺序保存的逐期结果。
+     */
+    data class MultiPeriodVerificationResult(
+        val ticket: ConfirmedTicket,
+        val periodResults: List<PeriodVerification>,
+    ) : AppScreen {
+        /** 已取得足够官方证据并执行本地规则计算的期次数量。 */
+        val verifiedPeriodCount: Int
+            get() = periodResults.count { it is PeriodVerification.Verified }
+
+        /** 尚未取得足够证据、规则结论或完整中奖金额的期次数量。 */
+        val unresolvedPeriodCount: Int
+            get() = periodResults.count { it.requiresRetry }
+
+        /** 是否至少有一个已验证期次命中奖级。 */
+        val hasWinningPeriod: Boolean
+            get() =
+                periodResults.any { result ->
+                    result is PeriodVerification.Verified && result.prizeCheckResult.status == PrizeCheckStatus.WIN
+                }
+
+        /** 所有期次是否都已形成中奖或未中奖结论。 */
+        val isConclusive: Boolean
+            get() =
+                periodResults.size == ticket.periodCount.value &&
+                    periodResults.all { result ->
+                        result is PeriodVerification.Verified &&
+                            result.prizeCheckResult.status in CONCLUSIVE_PRIZE_STATUSES
+                    }
+
+        /**
+         * 全部期次金额完整时的整票税前奖金合计。
+         *
+         * 任一期证据或奖金缺失，以及安全加法溢出时均返回 `null`。
+         */
+        val estimatedPrizeFen: Long?
+            get() {
+                if (!isConclusive) return null
+                var total = 0L
+                for (periodResult in periodResults) {
+                    val verified = periodResult as PeriodVerification.Verified
+                    val amount = verified.prizeCheckResult.estimatedPrizeFen ?: return null
+                    if (amount < 0L || total > Long.MAX_VALUE - amount) return null
+                    total += amount
+                }
+                return total
+            }
+
+        /** 可形成逐期最终结论的本地测算状态。 */
+        private companion object {
+            /** 中奖和未中奖均属于证据充分后的明确结论。 */
+            val CONCLUSIVE_PRIZE_STATUSES = setOf(PrizeCheckStatus.WIN, PrizeCheckStatus.NO_WIN)
+        }
+    }
+
+    /**
      * 可恢复错误页。
      *
      * @property title 错误标题。
@@ -99,6 +166,60 @@ sealed interface AppScreen {
 
     /** 关于与隐私页。 */
     data object About : AppScreen
+}
+
+/** 一张多期票中单个开奖期次的核对状态。 */
+sealed interface PeriodVerification {
+    /** 当前条目对应的精确期号。 */
+    val issue: Issue
+
+    /** 本期是否仍需主动重查开奖证据或奖金数据。 */
+    val requiresRetry: Boolean
+        get() =
+            when (this) {
+                is Unavailable -> {
+                    true
+                }
+
+                is Verified -> {
+                    (
+                        prizeCheckResult.status != PrizeCheckStatus.WIN &&
+                            prizeCheckResult.status != PrizeCheckStatus.NO_WIN
+                    ) ||
+                        (
+                            prizeCheckResult.status == PrizeCheckStatus.WIN &&
+                                prizeCheckResult.estimatedPrizeFen == null
+                        )
+                }
+            }
+
+    /**
+     * 已取得双官方证据并执行本地规则计算。
+     *
+     * @property issue 当前精确期号。
+     * @property drawResult 经交叉核对的统一开奖结果。
+     * @property prizeCheckResult 本期逐注测算结果。
+     */
+    data class Verified(
+        override val issue: Issue,
+        val drawResult: DrawResult,
+        val prizeCheckResult: PrizeCheckResult,
+    ) : PeriodVerification
+
+    /**
+     * 本期证据不足或本轮尚未发起查询。
+     *
+     * @property issue 当前精确期号。
+     * @property status 明确的不可用状态。
+     * @property message 不包含票面敏感内容的恢复说明。
+     * @property wasQueried 本轮是否实际向官网发起过该期查询。
+     */
+    data class Unavailable(
+        override val issue: Issue,
+        val status: DrawStatus,
+        val message: String,
+        val wasQueried: Boolean,
+    ) : PeriodVerification
 }
 
 /**

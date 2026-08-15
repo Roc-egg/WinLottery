@@ -124,10 +124,40 @@ class TicketValidatorTest {
         assertTrue(result.problems.any { it.field.endsWith("isAdditional") })
     }
 
-    /** 多期票必须明确标记为 V1 不支持。 */
+    /** 年中安全范围内的多期票应按全部期次严格核对金额。 */
     @Test
-    fun multiplePeriodsAreUnsupported() {
-        val ticket = superLottoTicket().copy(periodCount = confirmed(2))
+    fun multiplePeriodsWithExactAmountPass() {
+        val ticket =
+            superLottoTicket().copy(
+                periodCount = confirmed(10),
+                paidAmountFen = confirmed(3_000L),
+            )
+
+        val result = validator.validate(ticket)
+
+        assertEquals(TicketValidationStatus.VALID, result.status)
+        assertTrue(result.canCalculate)
+    }
+
+    /** 多期票金额仍只要少算一期就必须阻断。 */
+    @Test
+    fun multiplePeriodsWithSinglePeriodAmountAreInvalid() {
+        val ticket = superLottoTicket().copy(periodCount = confirmed(10))
+
+        val result = validator.validate(ticket)
+
+        assertEquals(TicketValidationStatus.INVALID, result.status)
+        assertTrue(result.problems.any { it.field == "paidAmountFen" })
+    }
+
+    /** 超过移动首版批量查询上限的期数必须明确阻断。 */
+    @Test
+    fun tooManyPeriodsAreUnsupported() {
+        val ticket =
+            superLottoTicket().copy(
+                periodCount = confirmed(21),
+                paidAmountFen = confirmed(6_300L),
+            )
 
         val result = validator.validate(ticket)
 

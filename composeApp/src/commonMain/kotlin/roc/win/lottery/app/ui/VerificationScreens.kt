@@ -23,7 +23,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import roc.win.lottery.app.AppScreen
+import roc.win.lottery.app.PeriodVerification
 import roc.win.lottery.domain.BetLinePrizeResult
 import roc.win.lottery.domain.ConfirmedTicket
 import roc.win.lottery.domain.DrawResult
@@ -189,6 +192,176 @@ fun DrawUnavailableScreen(
             shape = MaterialTheme.shapes.small,
         ) {
             Text("返回首页")
+        }
+    }
+}
+
+/**
+ * 展示一张多期票的逐期开奖状态和保守整票汇总。
+ *
+ * @param result 控制器按期号顺序保存的多期结果。
+ * @param onRetry 只重查证据不足或奖金尚未完整的期次。
+ * @param onDone 清除当前流程并返回首页。
+ */
+@Composable
+fun MultiPeriodVerificationScreen(
+    result: AppScreen.MultiPeriodVerificationResult,
+    onRetry: () -> Unit,
+    onDone: () -> Unit,
+) {
+    AppShell(
+        title = "多期开奖核对",
+        navigationIcon = LotteryIcons.Back,
+        onNavigate = onDone,
+    ) {
+        MultiPeriodSummary(result)
+        Spacer(Modifier.height(24.dp))
+        VerificationInfo(
+            rows =
+                listOf(
+                    "彩种" to
+                        result.ticket.lotteryType.value
+                            .displayName(),
+                    "起始期号" to result.ticket.issue.value.value,
+                    "投注期数" to "${result.ticket.periodCount.value} 期",
+                    "已取得结果" to "${result.verifiedPeriodCount} 期",
+                    "待继续核对" to "${result.unresolvedPeriodCount} 期",
+                ),
+        )
+        Spacer(Modifier.height(28.dp))
+        Text("逐期开奖结果", style = MaterialTheme.typography.titleLarge)
+        Spacer(Modifier.height(12.dp))
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            result.periodResults.forEach { periodResult ->
+                PeriodVerificationItem(periodResult)
+            }
+        }
+        Spacer(Modifier.height(20.dp))
+        Text(
+            "任一期尚未发布、证据不足或规则结果需复核时，应用都不会把整张多期票解释为未中奖。最终以发行机构公告和实体彩票兑奖为准。",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(28.dp))
+        Button(
+            onClick = onRetry,
+            modifier = Modifier.fillMaxWidth().height(52.dp),
+            shape = MaterialTheme.shapes.small,
+        ) {
+            Text(if (result.unresolvedPeriodCount > 0) "重查未完成期次" else "重新查询全部期次")
+        }
+        Spacer(Modifier.height(10.dp))
+        OutlinedButton(
+            onClick = onDone,
+            modifier = Modifier.fillMaxWidth().height(52.dp),
+            shape = MaterialTheme.shapes.small,
+        ) {
+            Text("返回首页")
+        }
+    }
+}
+
+/** 展示多期票在当前证据范围内的整票结论。 */
+@Composable
+private fun MultiPeriodSummary(result: AppScreen.MultiPeriodVerificationResult) {
+    val estimatedPrizeFen = result.estimatedPrizeFen
+    val headline =
+        when {
+            result.isConclusive && result.hasWinningPeriod -> "多期票有中奖记录"
+            result.isConclusive -> "全部期次均未中奖"
+            result.verifiedPeriodCount == result.periodResults.size -> "逐期开奖结果需要复核"
+            else -> "已完成 ${result.verifiedPeriodCount}/${result.periodResults.size} 期核对"
+        }
+    val detail =
+        when {
+            !result.isConclusive -> "整票结论尚未形成，请继续核对未完成期次"
+            estimatedPrizeFen != null -> "整票税前奖金合计 ${estimatedPrizeFen.toPrizeYuanText()}"
+            result.hasWinningPeriod -> "已确认命中奖级，部分奖金仍待官方数据完整"
+            else -> "所有期次均已使用最终开奖号码完成逐注核对"
+        }
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.small,
+        color =
+            if (result.isConclusive) {
+                MaterialTheme.colorScheme.primaryContainer
+            } else {
+                MaterialTheme.colorScheme.secondaryContainer
+            },
+    ) {
+        Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(headline, style = MaterialTheme.typography.headlineMedium)
+            Text(detail, style = MaterialTheme.typography.bodyLarge)
+        }
+    }
+}
+
+/** 展示一个期次的号码、测算摘要或不可用原因。 */
+@Composable
+private fun PeriodVerificationItem(result: PeriodVerification) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.small,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        color = MaterialTheme.colorScheme.surface,
+    ) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Top,
+            ) {
+                Text("第 ${result.issue.value} 期", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    when (result) {
+                        is PeriodVerification.Verified -> result.prizeCheckResult.headline()
+                        is PeriodVerification.Unavailable -> result.status.displayName()
+                    },
+                    modifier = Modifier.weight(1f).padding(start = 12.dp),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    textAlign = TextAlign.End,
+                )
+            }
+            when (result) {
+                is PeriodVerification.Verified -> {
+                    Text(
+                        "${result.drawResult.primaryNumbers.toNumberText()} + " +
+                            result.drawResult.secondaryNumbers.toNumberText(),
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
+                    Text(
+                        result.prizeCheckResult.detail(),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    val winningLines = result.prizeCheckResult.lineResults.filter { it.prizeTierCode != null }
+                    if (winningLines.isNotEmpty()) {
+                        Text(
+                            winningLines.joinToString(separator = "；") { line ->
+                                "第 ${line.lineIndex + 1} 注${checkNotNull(line.prizeTierCode).displayPrizeTier()}"
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                    Text(
+                        "${result.drawResult.drawDate} · ${result.drawResult.status.displayName()} · " +
+                            "${result.drawResult.supportingEvidence.size + 1} 份官方证据",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+
+                is PeriodVerification.Unavailable -> {
+                    Text(result.message, style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        if (result.wasQueried) "本期已发起官网查询" else "本期尚未发起官网查询",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
         }
     }
 }

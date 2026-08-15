@@ -148,4 +148,192 @@ class PrizeRulesTest {
             ),
         )
     }
+
+    /** 大乐透高奖池固定奖档和元级四舍五入追加奖金应完整通过。 */
+    @Test
+    fun superLottoOfficialHighPoolPayoutsAreComplete() {
+        val result =
+            SuperLottoPrizeTierValidator.validate(
+                superLottoTiers(
+                    firstPrizeFen = 1_000_000_000L,
+                    firstAdditionalPrizeFen = 800_000_000L,
+                    secondPrizeFen = 15_584_600L,
+                    secondAdditionalPrizeFen = 12_467_700L,
+                    fixedPrizes = highPoolFixedPrizes,
+                ),
+            )
+
+        assertEquals(SuperLottoPrizeTierValidationStatus.COMPLETE, result.status)
+    }
+
+    /** 大乐透低奖池固定奖档同样属于现行规则合法金额。 */
+    @Test
+    fun superLottoOfficialLowPoolPayoutsAreComplete() {
+        val result =
+            SuperLottoPrizeTierValidator.validate(
+                superLottoTiers(
+                    firstPrizeFen = 5_000_000L,
+                    firstAdditionalPrizeFen = 4_000_000L,
+                    secondPrizeFen = 3_431_800L,
+                    secondAdditionalPrizeFen = 2_745_400L,
+                    fixedPrizes = lowPoolFixedPrizes,
+                ),
+            )
+
+        assertEquals(SuperLottoPrizeTierValidationStatus.COMPLETE, result.status)
+    }
+
+    /** 两套固定奖金额混用时必须失败关闭。 */
+    @Test
+    fun mixedSuperLottoFixedPrizeBandsAreInvalid() {
+        val mixedFixedPrizes = highPoolFixedPrizes + (PrizeTierCodes.THIRD to 500_000L)
+
+        val result =
+            SuperLottoPrizeTierValidator.validate(
+                superLottoTiers(
+                    firstPrizeFen = 1_000_000L,
+                    firstAdditionalPrizeFen = 800_000L,
+                    secondPrizeFen = 500_000L,
+                    secondAdditionalPrizeFen = 400_000L,
+                    fixedPrizes = mixedFixedPrizes,
+                ),
+            )
+
+        assertEquals(SuperLottoPrizeTierValidationStatus.INVALID, result.status)
+    }
+
+    /** 一等奖追加金额偏离基本奖金 80% 时必须失败关闭。 */
+    @Test
+    fun invalidSuperLottoAdditionalRatioIsRejected() {
+        val result =
+            SuperLottoPrizeTierValidator.validate(
+                superLottoTiers(
+                    firstPrizeFen = 1_000_000L,
+                    firstAdditionalPrizeFen = 799_900L,
+                    secondPrizeFen = 500_000L,
+                    secondAdditionalPrizeFen = 400_000L,
+                    fixedPrizes = highPoolFixedPrizes,
+                ),
+            )
+
+        assertEquals(SuperLottoPrizeTierValidationStatus.INVALID, result.status)
+    }
+
+    /** 官网尚未给出追加单注奖金时应保留为金额未完整而不是伪造零元。 */
+    @Test
+    fun missingSuperLottoAdditionalPayoutIsIncomplete() {
+        val tiers =
+            superLottoTiers(
+                firstPrizeFen = 1_000_000L,
+                firstAdditionalPrizeFen = 800_000L,
+                secondPrizeFen = 500_000L,
+                secondAdditionalPrizeFen = 400_000L,
+                fixedPrizes = highPoolFixedPrizes,
+            ).map { tier ->
+                if (tier.code == PrizeTierCodes.FIRST) tier.copy(additionalPrizeFen = null) else tier
+            }
+
+        val result = SuperLottoPrizeTierValidator.validate(tiers)
+
+        assertEquals(SuperLottoPrizeTierValidationStatus.INCOMPLETE, result.status)
+    }
+
+    /** 大乐透缺少任一基础奖级时必须失败关闭。 */
+    @Test
+    fun missingSuperLottoBaseTierIsInvalid() {
+        val tiers =
+            superLottoTiers(
+                firstPrizeFen = 1_000_000L,
+                firstAdditionalPrizeFen = 800_000L,
+                secondPrizeFen = 500_000L,
+                secondAdditionalPrizeFen = 400_000L,
+                fixedPrizes = highPoolFixedPrizes,
+            ).filterNot { it.code == PrizeTierCodes.SEVENTH }
+
+        val result = SuperLottoPrizeTierValidator.validate(tiers)
+
+        assertEquals(SuperLottoPrizeTierValidationStatus.INVALID, result.status)
+    }
+
+    /** 大乐透同一基础奖级重复出现时必须失败关闭。 */
+    @Test
+    fun duplicatedSuperLottoBaseTierIsInvalid() {
+        val tiers =
+            superLottoTiers(
+                firstPrizeFen = 1_000_000L,
+                firstAdditionalPrizeFen = 800_000L,
+                secondPrizeFen = 500_000L,
+                secondAdditionalPrizeFen = 400_000L,
+                fixedPrizes = highPoolFixedPrizes,
+            )
+
+        val result = SuperLottoPrizeTierValidator.validate(tiers + tiers.first())
+
+        assertEquals(SuperLottoPrizeTierValidationStatus.INVALID, result.status)
+    }
+
+    /** 大乐透三至七等奖携带追加奖金字段时必须失败关闭。 */
+    @Test
+    fun fixedSuperLottoTierWithAdditionalPayoutIsInvalid() {
+        val tiers =
+            superLottoTiers(
+                firstPrizeFen = 1_000_000L,
+                firstAdditionalPrizeFen = 800_000L,
+                secondPrizeFen = 500_000L,
+                secondAdditionalPrizeFen = 400_000L,
+                fixedPrizes = highPoolFixedPrizes,
+            ).map { tier ->
+                if (tier.code == PrizeTierCodes.THIRD) tier.copy(additionalPrizeFen = 100L) else tier
+            }
+
+        val result = SuperLottoPrizeTierValidator.validate(tiers)
+
+        assertEquals(SuperLottoPrizeTierValidationStatus.INVALID, result.status)
+    }
+
+    /** 创建一套七奖级大乐透奖金数据。 */
+    private fun superLottoTiers(
+        firstPrizeFen: Long,
+        firstAdditionalPrizeFen: Long,
+        secondPrizeFen: Long,
+        secondAdditionalPrizeFen: Long,
+        fixedPrizes: Map<String, Long>,
+    ): List<PrizeTier> =
+        listOf(
+            prizeTier(PrizeTierCodes.FIRST, firstPrizeFen, firstAdditionalPrizeFen),
+            prizeTier(PrizeTierCodes.SECOND, secondPrizeFen, secondAdditionalPrizeFen),
+        ) + fixedPrizes.map { (code, amount) -> prizeTier(code, amount) }
+
+    /** 创建一个只包含规则校验必要金额的奖级。 */
+    private fun prizeTier(
+        code: String,
+        singlePrizeFen: Long,
+        additionalPrizeFen: Long? = null,
+    ): PrizeTier =
+        PrizeTier(
+            code = code,
+            displayName = code,
+            singlePrizeFen = singlePrizeFen,
+            additionalPrizeFen = additionalPrizeFen,
+        )
+
+    /** 大乐透低于 8 亿元奖池时的固定奖档。 */
+    private val lowPoolFixedPrizes =
+        linkedMapOf(
+            PrizeTierCodes.THIRD to 500_000L,
+            PrizeTierCodes.FOURTH to 30_000L,
+            PrizeTierCodes.FIFTH to 15_000L,
+            PrizeTierCodes.SIXTH to 1_500L,
+            PrizeTierCodes.SEVENTH to 500L,
+        )
+
+    /** 大乐透达到 8 亿元奖池时的固定奖档。 */
+    private val highPoolFixedPrizes =
+        linkedMapOf(
+            PrizeTierCodes.THIRD to 666_600L,
+            PrizeTierCodes.FOURTH to 38_000L,
+            PrizeTierCodes.FIFTH to 20_000L,
+            PrizeTierCodes.SIXTH to 1_800L,
+            PrizeTierCodes.SEVENTH to 700L,
+        )
 }

@@ -19,6 +19,7 @@ import roc.win.lottery.app.ui.DrawQueryScreen
 import roc.win.lottery.app.ui.DrawUnavailableScreen
 import roc.win.lottery.app.ui.ErrorScreen
 import roc.win.lottery.app.ui.HomeScreen
+import roc.win.lottery.app.ui.MultiPeriodVerificationScreen
 import roc.win.lottery.app.ui.ReviewScreen
 import roc.win.lottery.app.ui.VerificationResultScreen
 import roc.win.lottery.recognition.ImageAcquisitionSource
@@ -98,6 +99,9 @@ fun App(container: AppContainer = remember { AppContainer.createDemo(getPlatform
                     onMultiplierChange = {
                         controller.updateTicketReview(TicketReviewAction.ChangeMultiplier(it))
                     },
+                    onPeriodCountChange = {
+                        controller.updateTicketReview(TicketReviewAction.ChangePeriodCount(it))
+                    },
                     onAdditionalChange = {
                         controller.updateTicketReview(TicketReviewAction.ChangeAdditional(it))
                     },
@@ -113,7 +117,9 @@ fun App(container: AppContainer = remember { AppContainer.createDemo(getPlatform
 
             is AppScreen.DrawQuery -> {
                 DrawQueryScreen(
-                    issue = screen.ticket.issue.value.value,
+                    issue = screen.currentIssue.value,
+                    completedPeriodCount = screen.completedPeriodCount,
+                    totalPeriodCount = screen.totalPeriodCount,
                     usesRealDrawData = container.usesRealDrawData,
                     onCancel = { scope.launch { controller.navigateHome() } },
                 )
@@ -142,6 +148,14 @@ fun App(container: AppContainer = remember { AppContainer.createDemo(getPlatform
                     ticket = screen.ticket,
                     status = screen.status,
                     message = screen.message,
+                    onRetry = { scope.launch { controller.retryDrawQuery() } },
+                    onDone = { scope.launch { controller.navigateHome() } },
+                )
+            }
+
+            is AppScreen.MultiPeriodVerificationResult -> {
+                MultiPeriodVerificationScreen(
+                    result = screen,
                     onRetry = { scope.launch { controller.retryDrawQuery() } },
                     onDone = { scope.launch { controller.navigateHome() } },
                 )

@@ -67,6 +67,7 @@ class LotteryPrizeCalculatorTest {
             )
         val draw =
             superLottoDraw().copy(
+                status = DrawStatus.FINAL_NUMBERS,
                 prizeTiers =
                     superLottoDraw().prizeTiers.map {
                         if (it.code == PrizeTierCodes.FIRST) it.copy(additionalPrizeFen = null) else it
@@ -80,6 +81,53 @@ class LotteryPrizeCalculatorTest {
         assertNull(result.lineResults.single().estimatedPrizeFen)
         assertNull(result.estimatedPrizeFen)
         assertTrue(result.message.orEmpty().contains("待官方数据确认"))
+    }
+
+    /** 大乐透出现现行七奖级之外的未知奖级时必须进入人工复核。 */
+    @Test
+    fun unknownSuperLottoTierNeedsManualReview() {
+        val ticket =
+            ticket(
+                lotteryType = LotteryType.SUPER_LOTTO,
+                issue = "26091",
+                lines = listOf(line(listOf(1, 2, 3, 4, 5), listOf(1, 2))),
+                multiplier = 1,
+                paidAmountFen = 200L,
+            )
+        val draw =
+            superLottoDraw().copy(
+                prizeTiers = superLottoDraw().prizeTiers + tier("UNKNOWN", 100L),
+            )
+
+        val result = calculator.calculate(ticket, draw)
+
+        assertEquals(PrizeCheckStatus.NEEDS_MANUAL_REVIEW, result.status)
+        assertTrue(result.message.orEmpty().contains("奖级"))
+    }
+
+    /** 大乐透三至七等奖混用两套官方固定奖档时必须进入人工复核。 */
+    @Test
+    fun mixedSuperLottoFixedPrizeBandsNeedManualReview() {
+        val ticket =
+            ticket(
+                lotteryType = LotteryType.SUPER_LOTTO,
+                issue = "26091",
+                lines = listOf(line(listOf(1, 2, 3, 4, 5), listOf(1, 2))),
+                multiplier = 1,
+                paidAmountFen = 200L,
+            )
+        val draw =
+            superLottoDraw().copy(
+                prizeTiers =
+                    superLottoDraw().prizeTiers.map { tier ->
+                        if (tier.code == PrizeTierCodes.THIRD) tier.copy(singlePrizeFen = 500_000L) else tier
+                    },
+            )
+
+        val result = calculator.calculate(ticket, draw)
+
+        assertEquals(PrizeCheckStatus.NEEDS_MANUAL_REVIEW, result.status)
+        assertTrue(result.message.orEmpty().contains("固定奖档位"))
     }
 
     /** `FINAL_NUMBERS` 只能确认奖级，不能泄漏尚未最终确认的金额。 */

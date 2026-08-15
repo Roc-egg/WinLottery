@@ -43,6 +43,7 @@ import roc.win.lottery.app.TicketNumberArea
 import roc.win.lottery.app.TicketReviewEvaluation
 import roc.win.lottery.app.TicketReviewState
 import roc.win.lottery.domain.DrawResult
+import roc.win.lottery.domain.IssueSequenceResolver
 import roc.win.lottery.domain.LotteryType
 import roc.win.lottery.domain.TicketFieldOrigin
 import roc.win.lottery.domain.TicketValidationProblem
@@ -100,6 +101,7 @@ fun AnalysisScreen(
  * @param onAddBetLine 新增一行手动单式投注。
  * @param onRemoveBetLine 删除一行手动单式投注。
  * @param onMultiplierChange 修改倍数。
+ * @param onPeriodCountChange 修改连续投注期数。
  * @param onAdditionalChange 修改大乐透追加属性。
  * @param onPaidAmountChange 修改票面金额。
  * @param onUseCalculatedAmount 使用当前投注结构推导金额。
@@ -122,6 +124,7 @@ fun ReviewScreen(
     onAddBetLine: () -> Unit,
     onRemoveBetLine: (Int) -> Unit,
     onMultiplierChange: (Int) -> Unit,
+    onPeriodCountChange: (Int) -> Unit,
     onAdditionalChange: (Boolean) -> Unit,
     onPaidAmountChange: (String) -> Unit,
     onUseCalculatedAmount: () -> Unit,
@@ -289,17 +292,10 @@ fun ReviewScreen(
             }
             Spacer(Modifier.height(12.dp))
         }
-        SettingRow(
-            title = "投注期数",
-            detail =
-                if (editor.periodCount.value == 1) {
-                    "当前支持单期开奖核对"
-                } else {
-                    "多期票字段可核对，暂不支持逐期开奖测算"
-                },
-        ) {
-            Text("${editor.periodCount.value} 期", style = MaterialTheme.typography.titleMedium)
-        }
+        PeriodCountEditor(
+            periodCount = editor.periodCount.value,
+            onPeriodCountChange = onPeriodCountChange,
+        )
         evaluation.problems.firstMessageFor("periodCount")?.let { message ->
             FieldProblem(message)
         }
@@ -555,6 +551,46 @@ private fun MultiplierEditor(
     }
 }
 
+/** 显示连续投注期数步进器。 */
+@Composable
+private fun PeriodCountEditor(
+    periodCount: Int,
+    onPeriodCountChange: (Int) -> Unit,
+) {
+    SettingRow(
+        title = "投注期数",
+        detail = if (periodCount == 1) "单期开奖核对" else "从起始期号逐期核对",
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(
+                onClick = {
+                    onPeriodCountChange(
+                        if (periodCount > IssueSequenceResolver.MAX_PERIOD_COUNT) {
+                            IssueSequenceResolver.MAX_PERIOD_COUNT
+                        } else {
+                            periodCount - 1
+                        },
+                    )
+                },
+                enabled = periodCount > IssueSequenceResolver.MIN_PERIOD_COUNT,
+            ) {
+                Icon(LotteryIcons.Minus, contentDescription = "减少投注期数")
+            }
+            Text(
+                "$periodCount 期",
+                modifier = Modifier.width(64.dp),
+                style = MaterialTheme.typography.titleMedium,
+            )
+            IconButton(
+                onClick = { onPeriodCountChange(periodCount + 1) },
+                enabled = periodCount < IssueSequenceResolver.MAX_PERIOD_COUNT,
+            ) {
+                Icon(LotteryIcons.Plus, contentDescription = "增加投注期数")
+            }
+        }
+    }
+}
+
 /** 显示一行投注设置和右侧控件。 */
 @Composable
 private fun SettingRow(
@@ -623,12 +659,16 @@ private fun ValidationSummary(problems: List<TicketValidationProblem>) {
  * 显示开奖查询中的明确状态。
  *
  * @param issue 用户确认并正在精确查询的期号。
+ * @param completedPeriodCount 本轮已完成的期次数量。
+ * @param totalPeriodCount 本轮需要查询的期次数量。
  * @param usesRealDrawData 是否正在核对真实官网数据。
  * @param onCancel 取消查询并返回首页。
  */
 @Composable
 fun DrawQueryScreen(
     issue: String,
+    completedPeriodCount: Int,
+    totalPeriodCount: Int,
     usesRealDrawData: Boolean,
     onCancel: () -> Unit,
 ) {
@@ -641,11 +681,22 @@ fun DrawQueryScreen(
             Spacer(Modifier.height(64.dp))
             CircularProgressIndicator()
             Spacer(Modifier.height(24.dp))
-            Text("正在查询第 $issue 期", style = MaterialTheme.typography.headlineMedium)
+            Text(
+                if (totalPeriodCount > 1) {
+                    "正在查询第 $issue 期（${completedPeriodCount + 1}/$totalPeriodCount）"
+                } else {
+                    "正在查询第 $issue 期"
+                },
+                style = MaterialTheme.typography.headlineMedium,
+            )
             Spacer(Modifier.height(10.dp))
             Text(
                 if (usesRealDrawData) {
-                    "正在核对两份官方数据，只查询你确认的单个期号"
+                    if (totalPeriodCount > 1) {
+                        "正在按顺序核对每一期的两份官方数据"
+                    } else {
+                        "正在核对两份官方数据，只查询你确认的单个期号"
+                    }
                 } else {
                     "只有用户确认后才会发起单期查询"
                 },

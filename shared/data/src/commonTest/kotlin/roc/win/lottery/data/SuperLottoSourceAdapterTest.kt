@@ -127,6 +127,27 @@ class SuperLottoSourceAdapterTest {
         assertNull(snapshot.prizeTiers.single { it.code == PrizeTierCodes.THIRD }.singlePrizeFen)
     }
 
+    /** 三至七等奖混用两套固定奖档时必须拒绝整个官网响应。 */
+    @Test
+    fun mixedFixedPrizeBandsAreSourceUnavailable() {
+        assertIs<SourceParseResult.SourceUnavailable>(
+            parseMain(DrawContractFixtures.superLottoMain(thirdPrizeAmount = "5,000")),
+        )
+    }
+
+    /** 已发布的一等奖追加金额偏离基本奖金 80% 时必须拒绝。 */
+    @Test
+    fun invalidAdditionalPrizeRatioIsSourceUnavailable() {
+        assertIs<SourceParseResult.SourceUnavailable>(
+            parseMain(
+                DrawContractFixtures.superLottoMain(
+                    firstAdditionalCount = "1",
+                    firstAdditionalAmount = "7,999,999",
+                ),
+            ),
+        )
+    }
+
     /** 辅助接口返回其他最新期时不能冒充目标期号证据。 */
     @Test
     fun supportingDifferentIssueIsNotPublishedForTarget() {

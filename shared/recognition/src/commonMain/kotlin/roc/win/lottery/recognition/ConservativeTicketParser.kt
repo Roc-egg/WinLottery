@@ -9,7 +9,7 @@ import roc.win.lottery.domain.TicketDraft
  * 从平台标准 OCR 行中保守提取单式票字段。
  *
  * 解析器只接受能够由票面文字、坐标结构和金额关系共同证明的值。补打、复式和胆拖会被明确阻断；
- * 多期票会保留已识别字段进入人工核对，但仍由领域层阻止当前版本执行逐期开奖测算。
+ * 多期票会保留已识别字段进入人工核对，并由领域层限制可安全逐期查询的范围。
  */
 class ConservativeTicketParser : TicketParser {
     /** 解析一份标准 OCR 文档，并返回等待确认或明确阻断状态。 */
@@ -45,8 +45,7 @@ class ConservativeTicketParser : TicketParser {
                 is BetRowsResult.Success -> result.rows
                 is BetRowsResult.Failed -> return TicketParseResult.NeedsCorrection(result.message)
             }
-        val multiplierExtraction = extractMultiplier(rows, parsedBets, lotteryType)
-        val multiplier = multiplierExtraction.value
+        val explicitMultiplierExtraction = extractMultiplier(rows, parsedBets, lotteryType)
         val additionalExtraction =
             when (lotteryType) {
                 LotteryType.SUPER_LOTTO -> extractSuperLottoAdditional(rows)
@@ -59,7 +58,36 @@ class ConservativeTicketParser : TicketParser {
         }
         val paidAmountCandidate = paidAmountCandidates.firstOrNull()
         val paidAmountFen = paidAmountCandidate?.value
-        val periodCount = explicitPeriodCount ?: V1_PERIOD_COUNT
+        val hasConflictingMultiplierEvidence =
+            explicitMultiplierExtraction.value == null && explicitMultiplierExtraction.bounds != null
+        val recoveredSummary =
+            if (
+                (explicitPeriodCount == null || explicitMultiplierExtraction.value == null) &&
+                !hasConflictingMultiplierEvidence
+            ) {
+                recoverDamagedSummary(
+                    rows = rows,
+                    lotteryType = lotteryType,
+                    betLineCount = parsedBets.size,
+                    isAdditional = additionalExtraction.value,
+                    paidAmountFen = paidAmountFen,
+                    knownPeriodCount = explicitPeriodCount,
+                    knownMultiplier = explicitMultiplierExtraction.value,
+                )
+            } else {
+                null
+            }
+        val multiplierExtraction =
+            if (explicitMultiplierExtraction.value != null) {
+                explicitMultiplierExtraction
+            } else {
+                FieldExtraction(
+                    recoveredSummary?.multiplier,
+                    recoveredSummary?.bounds ?: explicitMultiplierExtraction.bounds,
+                )
+            }
+        val multiplier = multiplierExtraction.value
+        val periodCount = explicitPeriodCount ?: recoveredSummary?.periodCount ?: V1_PERIOD_COUNT
         val expectedAmountFen =
             if (multiplier != null && isAdditional != null) {
                 TicketAmountCalculator.calculate(
@@ -113,9 +141,6 @@ class ConservativeTicketParser : TicketParser {
             buildList {
                 if (issue.isEmpty()) {
                     add("期号缺失或格式错误，请在票面校正页补充")
-                }
-                if (periodCount != V1_PERIOD_COUNT) {
-                    add("已识别${periodCount}期投注，当前版本暂不支持多期逐期开奖核对")
                 }
                 if (multiplier == null) {
                     add("投注倍数缺失、存在字符混淆或多个候选值，请明确选择")
@@ -217,14 +242,11 @@ class ConservativeTicketParser : TicketParser {
         return detectedTypes.singleOrNull().takeIf { candidateFound }
     }
 
-    /** 识别无需继续解析即可确定的 V1 不支持票型。 */
+    /** 识别无需继续解析即可确定的不支持票型。 */
     private fun detectUnsupportedTicket(rows: List<VisualRow>): String? {
         val compactTexts = rows.map { it.text.compactForKeywords() }
         if (compactTexts.any { it.contains(REPRINT_KEYWORD) }) {
             return "识别到补打票，当前版本不支持自动测算"
-        }
-        if (compactTexts.any { it.contains(MULTI_PERIOD_KEYWORD) }) {
-            return "识别到多期投注，V1 仅支持单期彩票"
         }
         val unsupportedPlay =
             compactTexts.firstOrNull { text ->
@@ -495,6 +517,96 @@ class ConservativeTicketParser : TicketParser {
         return DegradedSummary(periodCount, multiplier)
     }
 
+    /**
+     * 单位被吞并成连续数字时，仅依靠完整摘要锚点和精确金额关系恢复唯一的期数、倍数。
+     *
+     * 任一必要字段缺失、候选不唯一或金额不一致时都不恢复，继续交给用户人工确认。
+     */
+    private fun recoverDamagedSummary(
+        rows: List<VisualRow>,
+        lotteryType: LotteryType,
+        betLineCount: Int,
+        isAdditional: Boolean?,
+        paidAmountFen: Long?,
+        knownPeriodCount: Int?,
+        knownMultiplier: Int?,
+    ): RecoveredSummary? {
+        if (isAdditional == null || paidAmountFen == null || betLineCount <= 0) return null
+        val candidates =
+            rows.flatMap { row ->
+                val body =
+                    SUMMARY_BODY_REGEX
+                        .find(row.text.normalizedForParsing())
+                        ?.groupValues
+                        ?.get(1)
+                        ?: return@flatMap emptyList()
+                damagedSummaryCandidates(body)
+                    .filter { candidate ->
+                        (knownPeriodCount == null || candidate.first == knownPeriodCount) &&
+                            (knownMultiplier == null || candidate.second == knownMultiplier)
+                    }.filter { (periodCount, multiplier) ->
+                        TicketAmountCalculator.calculate(
+                            lotteryType = lotteryType,
+                            betLineCount = betLineCount,
+                            additionalLineCount = if (isAdditional) betLineCount else 0,
+                            multiplier = multiplier,
+                            periodCount = periodCount,
+                        ) == paidAmountFen
+                    }.map { (periodCount, multiplier) ->
+                        RecoveredSummary(periodCount, multiplier, row.bounds)
+                    }
+            }
+        val uniqueValues = candidates.map { it.periodCount to it.multiplier }.distinct()
+        val unique = uniqueValues.singleOrNull() ?: return null
+        return RecoveredSummary(
+            periodCount = unique.first,
+            multiplier = unique.second,
+            bounds =
+                candidates
+                    .filter { it.periodCount == unique.first && it.multiplier == unique.second }
+                    .map { it.bounds }
+                    .coveringBoundsOrNull()
+                    ?: return null,
+        )
+    }
+
+    /** 从受损摘要中的连续数字生成有限的期数、倍数组合，不改变数字顺序。 */
+    private fun damagedSummaryCandidates(body: String): Set<Pair<Int, Int>> {
+        val compact = body.filterNot(Char::isWhitespace)
+        if (compact.length !in MIN_DAMAGED_SUMMARY_LENGTH..MAX_DAMAGED_SUMMARY_LENGTH) return emptySet()
+        val digits = compact.filter(Char::isDigit)
+        if (digits.length !in MIN_DAMAGED_DIGIT_COUNT..MAX_DAMAGED_DIGIT_COUNT) return emptySet()
+        if (compact.length - digits.length > MAX_DAMAGED_NOISE_COUNT) return emptySet()
+
+        val variants =
+            buildSet {
+                add(digits)
+                if (digits.length >= MIN_DIGITS_ALLOWING_ONE_NOISE_REMOVAL) {
+                    digits.indices.forEach { index -> add(digits.removeRange(index, index + 1)) }
+                }
+            }
+        return buildSet {
+            variants.forEach { variant ->
+                for (splitIndex in 1 until variant.length) {
+                    val periodRaw = variant.substring(0, splitIndex)
+                    val multiplierRaw = variant.substring(splitIndex)
+                    if (periodRaw.length > MAX_SUMMARY_NUMBER_LENGTH ||
+                        multiplierRaw.length > MAX_SUMMARY_NUMBER_LENGTH ||
+                        periodRaw.startsWith(ASCII_ZERO) ||
+                        multiplierRaw.startsWith(ASCII_ZERO)
+                    ) {
+                        continue
+                    }
+                    val periodCount = periodRaw.toIntOrNull() ?: continue
+                    val multiplier = multiplierRaw.toIntOrNull() ?: continue
+                    if (periodCount in VALID_PERIOD_COUNT_RANGE && multiplier in VALID_MULTIPLIER_RANGE) {
+                        add(periodCount to multiplier)
+                    }
+                }
+            }
+        }
+    }
+
     /** 提取所有带“合计”锚点的金额候选，并精确转换为分。 */
     private fun extractPaidAmountCandidates(rows: List<VisualRow>): List<LocatedValue<Long>> {
         val candidates =
@@ -737,6 +849,19 @@ class ConservativeTicketParser : TicketParser {
     )
 
     /**
+     * 由摘要锚点和金额关系唯一恢复的投注参数。
+     *
+     * @property periodCount 投注期数。
+     * @property multiplier 投注倍数。
+     * @property bounds 摘要在原图中的归一化区域。
+     */
+    private data class RecoveredSummary(
+        val periodCount: Int,
+        val multiplier: Int,
+        val bounds: NormalizedBounds,
+    )
+
+    /**
      * 合并后的视觉文字行。
      *
      * @property text 按横向顺序连接的原始 OCR 片段。
@@ -794,9 +919,6 @@ class ConservativeTicketParser : TicketParser {
         /** 补打票关键词。 */
         const val REPRINT_KEYWORD = "补打票"
 
-        /** 多期投注关键词。 */
-        const val MULTI_PERIOD_KEYWORD = "多期投注"
-
         /** 大乐透追加投注关键词。 */
         const val ADDITIONAL_KEYWORD = "追加投注"
 
@@ -825,6 +947,9 @@ class ConservativeTicketParser : TicketParser {
         val DEGRADED_SUMMARY_REGEX =
             Regex("(?:单式票|追加投注)\\s*(\\d{1,2})\\D{1,4}(\\d{1,2})\\D{0,4}(?=(?:合计|总计))")
 
+        /** 单式或追加摘要与合计金额之间的短文本。 */
+        val SUMMARY_BODY_REGEX = Regex("(?:单式票|追加投注)\\s*(.{2,12}?)\\s*(?=(?:合计|总计))")
+
         /** 双色球投注行末尾的倍数。 */
         val ROW_MULTIPLIER_REGEX = Regex("[xX]\\s*(\\d{1,2})(?!\\d)")
 
@@ -840,7 +965,7 @@ class ConservativeTicketParser : TicketParser {
         /** 票面摘要允许识别的投注期数范围。 */
         val VALID_PERIOD_COUNT_RANGE = 1..99
 
-        /** V1 只支持一期投注。 */
+        /** 缺失明确期数时采用的单期值。 */
         const val V1_PERIOD_COUNT = 1
 
         /** 一行至少出现这些两位数字才视为疑似投注行。 */
@@ -869,6 +994,27 @@ class ConservativeTicketParser : TicketParser {
 
         /** 金额最多允许两位小数。 */
         const val MAX_FRACTION_DIGITS = 2
+
+        /** 受损摘要至少包含的非空白字符数。 */
+        const val MIN_DAMAGED_SUMMARY_LENGTH = 2
+
+        /** 受损摘要最多接受的非空白字符数。 */
+        const val MAX_DAMAGED_SUMMARY_LENGTH = 12
+
+        /** 受损摘要至少保留的数字数。 */
+        const val MIN_DAMAGED_DIGIT_COUNT = 2
+
+        /** 期数、倍数及一个误识别单位最多形成五位数字。 */
+        const val MAX_DAMAGED_DIGIT_COUNT = 5
+
+        /** 摘要数字以外允许的少量 OCR 噪声字符数。 */
+        const val MAX_DAMAGED_NOISE_COUNT = 4
+
+        /** 至少三位数字时才允许把其中一位视为被误识别的单位。 */
+        const val MIN_DIGITS_ALLOWING_ONE_NOISE_REMOVAL = 3
+
+        /** 期数和倍数各自最多两位。 */
+        const val MAX_SUMMARY_NUMBER_LENGTH = 2
 
         /** 加号分隔符。 */
         const val PLUS_SIGN = '+'

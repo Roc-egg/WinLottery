@@ -111,8 +111,8 @@ class ConservativeTicketParserTest {
                 ),
             )
 
-        val correction = assertIs<TicketParseResult.NeedsCorrection>(result)
-        val draft = assertNotNull(correction.draft)
+        val review = assertIs<TicketParseResult.ReadyForReview>(result)
+        val draft = review.draft
         assertEquals(LotteryType.SUPER_LOTTO, draft.lotteryType)
         assertEquals("26999", draft.issue)
         assertEquals(listOf(1, 7, 14, 22, 35), draft.betLines.single().primaryNumbers)
@@ -121,7 +121,60 @@ class ConservativeTicketParserTest {
         assertEquals(1, draft.multiplier)
         assertEquals(10, draft.periodCount)
         assertEquals(2_000L, draft.paidAmountFen)
-        assertTrue(correction.message.contains("10期"))
+    }
+
+    /** 期、倍单位被误成连续数字时，只在金额关系能够排除其他解释后恢复字段。 */
+    @Test
+    fun concatenatedSummaryDigitsUseExactAmountToRecoverUniqueValues() {
+        val result =
+            parser.parse(
+                document(
+                    "超级大乐透",
+                    "第26999期",
+                    "单式票 1011 % 合计20元",
+                    "① 01 07 14 22 35 + 03 11",
+                ),
+            )
+
+        val draft = assertIs<TicketParseResult.ReadyForReview>(result).draft
+        assertEquals(10, draft.periodCount)
+        assertEquals(1, draft.multiplier)
+    }
+
+    /** 受损数字串存在两种同额解释时必须保持未知，不能凭排列偏好猜测。 */
+    @Test
+    fun ambiguousConcatenatedSummaryDigitsRemainUnknown() {
+        val result =
+            parser.parse(
+                document(
+                    "超级大乐透",
+                    "第26999期",
+                    "单式票 1010 % 合计20元",
+                    "① 01 07 14 22 35 + 03 11",
+                ),
+            )
+
+        val correction = assertIs<TicketParseResult.NeedsCorrection>(result)
+        assertNull(assertNotNull(correction.draft).multiplier)
+    }
+
+    /** 受损摘要即使能由金额唯一解释，也不能覆盖票面已有的明确倍数冲突。 */
+    @Test
+    fun damagedSummaryDoesNotOverrideConflictingMultiplierEvidence() {
+        val result =
+            parser.parse(
+                document(
+                    "超级大乐透",
+                    "第26999期",
+                    "单式票 1011 % 合计20元",
+                    "1倍",
+                    "2倍",
+                    "① 01 07 14 22 35 + 03 11",
+                ),
+            )
+
+        val correction = assertIs<TicketParseResult.NeedsCorrection>(result)
+        assertNull(assertNotNull(correction.draft).multiplier)
     }
 
     /** 侧边纵排发行机构文字跨越多注号码时，不得把这些号码错误合并成一行。 */
@@ -157,8 +210,8 @@ class ConservativeTicketParserTest {
                 ),
             )
 
-        val correction = assertIs<TicketParseResult.NeedsCorrection>(result)
-        val draft = assertNotNull(correction.draft)
+        val review = assertIs<TicketParseResult.ReadyForReview>(result)
+        val draft = review.draft
         assertEquals(LotteryType.SUPER_LOTTO, draft.lotteryType)
         assertEquals("26999", draft.issue)
         assertEquals(5, draft.betLines.size)
@@ -355,7 +408,7 @@ class ConservativeTicketParserTest {
         assertTrue(correction.message.contains("结构"))
     }
 
-    /** 明确出现多期投注时应保留字段供核对，同时阻断当前版本的逐期开奖测算。 */
+    /** 明确出现多期投注且字段完整时应直接进入人工确认。 */
     @Test
     fun explicitMultiplePeriodsKeepRecognizedDraft() {
         val result =
@@ -368,9 +421,8 @@ class ConservativeTicketParserTest {
                 ),
             )
 
-        val correction = assertIs<TicketParseResult.NeedsCorrection>(result)
-        assertTrue(correction.message.contains("10期"))
-        assertEquals(10, assertNotNull(correction.draft).periodCount)
+        val review = assertIs<TicketParseResult.ReadyForReview>(result)
+        assertEquals(10, review.draft.periodCount)
     }
 
     /** Vision 把一倍识别成字母 l 时仍应保留已明确识别的十期期数。 */
@@ -387,7 +439,6 @@ class ConservativeTicketParserTest {
             )
 
         val correction = assertIs<TicketParseResult.NeedsCorrection>(result)
-        assertTrue(correction.message.contains("10期"))
         val draft = assertNotNull(correction.draft)
         assertEquals(10, draft.periodCount)
         assertNull(draft.multiplier)

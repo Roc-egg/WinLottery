@@ -4,6 +4,7 @@ import roc.win.lottery.domain.BetLine
 import roc.win.lottery.domain.ConfirmedTicket
 import roc.win.lottery.domain.ConfirmedValue
 import roc.win.lottery.domain.Issue
+import roc.win.lottery.domain.IssueSequenceResolver
 import roc.win.lottery.domain.LotteryType
 import roc.win.lottery.domain.TicketAmountCalculator
 import roc.win.lottery.domain.TicketDraft
@@ -86,6 +87,15 @@ sealed interface TicketReviewAction {
     ) : TicketReviewAction
 
     /**
+     * 修改连续投注期数。
+     *
+     * @property value 用户确认的 1 至 20 期。
+     */
+    data class ChangePeriodCount(
+        val value: Int,
+    ) : TicketReviewAction
+
+    /**
      * 修改整张大乐透彩票的追加属性。
      *
      * @property value 是否追加投注。
@@ -144,7 +154,7 @@ data class TicketReviewEvaluation(
  * @property issue 当前期号输入。
  * @property betLines 保留票面顺序的投注行。
  * @property multiplier 当前投注倍数，尚待用户确认时值为 `null`。
- * @property periodCount 当前投注期数，多期值只用于展示和阻断不受支持的开奖测算。
+ * @property periodCount 当前连续投注期数。
  * @property paidAmountYuan 当前票面金额输入，单位为元。
  */
 data class TicketReviewState(
@@ -188,6 +198,7 @@ data class TicketReviewState(
             TicketReviewAction.AddBetLine -> addBetLine()
             is TicketReviewAction.RemoveBetLine -> removeBetLine(action.lineIndex)
             is TicketReviewAction.ChangeMultiplier -> changeMultiplier(action.value)
+            is TicketReviewAction.ChangePeriodCount -> changePeriodCount(action.value)
             is TicketReviewAction.ChangeAdditional -> changeAdditional(action.value)
             is TicketReviewAction.ChangePaidAmount -> changePaidAmount(action.value)
             TicketReviewAction.UseCalculatedAmount -> useCalculatedAmount()
@@ -307,6 +318,12 @@ data class TicketReviewState(
         return copy(multiplier = multiplier.withUserValue(value))
     }
 
+    /** 接受移动首版范围内的连续投注期数。 */
+    private fun changePeriodCount(value: Int): TicketReviewState {
+        if (value !in IssueSequenceResolver.MIN_PERIOD_COUNT..IssueSequenceResolver.MAX_PERIOD_COUNT) return this
+        return copy(periodCount = periodCount.withUserValue(value))
+    }
+
     /** 修改大乐透追加属性，并同步到每一行单式投注。 */
     private fun changeAdditional(value: Boolean): TicketReviewState {
         if (lotteryType.value != LotteryType.SUPER_LOTTO) return this
@@ -397,7 +414,7 @@ data class TicketReviewState(
     /** 创建手动录入或 OCR 校正所需的初始状态。 */
     companion object {
         /**
-         * 创建一张等待用户完整录入的单期单式彩票。
+         * 创建一张等待用户完整录入的单式彩票。
          *
          * 所有影响查询和金额的字段均保持未确认，只有固定为 1 的期数使用推导来源。
          */
@@ -462,7 +479,7 @@ data class TicketReviewState(
         /** V1 合法投注倍数。 */
         private val VALID_MULTIPLIER_RANGE = 1..99
 
-        /** V1 固定投注期数。 */
+        /** 手动录入的默认投注期数。 */
         private const val V1_PERIOD_COUNT = 1
 
         /** 两种彩票主号码的全局可编辑范围。 */

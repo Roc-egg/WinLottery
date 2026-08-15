@@ -3,8 +3,11 @@ package roc.win.lottery.domain
 /** 收集一条校验问题。 */
 private typealias ProblemCollector = (TicketValidationStatus, String, String) -> Unit
 
-/** 校验 V1 已确认彩票的领域约束。 */
-class TicketValidator {
+/** 校验移动首版已确认彩票的领域约束。 */
+class TicketValidator(
+    /** 将多期票展开为逐期查询列表的安全能力。 */
+    private val issueSequenceResolver: IssueSequenceResolver = IssueSequenceResolver(),
+) {
     /**
      * 校验票面字段、号码、倍数和支付金额是否一致。
      *
@@ -28,8 +31,20 @@ class TicketValidator {
 
         validateIssue(ticket, ::addProblem)
 
-        if (ticket.periodCount.value != V1_PERIOD_COUNT) {
-            addProblem(TicketValidationStatus.UNSUPPORTED, "periodCount", "V1 仅支持单期彩票")
+        val sequence =
+            issueSequenceResolver.resolve(
+                lotteryType = ticket.lotteryType.value,
+                firstIssue = ticket.issue.value,
+                periodCount = ticket.periodCount.value,
+            )
+        if (sequence is IssueSequenceResult.Unsupported) {
+            val problemStatus =
+                if (ticket.periodCount.value < IssueSequenceResolver.MIN_PERIOD_COUNT) {
+                    TicketValidationStatus.INVALID
+                } else {
+                    TicketValidationStatus.UNSUPPORTED
+                }
+            addProblem(problemStatus, "periodCount", sequence.message)
         }
         if (ticket.multiplier.value !in MIN_MULTIPLIER..MAX_MULTIPLIER) {
             addProblem(TicketValidationStatus.INVALID, "multiplier", "投注倍数必须在 1 至 99 之间")
@@ -131,7 +146,10 @@ class TicketValidator {
             addProblem(TicketValidationStatus.INVALID, "paidAmountFen", "票面金额不能为负数")
             return
         }
-        if (ticket.multiplier.value !in MIN_MULTIPLIER..MAX_MULTIPLIER || ticket.periodCount.value != V1_PERIOD_COUNT) {
+        if (
+            ticket.multiplier.value !in MIN_MULTIPLIER..MAX_MULTIPLIER ||
+            ticket.periodCount.value !in IssueSequenceResolver.MIN_PERIOD_COUNT..IssueSequenceResolver.MAX_PERIOD_COUNT
+        ) {
             return
         }
 
@@ -198,16 +216,13 @@ class TicketValidator {
         }
     }
 
-    /** V1 只允许一期投注。 */
+    /** 移动首版票据常量。 */
     private companion object {
         /** 最小投注倍数。 */
         const val MIN_MULTIPLIER = 1
 
         /** 最大投注倍数。 */
         const val MAX_MULTIPLIER = 99
-
-        /** V1 支持的投注期数。 */
-        const val V1_PERIOD_COUNT = 1
 
         /** 大乐透期号长度。 */
         const val SUPER_LOTTO_ISSUE_LENGTH = 5

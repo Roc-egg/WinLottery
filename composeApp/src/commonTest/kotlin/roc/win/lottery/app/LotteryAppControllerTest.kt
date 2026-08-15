@@ -309,6 +309,106 @@ class LotteryAppControllerTest {
             assertEquals(2, repository.queryCount)
         }
 
+    /** 十期大乐透应逐期保留状态，并在首个未开奖期后停止后续官网请求。 */
+    @Test
+    fun multiPeriodTicketKeepsPerIssueResultsAndStopsAfterNotPublished() =
+        runTest {
+            val repository =
+                SequenceDrawRepository(
+                    DrawQueryResult.Unavailable(DrawStatus.PUBLISHING, "历史期辅助证据仍在核对"),
+                    DrawQueryResult.Success(verifiedDraw()),
+                    DrawQueryResult.Unavailable(DrawStatus.NOT_PUBLISHED, "该期开奖结果尚未发布"),
+                )
+            val draft =
+                validDraft().copy(
+                    issue = "26090",
+                    periodCount = 10,
+                    paidAmountFen = 3_000L,
+                )
+            val controller =
+                createController(
+                    repository = repository,
+                    usesRealDrawData = true,
+                    ticketParser = TicketParser { TicketParseResult.ReadyForReview(draft) },
+                )
+            controller.startAnalysis(ImageAcquisitionSource.SYSTEM_PICKER)
+
+            controller.confirmTicket()
+
+            val screen = assertIs<AppScreen.MultiPeriodVerificationResult>(controller.uiState.value.screen)
+            assertEquals(10, screen.periodResults.size)
+            assertEquals(1, screen.verifiedPeriodCount)
+            assertEquals(9, screen.unresolvedPeriodCount)
+            assertFalse(screen.isConclusive)
+            assertNull(screen.estimatedPrizeFen)
+            assertEquals(listOf(Issue("26090"), Issue("26091"), Issue("26092")), repository.queriedIssues)
+            assertTrue(assertIs<PeriodVerification.Unavailable>(screen.periodResults[0]).wasQueried)
+            assertIs<PeriodVerification.Verified>(screen.periodResults[1])
+            assertTrue(assertIs<PeriodVerification.Unavailable>(screen.periodResults[2]).wasQueried)
+            assertFalse(assertIs<PeriodVerification.Unavailable>(screen.periodResults[3]).wasQueried)
+        }
+
+    /** 所有多期期次均完成时才允许安全汇总整票奖金。 */
+    @Test
+    fun completedMultiPeriodTicketAggregatesAllPeriodPrizes() =
+        runTest {
+            val repository = IssueAwareSuccessRepository()
+            val draft =
+                validDraft().copy(
+                    issue = "26090",
+                    periodCount = 3,
+                    paidAmountFen = 900L,
+                )
+            val controller =
+                createController(
+                    repository = repository,
+                    usesRealDrawData = true,
+                    ticketParser = TicketParser { TicketParseResult.ReadyForReview(draft) },
+                )
+            controller.startAnalysis(ImageAcquisitionSource.SYSTEM_PICKER)
+
+            controller.confirmTicket()
+
+            val screen = assertIs<AppScreen.MultiPeriodVerificationResult>(controller.uiState.value.screen)
+            assertTrue(screen.isConclusive)
+            assertTrue(screen.hasWinningPeriod)
+            assertEquals(5_400_000L, screen.estimatedPrizeFen)
+            assertEquals(listOf("26090", "26091", "26092"), repository.queriedIssues.map { it.value })
+        }
+
+    /** 多期票已确认中奖但奖金未完整时应只重查这些待补全期次。 */
+    @Test
+    fun multiPeriodWinningTiersWithoutPayoutRemainRetryable() =
+        runTest {
+            val repository = IssueAwareSuccessRepository(DrawStatus.FINAL_NUMBERS)
+            val draft =
+                validDraft().copy(
+                    issue = "26090",
+                    periodCount = 2,
+                    paidAmountFen = 600L,
+                )
+            val controller =
+                createController(
+                    repository = repository,
+                    usesRealDrawData = true,
+                    ticketParser = TicketParser { TicketParseResult.ReadyForReview(draft) },
+                )
+            controller.startAnalysis(ImageAcquisitionSource.SYSTEM_PICKER)
+            controller.confirmTicket()
+
+            val firstResult = assertIs<AppScreen.MultiPeriodVerificationResult>(controller.uiState.value.screen)
+            assertTrue(firstResult.isConclusive)
+            assertEquals(2, firstResult.unresolvedPeriodCount)
+            assertNull(firstResult.estimatedPrizeFen)
+
+            controller.retryDrawQuery()
+
+            assertEquals(
+                listOf("26090", "26091", "26090", "26091"),
+                repository.queriedIssues.map { it.value },
+            )
+        }
+
     /** 非法人工校正必须停留在当前页面，且不得查询开奖或清理票图。 */
     @Test
     fun invalidCorrectionStaysAtReviewGate() =
@@ -611,6 +711,17 @@ class LotteryAppControllerTest {
                         singlePrizeFen = 1_000_000L,
                         additionalPrizeFen = 800_000L,
                     ),
+                    PrizeTier(
+                        code = PrizeTierCodes.SECOND,
+                        displayName = "二等奖",
+                        singlePrizeFen = 500_000L,
+                        additionalPrizeFen = 400_000L,
+                    ),
+                    PrizeTier(PrizeTierCodes.THIRD, "三等奖", 666_600L, null),
+                    PrizeTier(PrizeTierCodes.FOURTH, "四等奖", 38_000L, null),
+                    PrizeTier(PrizeTierCodes.FIFTH, "五等奖", 20_000L, null),
+                    PrizeTier(PrizeTierCodes.SIXTH, "六等奖", 1_800L, null),
+                    PrizeTier(PrizeTierCodes.SEVENTH, "七等奖", 700L, null),
                 ),
             evidence =
                 SourceEvidence(
@@ -688,6 +799,9 @@ class LotteryAppControllerTest {
         var lastIssue: Issue? = null
             private set
 
+        /** 按实际调用顺序保存的精确期号。 */
+        val queriedIssues = mutableListOf<Issue>()
+
         /** 返回当前预置结果，超出数量时继续返回最后一项。 */
         override suspend fun getDraw(
             lotteryType: LotteryType,
@@ -695,9 +809,28 @@ class LotteryAppControllerTest {
         ): DrawQueryResult {
             lastLotteryType = lotteryType
             lastIssue = issue
+            queriedIssues += issue
             val result = results[minOf(queryCount, results.lastIndex)]
             queryCount += 1
             return result
+        }
+    }
+
+    /** 为收到的每个期号生成匹配的双证据成功结果。 */
+    private inner class IssueAwareSuccessRepository(
+        /** 每一期返回的开奖完整状态。 */
+        private val drawStatus: DrawStatus = DrawStatus.FINAL_PAYOUT,
+    ) : DrawRepository {
+        /** 按实际调用顺序保存的精确期号。 */
+        val queriedIssues = mutableListOf<Issue>()
+
+        /** 返回期号与请求严格一致的测试开奖。 */
+        override suspend fun getDraw(
+            lotteryType: LotteryType,
+            issue: Issue,
+        ): DrawQueryResult {
+            queriedIssues += issue
+            return DrawQueryResult.Success(verifiedDraw().copy(issue = issue, status = drawStatus))
         }
     }
 

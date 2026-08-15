@@ -97,7 +97,7 @@ data class TicketDraft(
  * @property issue 已确认的期号。
  * @property betLines 保留票面顺序的单式投注行，重复行不得去重。
  * @property multiplier 已确认的投注倍数。
- * @property periodCount 已确认的投注期数，V1 只接受 1。
+ * @property periodCount 已确认的连续投注期数，移动首版接受 1 至 20。
  * @property paidAmountFen 票面实际支付金额，单位为分。
  */
 data class ConfirmedTicket(

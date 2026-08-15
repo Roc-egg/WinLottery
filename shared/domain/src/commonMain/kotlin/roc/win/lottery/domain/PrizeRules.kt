@@ -174,6 +174,174 @@ object LotteryPrizeRules {
     }
 }
 
+/** 大乐透官方奖级金额数据的校验状态。 */
+enum class SuperLottoPrizeTierValidationStatus {
+    /** 奖级和奖金字段完整且符合现行规则。 */
+    COMPLETE,
+
+    /** 奖级结构合法，但官网仍有奖金字段尚未发布。 */
+    INCOMPLETE,
+
+    /** 奖级集合、固定奖金额或追加奖金关系不符合现行规则。 */
+    INVALID,
+}
+
+/**
+ * 大乐透官方奖级金额数据校验结果。
+ *
+ * @property status 完整性与合法性状态。
+ * @property message 数据不合法时的安全说明。
+ */
+data class SuperLottoPrizeTierValidationResult(
+    val status: SuperLottoPrizeTierValidationStatus,
+    val message: String? = null,
+)
+
+/** 固化大乐透七奖级、固定奖两档和追加奖金关系。 */
+object SuperLottoPrizeTierValidator {
+    /**
+     * 校验统一模型中的大乐透奖级数据。
+     *
+     * 一、二等奖金额仍取当期官网值，只校验已发布追加金额与基本金额的规则关系；三至七等奖必须整体落在
+     * 开奖前奖池低于 8 亿元或达到 8 亿元的两套官方固定金额之一。
+     *
+     * @param prizeTiers 当期开奖的规范化奖级列表。
+     * @return 可用于数据适配层和规则引擎的统一校验结果。
+     */
+    fun validate(prizeTiers: List<PrizeTier>): SuperLottoPrizeTierValidationResult {
+        val tiersByCode = prizeTiers.groupBy { it.code }
+        if (tiersByCode.keys != REQUIRED_TIER_CODES || tiersByCode.values.any { it.size != 1 }) {
+            return invalid("大乐透奖级集合不完整、重复或包含未知奖级")
+        }
+        if (
+            prizeTiers.any { tier ->
+                tier.singlePrizeFen?.let { it < 0L } == true ||
+                    tier.additionalPrizeFen?.let { it < 0L } == true ||
+                    tier.winnerCount?.let { it < 0L } == true ||
+                    tier.additionalWinnerCount?.let { it < 0L } == true
+            }
+        ) {
+            return invalid("大乐透奖级金额或中奖注数不合法")
+        }
+        val fixedTiers = FIXED_TIER_CODES.map { code -> requireNotNull(tiersByCode[code]?.singleOrNull()) }
+        if (fixedTiers.any { it.additionalPrizeFen != null || it.additionalWinnerCount != null }) {
+            return invalid("大乐透三至七等奖不应包含追加奖金字段")
+        }
+        val matchingFixedBands =
+            FIXED_PRIZE_BANDS.filter { band ->
+                fixedTiers.all { tier -> tier.singlePrizeFen == null || band[tier.code] == tier.singlePrizeFen }
+            }
+        if (matchingFixedBands.isEmpty()) {
+            return invalid("大乐透三至七等奖金额不属于官方固定奖档位")
+        }
+        for (code in ADDITIONAL_TIER_CODES) {
+            val tier = requireNotNull(tiersByCode[code]?.singleOrNull())
+            val basePrizeFen = tier.singlePrizeFen
+            val additionalPrizeFen = tier.additionalPrizeFen
+            if (
+                basePrizeFen != null &&
+                additionalPrizeFen != null &&
+                !matchesRoundedAdditionalPrize(basePrizeFen, additionalPrizeFen)
+            ) {
+                return invalid("大乐透一、二等奖追加奖金不符合基本奖金的 80% 规则")
+            }
+        }
+        val complete =
+            prizeTiers.all { it.singlePrizeFen != null } &&
+                ADDITIONAL_TIER_CODES.all { code ->
+                    tiersByCode[code]?.singleOrNull()?.additionalPrizeFen != null
+                }
+        return SuperLottoPrizeTierValidationResult(
+            status =
+                if (complete) {
+                    SuperLottoPrizeTierValidationStatus.COMPLETE
+                } else {
+                    SuperLottoPrizeTierValidationStatus.INCOMPLETE
+                },
+        )
+    }
+
+    /** 按官网以元公布的口径校验四舍五入后的 80% 追加单注奖金。 */
+    private fun matchesRoundedAdditionalPrize(
+        basePrizeFen: Long,
+        additionalPrizeFen: Long,
+    ): Boolean {
+        if (basePrizeFen % FEN_PER_YUAN != 0L || additionalPrizeFen % FEN_PER_YUAN != 0L) return false
+        val baseYuan = basePrizeFen / FEN_PER_YUAN
+        val expectedAdditionalYuan =
+            (baseYuan / ADDITIONAL_RATIO_DENOMINATOR) * ADDITIONAL_RATIO_NUMERATOR +
+                (
+                    (baseYuan % ADDITIONAL_RATIO_DENOMINATOR) * ADDITIONAL_RATIO_NUMERATOR +
+                        ADDITIONAL_ROUNDING_OFFSET
+                ) / ADDITIONAL_RATIO_DENOMINATOR
+        return additionalPrizeFen / FEN_PER_YUAN == expectedAdditionalYuan
+    }
+
+    /** 创建统一的非法结果。 */
+    private fun invalid(message: String): SuperLottoPrizeTierValidationResult =
+        SuperLottoPrizeTierValidationResult(SuperLottoPrizeTierValidationStatus.INVALID, message)
+
+    /** 大乐透奖级数据规则常量。 */
+    private val REQUIRED_TIER_CODES =
+        setOf(
+            PrizeTierCodes.FIRST,
+            PrizeTierCodes.SECOND,
+            PrizeTierCodes.THIRD,
+            PrizeTierCodes.FOURTH,
+            PrizeTierCodes.FIFTH,
+            PrizeTierCodes.SIXTH,
+            PrizeTierCodes.SEVENTH,
+        )
+
+    /** 只允许基本投注金额的固定奖级。 */
+    private val FIXED_TIER_CODES =
+        listOf(
+            PrizeTierCodes.THIRD,
+            PrizeTierCodes.FOURTH,
+            PrizeTierCodes.FIFTH,
+            PrizeTierCodes.SIXTH,
+            PrizeTierCodes.SEVENTH,
+        )
+
+    /** 允许出现追加单注奖金的一、二等奖。 */
+    private val ADDITIONAL_TIER_CODES = setOf(PrizeTierCodes.FIRST, PrizeTierCodes.SECOND)
+
+    /** 开奖前奖池低于 8 亿元时的固定奖金额，单位为分。 */
+    private val LOW_POOL_FIXED_PRIZES =
+        mapOf(
+            PrizeTierCodes.THIRD to 500_000L,
+            PrizeTierCodes.FOURTH to 30_000L,
+            PrizeTierCodes.FIFTH to 15_000L,
+            PrizeTierCodes.SIXTH to 1_500L,
+            PrizeTierCodes.SEVENTH to 500L,
+        )
+
+    /** 开奖前奖池达到 8 亿元时的固定奖金额，单位为分。 */
+    private val HIGH_POOL_FIXED_PRIZES =
+        mapOf(
+            PrizeTierCodes.THIRD to 666_600L,
+            PrizeTierCodes.FOURTH to 38_000L,
+            PrizeTierCodes.FIFTH to 20_000L,
+            PrizeTierCodes.SIXTH to 1_800L,
+            PrizeTierCodes.SEVENTH to 700L,
+        )
+
+    /** 官方允许的两套固定奖金额。 */
+    private val FIXED_PRIZE_BANDS = listOf(LOW_POOL_FIXED_PRIZES, HIGH_POOL_FIXED_PRIZES)
+
+    /** 一元对应的分数。 */
+    private const val FEN_PER_YUAN = 100L
+
+    /** 追加奖金比例分子。 */
+    private const val ADDITIONAL_RATIO_NUMERATOR = 4L
+
+    /** 追加奖金比例分母。 */
+    private const val ADDITIONAL_RATIO_DENOMINATOR = 5L
+
+    /** 整数除法实现四舍五入时使用的偏移。 */
+    private const val ADDITIONAL_ROUNDING_OFFSET = 2L
+}
+
 /** B2 本地中奖规则计算器。 */
 class LotteryPrizeCalculator(
     /** 按期号选择规则版本的能力。 */
@@ -311,6 +479,18 @@ class LotteryPrizeCalculator(
         if (drawResult.ruleVersion != selectedRule.code) return "开奖结果的规则版本与期号不一致"
         if (!isPolicyCompatible(drawResult)) return "当期特别规定状态与已确认规则边界冲突"
         if (!hasValidDrawNumbers(drawResult)) return "开奖号码数量、范围或唯一性不合法"
+        if (drawResult.lotteryType == LotteryType.SUPER_LOTTO) {
+            val tierValidation = SuperLottoPrizeTierValidator.validate(drawResult.prizeTiers)
+            if (tierValidation.status == SuperLottoPrizeTierValidationStatus.INVALID) {
+                return tierValidation.message ?: "大乐透奖级数据不符合现行规则"
+            }
+            if (
+                drawResult.status == DrawStatus.FINAL_PAYOUT &&
+                tierValidation.status != SuperLottoPrizeTierValidationStatus.COMPLETE
+            ) {
+                return "大乐透奖级金额尚未完整，不能进入最终奖金状态"
+            }
+        }
         if (drawResult.revision < 1) return "开奖结果修订号不合法"
         if (drawResult.evidence.contentSha256.isBlank()) return "开奖结果缺少内容校验证据"
         if (drawResult.supportingEvidence.isEmpty() ||
