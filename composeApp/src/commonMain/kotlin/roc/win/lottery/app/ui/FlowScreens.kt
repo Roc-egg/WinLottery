@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -32,7 +33,9 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import roc.win.lottery.app.TicketLineReviewState
@@ -86,6 +89,7 @@ fun AnalysisScreen(
  * @param evaluation 当前领域评估。
  * @param imageRef OCR 流程的私有临时图片引用，手动录入时为 `null`。
  * @param fieldRegions 可在原图中定位的 OCR 字段区域。
+ * @param manualEntryReason OCR 无法安全形成草稿时，转为原图辅助手动录入的原因。
  * @param isDemo 开奖等后续能力是否仍为开发演示实现。
  * @param usesRealRecognition 当前草稿是否来自真实图片导入和本地 OCR。
  * @param usesRealDrawData 确认后是否查询真实官网开奖数据。
@@ -107,6 +111,7 @@ fun ReviewScreen(
     evaluation: TicketReviewEvaluation,
     imageRef: ImageRef?,
     fieldRegions: List<TicketFieldRegion>,
+    manualEntryReason: String?,
     isDemo: Boolean,
     usesRealRecognition: Boolean,
     usesRealDrawData: Boolean,
@@ -122,16 +127,27 @@ fun ReviewScreen(
     onUseCalculatedAmount: () -> Unit,
     onConfirm: () -> Unit,
 ) {
-    val isManualEntry = imageRef == null
+    val focusManager = LocalFocusManager.current
+    val isImageAssistedManualEntry = imageRef != null && manualEntryReason != null
+    val isManualEntry = imageRef == null || isImageAssistedManualEntry
     val previewState = if (usesRealRecognition && imageRef != null) rememberTicketPreviewState(imageRef) else null
     AppShell(
-        title = if (isManualEntry) "手动录入彩票" else "确认票面信息",
+        title =
+            when {
+                isImageAssistedManualEntry -> "对照原图录入"
+                isManualEntry -> "手动录入彩票"
+                else -> "确认票面信息"
+            },
         navigationIcon = LotteryIcons.Back,
         onNavigate = onBack,
     ) {
         if (isDemo) {
             StatusBanner(
                 when {
+                    isImageAssistedManualEntry -> {
+                        "本地 OCR 未能安全形成完整草稿：$manualEntryReason。以下字段保持空白，请对照原图逐项录入。"
+                    }
+
                     isManualEntry && usesRealDrawData -> {
                         "手动录入会绕过 OCR；确认后会精确查询该期官网数据并在本机测算。当前仍是未通过正式对账的移动验证版。"
                     }
@@ -188,7 +204,13 @@ fun ReviewScreen(
             label = { Text("开奖期号") },
             singleLine = true,
             isError = evaluation.problems.hasField("issue"),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Done),
+            keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() }),
+            trailingIcon = {
+                IconButton(onClick = { focusManager.clearFocus() }) {
+                    Icon(LotteryIcons.Done, contentDescription = "完成期号输入")
+                }
+            },
         )
         evaluation.problems.firstMessageFor("issue")?.let { message ->
             FieldProblem(message)
@@ -281,7 +303,13 @@ fun ReviewScreen(
             suffix = { Text("元") },
             singleLine = true,
             isError = evaluation.problems.hasField("paidAmountFen"),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Done),
+            keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() }),
+            trailingIcon = {
+                IconButton(onClick = { focusManager.clearFocus() }) {
+                    Icon(LotteryIcons.Done, contentDescription = "完成金额输入")
+                }
+            },
         )
         Row(
             modifier = Modifier.fillMaxWidth(),

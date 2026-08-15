@@ -73,6 +73,7 @@ fun App(container: AppContainer = remember { AppContainer.createDemo(getPlatform
                     evaluation = screen.evaluation,
                     imageRef = screen.imageRef,
                     fieldRegions = screen.fieldRegions,
+                    manualEntryReason = screen.manualEntryReason,
                     isDemo = uiState.isDemo,
                     usesRealRecognition = container.usesRealRecognition,
                     usesRealDrawData = container.usesRealDrawData,

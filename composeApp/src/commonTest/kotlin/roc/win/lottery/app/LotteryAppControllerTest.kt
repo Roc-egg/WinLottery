@@ -485,9 +485,9 @@ class LotteryAppControllerTest {
             assertTrue(assertIs<AppScreen.Review>(controller.uiState.value.screen).evaluation.canConfirm)
         }
 
-    /** 不带安全草稿的人工修正结果仍应进入错误页并立即清理临时图片。 */
+    /** 不带安全草稿的人工修正结果应保留原图并转为空白手动录入。 */
     @Test
-    fun unrecoverableParseResultClearsTemporaryImage() =
+    fun unsafeDraftFallsBackToImageAssistedManualEntry() =
         runTest {
             val paths = TrackingAppPaths()
             val parser = TicketParser { TicketParseResult.NeedsCorrection("无法安全划分投注行") }
@@ -500,8 +500,18 @@ class LotteryAppControllerTest {
 
             controller.startAnalysis(ImageAcquisitionSource.SYSTEM_PICKER)
 
-            val error = assertIs<AppScreen.Error>(controller.uiState.value.screen)
-            assertEquals("需要人工修正", error.title)
+            val review = assertIs<AppScreen.Review>(controller.uiState.value.screen)
+            assertEquals("无法安全划分投注行", review.manualEntryReason)
+            assertEquals("b1-demo-ticket", review.imageRef?.id)
+            assertNull(review.editor.lotteryType.value)
+            assertEquals(1, review.editor.betLines.size)
+            assertFalse(review.evaluation.canConfirm)
+            assertTrue(paths.deletedImageIds.isEmpty())
+
+            controller.updateTicketReview(TicketReviewAction.AddBetLine)
+            assertEquals(2, assertIs<AppScreen.Review>(controller.uiState.value.screen).editor.betLines.size)
+
+            controller.navigateHome()
             assertEquals(listOf("b1-demo-ticket"), paths.deletedImageIds)
         }
 

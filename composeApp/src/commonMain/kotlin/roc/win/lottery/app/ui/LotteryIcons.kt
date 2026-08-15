@@ -3,6 +3,7 @@ package roc.win.lottery.app.ui
 import androidx.compose.ui.graphics.vector.ImageVector
 import com.composables.icons.lucide.ArrowLeft
 import com.composables.icons.lucide.Camera
+import com.composables.icons.lucide.Check
 import com.composables.icons.lucide.Image
 import com.composables.icons.lucide.Info
 import com.composables.icons.lucide.Lucide
@@ -40,4 +41,7 @@ object LotteryIcons {
 
     /** 删除投注行图标。 */
     val Delete: ImageVector = Lucide.Trash2
+
+    /** 完成输入图标。 */
+    val Done: ImageVector = Lucide.Check
 }

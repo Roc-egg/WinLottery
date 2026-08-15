@@ -225,7 +225,17 @@ class LotteryAppController(
                     is TicketParseResult.NeedsCorrection -> {
                         val draft = parsed.draft
                         if (draft == null) {
-                            showError("需要人工修正", parsed.message, generation)
+                            mutableUiState.update {
+                                it.copy(
+                                    screen =
+                                        createReviewScreen(
+                                            editor = TicketReviewState.createManual(),
+                                            imageRef = acquisition.imageRef,
+                                            fieldRegions = parsed.fieldRegions,
+                                            manualEntryReason = parsed.message,
+                                        ),
+                                )
+                            }
                         } else if (generation == flowGeneration) {
                             mutableUiState.update {
                                 it.copy(
@@ -268,12 +278,14 @@ class LotteryAppController(
         editor: TicketReviewState,
         imageRef: ImageRef?,
         fieldRegions: List<TicketFieldRegion>,
+        manualEntryReason: String? = null,
     ): AppScreen.Review =
         AppScreen.Review(
             editor = editor,
             imageRef = imageRef,
             evaluation = editor.evaluate(container.ticketValidator),
             fieldRegions = fieldRegions,
+            manualEntryReason = manualEntryReason,
         )
 
     /** 只在当前流程仍有效时展示错误。 */
