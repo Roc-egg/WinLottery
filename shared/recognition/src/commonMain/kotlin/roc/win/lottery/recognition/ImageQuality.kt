@@ -36,6 +36,30 @@ fun interface ImageQualityAnalyzer {
 }
 
 /**
+ * 按顺序执行多道图片质量检查，并在第一项未通过时立即停止。
+ *
+ * @property analyzers 从低成本到高成本排列的质量检查器。
+ */
+class ImageQualityAnalyzerChain(
+    private val analyzers: List<ImageQualityAnalyzer>,
+) : ImageQualityAnalyzer {
+    init {
+        require(analyzers.isNotEmpty()) { "图片质量检查链不能为空" }
+    }
+
+    /** 依次执行检查，避免分辨率已经不合格时继续解码像素。 */
+    override suspend fun analyze(imageRef: ImageRef): ImageQualityResult {
+        analyzers.forEach { analyzer ->
+            when (val result = analyzer.analyze(imageRef)) {
+                ImageQualityResult.Passed -> Unit
+                else -> return result
+            }
+        }
+        return ImageQualityResult.Passed
+    }
+}
+
+/**
  * 使用归一化图片尺寸执行第一道确定性质量检查。
  *
  * @property minimumShortEdgePixels 允许进入 OCR 的最短边像素下限。

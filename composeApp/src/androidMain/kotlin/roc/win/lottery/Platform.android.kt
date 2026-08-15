@@ -7,10 +7,13 @@ import roc.win.lottery.data.OfficialDrawRepository
 import roc.win.lottery.domain.LotteryPrizeCalculator
 import roc.win.lottery.domain.TicketValidator
 import roc.win.lottery.recognition.AndroidAppPaths
+import roc.win.lottery.recognition.AndroidLuminanceImageDecoder
 import roc.win.lottery.recognition.AndroidPhotoPickerImageAcquirer
 import roc.win.lottery.recognition.ConservativeTicketParser
 import roc.win.lottery.recognition.ImageDimensionQualityAnalyzer
+import roc.win.lottery.recognition.ImageQualityAnalyzerChain
 import roc.win.lottery.recognition.MlKitChineseTicketRecognizer
+import roc.win.lottery.recognition.PixelImageQualityAnalyzer
 
 /** Android 平台能力。 */
 class AndroidPlatform : Platform {
@@ -35,7 +38,13 @@ fun createAndroidRecognitionContainer(activity: ComponentActivity): AppContainer
     return AppContainer(
         platform = AndroidPlatform(),
         imageAcquirer = AndroidPhotoPickerImageAcquirer(activity, appPaths),
-        imageQualityAnalyzer = ImageDimensionQualityAnalyzer(),
+        imageQualityAnalyzer =
+            ImageQualityAnalyzerChain(
+                listOf(
+                    ImageDimensionQualityAnalyzer(),
+                    PixelImageQualityAnalyzer(AndroidLuminanceImageDecoder()),
+                ),
+            ),
         ticketRecognizer = MlKitChineseTicketRecognizer(activity.applicationContext),
         ticketParser = ConservativeTicketParser(),
         drawRepository = OfficialDrawRepository(),

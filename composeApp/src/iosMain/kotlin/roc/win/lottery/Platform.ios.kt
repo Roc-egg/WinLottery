@@ -8,8 +8,11 @@ import roc.win.lottery.domain.LotteryPrizeCalculator
 import roc.win.lottery.domain.TicketValidator
 import roc.win.lottery.recognition.ConservativeTicketParser
 import roc.win.lottery.recognition.IOSAppPaths
+import roc.win.lottery.recognition.IOSLuminanceImageDecoder
 import roc.win.lottery.recognition.IOSPhotoPickerImageAcquirer
 import roc.win.lottery.recognition.ImageDimensionQualityAnalyzer
+import roc.win.lottery.recognition.ImageQualityAnalyzerChain
+import roc.win.lottery.recognition.PixelImageQualityAnalyzer
 import roc.win.lottery.recognition.VisionTicketRecognizer
 
 /** iOS 平台能力。 */
@@ -35,7 +38,13 @@ fun createIOSRecognitionContainer(presenterProvider: () -> UIViewController?): A
     return AppContainer(
         platform = IOSPlatform(),
         imageAcquirer = IOSPhotoPickerImageAcquirer(presenterProvider, appPaths),
-        imageQualityAnalyzer = ImageDimensionQualityAnalyzer(),
+        imageQualityAnalyzer =
+            ImageQualityAnalyzerChain(
+                listOf(
+                    ImageDimensionQualityAnalyzer(),
+                    PixelImageQualityAnalyzer(IOSLuminanceImageDecoder()),
+                ),
+            ),
         ticketRecognizer = VisionTicketRecognizer(),
         ticketParser = ConservativeTicketParser(),
         drawRepository = OfficialDrawRepository(),
