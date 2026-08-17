@@ -45,6 +45,7 @@ import kotlin.time.Instant
  * @param drawResult 经双数据面核对的开奖结果。
  * @param prizeCheckResult 本地规则引擎输出的逐注结果。
  * @param onRetry 主动重新查询同一期开奖。
+ * @param onBack 返回票面确认页。
  * @param onDone 清除当前流程并返回首页。
  */
 @Composable
@@ -53,12 +54,13 @@ fun VerificationResultScreen(
     drawResult: DrawResult,
     prizeCheckResult: PrizeCheckResult,
     onRetry: () -> Unit,
+    onBack: () -> Unit,
     onDone: () -> Unit,
 ) {
     AppShell(
         title = "中奖测算结果",
         navigationIcon = LotteryIcons.Back,
-        onNavigate = onDone,
+        onNavigate = onBack,
     ) {
         VerificationSummary(prizeCheckResult)
         Spacer(Modifier.height(24.dp))
@@ -131,6 +133,7 @@ fun VerificationResultScreen(
  * @param status 本次官网查询的不可用状态。
  * @param message 仓库返回的恢复说明。
  * @param onRetry 主动重新查询同一期开奖。
+ * @param onBack 返回票面确认页。
  * @param onDone 清除当前流程并返回首页。
  */
 @Composable
@@ -139,12 +142,13 @@ fun DrawUnavailableScreen(
     status: DrawStatus,
     message: String,
     onRetry: () -> Unit,
+    onBack: () -> Unit,
     onDone: () -> Unit,
 ) {
     AppShell(
         title = "开奖核对",
         navigationIcon = LotteryIcons.Back,
-        onNavigate = onDone,
+        onNavigate = onBack,
     ) {
         Surface(
             modifier = Modifier.fillMaxWidth(),
@@ -201,18 +205,20 @@ fun DrawUnavailableScreen(
  *
  * @param result 控制器按期号顺序保存的多期结果。
  * @param onRetry 只重查证据不足或奖金尚未完整的期次。
+ * @param onBack 返回票面确认页。
  * @param onDone 清除当前流程并返回首页。
  */
 @Composable
 fun MultiPeriodVerificationScreen(
     result: AppScreen.MultiPeriodVerificationResult,
     onRetry: () -> Unit,
+    onBack: () -> Unit,
     onDone: () -> Unit,
 ) {
     AppShell(
         title = "多期开奖核对",
         navigationIcon = LotteryIcons.Back,
-        onNavigate = onDone,
+        onNavigate = onBack,
     ) {
         MultiPeriodSummary(result)
         Spacer(Modifier.height(24.dp))

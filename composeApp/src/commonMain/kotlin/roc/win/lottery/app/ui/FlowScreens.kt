@@ -712,15 +712,21 @@ fun DrawQueryScreen(
  *
  * @param drawResult Fake 开奖仓库返回的演示结果。
  * @param usesRealRecognition 票面是否来自移动端真实本地 OCR。
+ * @param onBack 返回票面确认页。
  * @param onDone 返回首页的操作。
  */
 @Composable
 fun DemoCompleteScreen(
     drawResult: DrawResult,
     usesRealRecognition: Boolean,
+    onBack: () -> Unit,
     onDone: () -> Unit,
 ) {
-    AppShell(title = "流程演示完成") {
+    AppShell(
+        title = "流程演示完成",
+        navigationIcon = LotteryIcons.Back,
+        onNavigate = onBack,
+    ) {
         StatusBanner("开发链路已跑通，本页不代表真实中奖结果。")
         Spacer(Modifier.height(24.dp))
         Text(
@@ -758,12 +764,20 @@ fun DemoCompleteScreen(
     }
 }
 
-/** 显示可恢复错误状态。 */
+/**
+ * 显示可恢复错误状态。
+ *
+ * @param title 错误标题。
+ * @param message 不包含敏感内容的恢复说明。
+ * @param onBack 返回上一级页面。
+ * @param onDone 清理当前流程并返回首页。
+ */
 @Composable
 fun ErrorScreen(
     title: String,
     message: String,
     onBack: () -> Unit,
+    onDone: () -> Unit,
 ) {
     AppShell(
         title = "无法继续",
@@ -774,7 +788,7 @@ fun ErrorScreen(
         Spacer(Modifier.height(12.dp))
         Text(message, style = MaterialTheme.typography.bodyLarge)
         Spacer(Modifier.height(28.dp))
-        Button(onClick = onBack, shape = MaterialTheme.shapes.small) {
+        Button(onClick = onDone, shape = MaterialTheme.shapes.small) {
             Text("返回首页")
         }
     }

@@ -1,5 +1,7 @@
 package roc.win.lottery.app
 
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import roc.win.lottery.Platform
 import roc.win.lottery.data.DrawQueryResult
@@ -445,6 +447,90 @@ class LotteryAppControllerTest {
             assertEquals(listOf("b1-demo-ticket"), paths.deletedImageIds)
         }
 
+    /** 结果页返回应恢复票面确认页，但不能重新引用已经清理的临时图片。 */
+    @Test
+    fun resultBackRestoresReviewWithoutDeletedImage() =
+        runTest {
+            val paths = TrackingAppPaths()
+            val controller =
+                createController(
+                    repository = SequenceDrawRepository(DrawQueryResult.Success(verifiedDraw())),
+                    appPaths = paths,
+                    usesRealDrawData = true,
+                )
+            controller.startAnalysis(ImageAcquisitionSource.SYSTEM_PICKER)
+            assertIs<AppScreen.Review>(controller.uiState.value.screen)
+            controller.confirmTicket()
+            assertIs<AppScreen.VerificationResult>(controller.uiState.value.screen)
+
+            controller.navigateBack()
+
+            val restored = assertIs<AppScreen.Review>(controller.uiState.value.screen)
+            assertEquals("26091", restored.editor.issue.value)
+            assertTrue(restored.evaluation.canConfirm)
+            assertNull(restored.imageRef)
+            assertTrue(restored.fieldRegions.isEmpty())
+            assertEquals(listOf("b1-demo-ticket"), paths.deletedImageIds)
+        }
+
+    /** 查询中返回应恢复确认页，并丢弃随后到达的网络结果。 */
+    @Test
+    fun queryBackRestoresReviewAndIgnoresLateResult() =
+        runTest {
+            val repository = SuspendedDrawRepository()
+            val controller = createController(repository, usesRealDrawData = true)
+            controller.startAnalysis(ImageAcquisitionSource.SYSTEM_PICKER)
+            val queryJob = launch { controller.confirmTicket() }
+            repository.started.await()
+            assertIs<AppScreen.DrawQuery>(controller.uiState.value.screen)
+
+            controller.navigateBack()
+            assertIs<AppScreen.Review>(controller.uiState.value.screen)
+            repository.completion.complete(DrawQueryResult.Success(verifiedDraw()))
+            queryJob.join()
+
+            assertIs<AppScreen.Review>(controller.uiState.value.screen)
+        }
+
+    /** 结果页发起重查后返回应恢复原结果，而不是跳过上一级回到确认页。 */
+    @Test
+    fun retryQueryBackRestoresPreviousResult() =
+        runTest {
+            val repository =
+                SuspendedDrawRepository(
+                    initialResult = DrawQueryResult.Success(verifiedDraw()),
+                )
+            val controller = createController(repository, usesRealDrawData = true)
+            controller.startAnalysis(ImageAcquisitionSource.SYSTEM_PICKER)
+            controller.confirmTicket()
+            val previousResult = assertIs<AppScreen.VerificationResult>(controller.uiState.value.screen)
+            val retryJob = launch { controller.retryDrawQuery() }
+            repository.started.await()
+            assertIs<AppScreen.DrawQuery>(controller.uiState.value.screen)
+
+            controller.navigateBack()
+            assertEquals(previousResult, assertIs<AppScreen.VerificationResult>(controller.uiState.value.screen))
+            repository.completion.complete(DrawQueryResult.Success(verifiedDraw()))
+            retryJob.join()
+
+            assertEquals(previousResult, assertIs<AppScreen.VerificationResult>(controller.uiState.value.screen))
+        }
+
+    /** 关于页返回应回到首页，首页内的返回调用不改变状态。 */
+    @Test
+    fun aboutBackReturnsHomeAndHomeBackIsNoOp() =
+        runTest {
+            val controller = createController(CountingDrawRepository())
+            controller.showAbout()
+            assertIs<AppScreen.About>(controller.uiState.value.screen)
+
+            controller.navigateBack()
+            assertIs<AppScreen.Home>(controller.uiState.value.screen)
+            controller.navigateBack()
+
+            assertIs<AppScreen.Home>(controller.uiState.value.screen)
+        }
+
     /** OCR 失败进入错误页前必须清理已经落盘的临时图片。 */
     @Test
     fun recognitionFailureClearsTemporaryImage() =
@@ -813,6 +899,32 @@ class LotteryAppControllerTest {
             val result = results[minOf(queryCount, results.lastIndex)]
             queryCount += 1
             return result
+        }
+    }
+
+    /** 由测试控制完成时机的开奖仓库。 */
+    private class SuspendedDrawRepository(
+        /** 首次查询无需暂停时立即返回的结果。 */
+        private val initialResult: DrawQueryResult? = null,
+    ) : DrawRepository {
+        /** 已收到的查询次数。 */
+        private var queryCount: Int = 0
+
+        /** 第一次查询已经进入仓库的信号。 */
+        val started = CompletableDeferred<Unit>()
+
+        /** 测试稍后提供的查询结果。 */
+        val completion = CompletableDeferred<DrawQueryResult>()
+
+        /** 发出开始信号并等待测试提供结果。 */
+        override suspend fun getDraw(
+            lotteryType: LotteryType,
+            issue: Issue,
+        ): DrawQueryResult {
+            queryCount += 1
+            if (queryCount == 1 && initialResult != null) return initialResult
+            started.complete(Unit)
+            return completion.await()
         }
     }
 

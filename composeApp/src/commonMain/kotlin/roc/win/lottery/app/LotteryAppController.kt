@@ -35,6 +35,12 @@ class LotteryAppController(
     /** 当前流程持有的临时图片，确认或退出后立即清理。 */
     private var activeImageRef: ImageRef? = null
 
+    /** 最近一次提交查询的票面确认页，不再持有已删除的临时图片。 */
+    private var lastReviewScreen: AppScreen.Review? = null
+
+    /** 当前查询被用户返回时需要恢复的来源页面。 */
+    private var queryReturnScreen: AppScreen? = null
+
     /** 将多期票限制在已验证期号边界并展开为逐期查询。 */
     private val issueSequenceResolver = IssueSequenceResolver()
 
@@ -45,6 +51,8 @@ class LotteryAppController(
      */
     suspend fun startAnalysis(source: ImageAcquisitionSource) {
         clearTemporaryImage()
+        lastReviewScreen = null
+        queryReturnScreen = null
         val generation = ++flowGeneration
         mutableUiState.value =
             AppUiState(
@@ -81,6 +89,8 @@ class LotteryAppController(
         if (!container.usesRealDrawData) return
         flowGeneration += 1L
         clearTemporaryImage()
+        lastReviewScreen = null
+        queryReturnScreen = null
         val editor = TicketReviewState.createManual()
         mutableUiState.value =
             AppUiState(
@@ -118,7 +128,42 @@ class LotteryAppController(
     suspend fun navigateHome() {
         flowGeneration += 1L
         clearTemporaryImage()
+        lastReviewScreen = null
+        queryReturnScreen = null
         mutableUiState.value = AppUiState(isDemo = container.isDemo)
+    }
+
+    /**
+     * 处理系统手势、实体返回键或顶部返回箭头。
+     *
+     * 首页不调用本方法；查询中返回会先使当前异步流程失效，再恢复查询来源页面。
+     */
+    suspend fun navigateBack() {
+        when (val screen = mutableUiState.value.screen) {
+            AppScreen.Home -> {
+                return
+            }
+
+            is AppScreen.Analysis,
+            is AppScreen.Review,
+            AppScreen.About,
+            -> {
+                navigateHome()
+            }
+
+            is AppScreen.DrawQuery -> {
+                restorePreviousScreen(queryReturnScreen ?: lastReviewScreen)
+            }
+
+            is AppScreen.DemoComplete,
+            is AppScreen.VerificationResult,
+            is AppScreen.DrawUnavailable,
+            is AppScreen.MultiPeriodVerificationResult,
+            is AppScreen.Error,
+            -> {
+                restorePreviousScreen(lastReviewScreen)
+            }
+        }
     }
 
     /** 打开关于与隐私页。 */
@@ -148,6 +193,8 @@ class LotteryAppController(
         if (!review.evaluation.canConfirm || ticket == null) return
 
         val generation = flowGeneration
+        lastReviewScreen = review.forReturnNavigation()
+        queryReturnScreen = lastReviewScreen
         clearTemporaryImage()
         queryDraw(ticket, generation)
     }
@@ -156,14 +203,17 @@ class LotteryAppController(
     suspend fun retryDrawQuery() {
         when (val screen = mutableUiState.value.screen) {
             is AppScreen.DrawUnavailable -> {
+                queryReturnScreen = screen
                 queryDraw(screen.ticket, flowGeneration)
             }
 
             is AppScreen.VerificationResult -> {
+                queryReturnScreen = screen
                 queryDraw(screen.ticket, flowGeneration)
             }
 
             is AppScreen.MultiPeriodVerificationResult -> {
+                queryReturnScreen = screen
                 queryMultipleDraws(
                     ticket = screen.ticket,
                     generation = flowGeneration,
@@ -209,12 +259,14 @@ class LotteryAppController(
                         } else {
                             AppScreen.DemoComplete(result.drawResult)
                         }
+                    queryReturnScreen = null
                     mutableUiState.update { it.copy(screen = nextScreen) }
                 }
             }
 
             is DrawQueryResult.Unavailable -> {
                 if (generation == flowGeneration) {
+                    queryReturnScreen = null
                     mutableUiState.update {
                         it.copy(
                             screen =
@@ -255,6 +307,7 @@ class LotteryAppController(
                 }
 
                 is IssueSequenceResult.Unsupported -> {
+                    queryReturnScreen = null
                     mutableUiState.update {
                         it.copy(screen = AppScreen.Error("无法展开多期期号", resolution.message))
                     }
@@ -331,6 +384,7 @@ class LotteryAppController(
                         wasQueried = false,
                     )
             }
+        queryReturnScreen = null
         mutableUiState.update {
             it.copy(screen = AppScreen.MultiPeriodVerificationResult(ticket, periodResults))
         }
@@ -448,6 +502,26 @@ class LotteryAppController(
             fieldRegions = fieldRegions,
             manualEntryReason = manualEntryReason,
         )
+
+    /** 创建返回导航使用的确认页快照，避免引用已经按隐私策略删除的图片。 */
+    private fun AppScreen.Review.forReturnNavigation(): AppScreen.Review =
+        copy(
+            imageRef = null,
+            fieldRegions = emptyList(),
+            manualEntryReason = null,
+        )
+
+    /** 恢复有效上一级页面；没有可恢复页面时清理流程并回到首页。 */
+    private suspend fun restorePreviousScreen(screen: AppScreen?) {
+        if (screen == null || screen == AppScreen.Home) {
+            navigateHome()
+            return
+        }
+        flowGeneration += 1L
+        clearTemporaryImage()
+        queryReturnScreen = null
+        mutableUiState.update { it.copy(screen = screen) }
+    }
 
     /** 只在当前流程仍有效时展示错误。 */
     private suspend fun showError(

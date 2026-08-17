@@ -5,6 +5,8 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.backhandler.BackHandler
 import androidx.compose.ui.tooling.preview.Preview
 import kotlinx.coroutines.launch
 import roc.win.lottery.app.AppContainer
@@ -36,6 +38,10 @@ fun App(container: AppContainer = remember { AppContainer.createDemo(getPlatform
     val uiState by controller.uiState.collectAsState()
     val scope = rememberCoroutineScope()
 
+    SystemBackHandler(enabled = uiState.screen != AppScreen.Home) {
+        scope.launch { controller.navigateBack() }
+    }
+
     LotteryTheme {
         when (val screen = uiState.screen) {
             AppScreen.Home -> {
@@ -64,7 +70,7 @@ fun App(container: AppContainer = remember { AppContainer.createDemo(getPlatform
                     title = screen.title,
                     detail = screen.detail,
                     progress = screen.progress,
-                    onCancel = { scope.launch { controller.navigateHome() } },
+                    onCancel = { scope.launch { controller.navigateBack() } },
                 )
             }
 
@@ -78,7 +84,7 @@ fun App(container: AppContainer = remember { AppContainer.createDemo(getPlatform
                     isDemo = uiState.isDemo,
                     usesRealRecognition = container.usesRealRecognition,
                     usesRealDrawData = container.usesRealDrawData,
-                    onBack = { scope.launch { controller.navigateHome() } },
+                    onBack = { scope.launch { controller.navigateBack() } },
                     onLotteryTypeChange = {
                         controller.updateTicketReview(TicketReviewAction.ChangeLotteryType(it))
                     },
@@ -121,7 +127,7 @@ fun App(container: AppContainer = remember { AppContainer.createDemo(getPlatform
                     completedPeriodCount = screen.completedPeriodCount,
                     totalPeriodCount = screen.totalPeriodCount,
                     usesRealDrawData = container.usesRealDrawData,
-                    onCancel = { scope.launch { controller.navigateHome() } },
+                    onCancel = { scope.launch { controller.navigateBack() } },
                 )
             }
 
@@ -129,6 +135,7 @@ fun App(container: AppContainer = remember { AppContainer.createDemo(getPlatform
                 DemoCompleteScreen(
                     drawResult = screen.drawResult,
                     usesRealRecognition = container.usesRealRecognition,
+                    onBack = { scope.launch { controller.navigateBack() } },
                     onDone = { scope.launch { controller.navigateHome() } },
                 )
             }
@@ -139,6 +146,7 @@ fun App(container: AppContainer = remember { AppContainer.createDemo(getPlatform
                     drawResult = screen.drawResult,
                     prizeCheckResult = screen.prizeCheckResult,
                     onRetry = { scope.launch { controller.retryDrawQuery() } },
+                    onBack = { scope.launch { controller.navigateBack() } },
                     onDone = { scope.launch { controller.navigateHome() } },
                 )
             }
@@ -149,6 +157,7 @@ fun App(container: AppContainer = remember { AppContainer.createDemo(getPlatform
                     status = screen.status,
                     message = screen.message,
                     onRetry = { scope.launch { controller.retryDrawQuery() } },
+                    onBack = { scope.launch { controller.navigateBack() } },
                     onDone = { scope.launch { controller.navigateHome() } },
                 )
             }
@@ -157,6 +166,7 @@ fun App(container: AppContainer = remember { AppContainer.createDemo(getPlatform
                 MultiPeriodVerificationScreen(
                     result = screen,
                     onRetry = { scope.launch { controller.retryDrawQuery() } },
+                    onBack = { scope.launch { controller.navigateBack() } },
                     onDone = { scope.launch { controller.navigateHome() } },
                 )
             }
@@ -165,13 +175,27 @@ fun App(container: AppContainer = remember { AppContainer.createDemo(getPlatform
                 ErrorScreen(
                     title = screen.title,
                     message = screen.message,
-                    onBack = { scope.launch { controller.navigateHome() } },
+                    onBack = { scope.launch { controller.navigateBack() } },
+                    onDone = { scope.launch { controller.navigateHome() } },
                 )
             }
 
             AppScreen.About -> {
-                AboutScreen(onBack = { scope.launch { controller.navigateHome() } })
+                AboutScreen(onBack = { scope.launch { controller.navigateBack() } })
             }
         }
+    }
+}
+
+/** 在非首页注册系统返回事件，首页继续交由宿主决定是否退出应用。 */
+@Suppress("DEPRECATION")
+@OptIn(ExperimentalComposeUiApi::class)
+@Composable
+private fun SystemBackHandler(
+    enabled: Boolean,
+    onBack: () -> Unit,
+) {
+    if (enabled) {
+        BackHandler(onBack = onBack)
     }
 }
