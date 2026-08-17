@@ -35,15 +35,51 @@ class ConservativeTicketParser : TicketParser {
         }
         val explicitPeriodCount = explicitPeriodCounts.singleOrNull()
         val issueCandidates = extractIssueCandidates(rows, lotteryType)
-        if (issueCandidates.map { it.value }.toSet().size > 1) {
-            return TicketParseResult.NeedsCorrection("识别到多个开奖期号，请重新拍摄或人工核对")
-        }
-        val issueCandidate = issueCandidates.firstOrNull()
+        val distinctIssueCandidates = issueCandidates.distinctBy { it.value }
+        val issueCandidate = distinctIssueCandidates.singleOrNull()
         val issue = issueCandidate?.value.orEmpty()
+        val paidAmountCandidates = extractPaidAmountCandidates(rows)
+        val distinctPaidAmountCandidates = paidAmountCandidates.distinctBy { it.value }
+        val paidAmountCandidate = distinctPaidAmountCandidates.singleOrNull()
+        val paidAmountFen = paidAmountCandidate?.value
+        val fieldCandidates =
+            buildList {
+                if (distinctIssueCandidates.size > 1) {
+                    addAll(distinctIssueCandidates.map { TicketFieldCandidate.Issue(it.value) })
+                }
+                if (distinctPaidAmountCandidates.size > 1) {
+                    addAll(distinctPaidAmountCandidates.map { TicketFieldCandidate.PaidAmount(it.value) })
+                }
+            }
+        val candidateFieldRegions = buildCandidateFieldRegions(issueCandidates, paidAmountCandidates)
+        if (fieldCandidates.isNotEmpty()) {
+            val message =
+                buildList {
+                    if (distinctIssueCandidates.size > 1) {
+                        add("识别到多个开奖期号，请对照原图明确选择")
+                    }
+                    if (distinctPaidAmountCandidates.size > 1) {
+                        add("识别到多个票面合计金额，请对照原图明确选择")
+                    }
+                }.joinToString(separator = "；")
+            return TicketParseResult.NeedsCorrection(
+                message = message,
+                fieldRegions = candidateFieldRegions,
+                fieldCandidates = fieldCandidates,
+            )
+        }
         val parsedBets =
             when (val result = parseBetRows(rows, lotteryType)) {
-                is BetRowsResult.Success -> result.rows
-                is BetRowsResult.Failed -> return TicketParseResult.NeedsCorrection(result.message)
+                is BetRowsResult.Success -> {
+                    result.rows
+                }
+
+                is BetRowsResult.Failed -> {
+                    return TicketParseResult.NeedsCorrection(
+                        message = result.message,
+                        fieldRegions = candidateFieldRegions,
+                    )
+                }
             }
         val explicitMultiplierExtraction = extractMultiplier(rows, parsedBets, lotteryType)
         val additionalExtraction =
@@ -52,12 +88,6 @@ class ConservativeTicketParser : TicketParser {
                 LotteryType.DOUBLE_COLOR_BALL -> FieldExtraction(value = false, bounds = null)
             }
         val isAdditional = additionalExtraction.value
-        val paidAmountCandidates = extractPaidAmountCandidates(rows)
-        if (paidAmountCandidates.map { it.value }.toSet().size > 1) {
-            return TicketParseResult.NeedsCorrection("识别到多个票面合计金额，请重新拍摄或人工核对")
-        }
-        val paidAmountCandidate = paidAmountCandidates.firstOrNull()
-        val paidAmountFen = paidAmountCandidate?.value
         val hasConflictingMultiplierEvidence =
             explicitMultiplierExtraction.value == null && explicitMultiplierExtraction.bounds != null
         val recoveredSummary =
@@ -119,9 +149,7 @@ class ConservativeTicketParser : TicketParser {
             )
         val fieldRegions =
             buildList {
-                issueCandidate?.let { candidate ->
-                    add(TicketFieldRegion(TicketFieldReference.Issue, candidate.bounds))
-                }
+                candidateFieldRegions.firstOrNull { it.field == TicketFieldReference.Issue }?.let(::add)
                 parsedBets.forEachIndexed { index, parsed ->
                     add(TicketFieldRegion(TicketFieldReference.BetLine(index), parsed.bounds))
                 }
@@ -133,9 +161,7 @@ class ConservativeTicketParser : TicketParser {
                         add(TicketFieldRegion(TicketFieldReference.Additional, bounds))
                     }
                 }
-                paidAmountCandidate?.let { candidate ->
-                    add(TicketFieldRegion(TicketFieldReference.PaidAmount, candidate.bounds))
-                }
+                candidateFieldRegions.firstOrNull { it.field == TicketFieldReference.PaidAmount }?.let(::add)
             }
         val correctionMessages =
             buildList {
@@ -624,6 +650,20 @@ class ConservativeTicketParser : TicketParser {
                 }.toList()
         return candidates
     }
+
+    /** 为期号和金额候选合并原图定位区域，避免校正页出现重复字段入口。 */
+    private fun buildCandidateFieldRegions(
+        issueCandidates: List<LocatedValue<String>>,
+        paidAmountCandidates: List<LocatedValue<Long>>,
+    ): List<TicketFieldRegion> =
+        buildList {
+            issueCandidates.map { it.bounds }.coveringBoundsOrNull()?.let { bounds ->
+                add(TicketFieldRegion(TicketFieldReference.Issue, bounds))
+            }
+            paidAmountCandidates.map { it.bounds }.coveringBoundsOrNull()?.let { bounds ->
+                add(TicketFieldRegion(TicketFieldReference.PaidAmount, bounds))
+            }
+        }
 
     /** 把平台可能输出的全角字符归一化，但不替换形似数字的字母。 */
     private fun String.normalizedForParsing(): String {

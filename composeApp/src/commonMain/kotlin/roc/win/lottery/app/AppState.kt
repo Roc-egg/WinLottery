@@ -7,6 +7,7 @@ import roc.win.lottery.domain.Issue
 import roc.win.lottery.domain.PrizeCheckResult
 import roc.win.lottery.domain.PrizeCheckStatus
 import roc.win.lottery.recognition.ImageRef
+import roc.win.lottery.recognition.TicketFieldCandidate
 import roc.win.lottery.recognition.TicketFieldRegion
 
 /** 应用顶层页面。 */
@@ -34,6 +35,7 @@ sealed interface AppScreen {
      * @property imageRef OCR 流程的临时图片引用，手动录入时为 `null`。
      * @property evaluation 当前编辑状态的领域评估。
      * @property fieldRegions 可在原图中定位的 OCR 字段区域。
+     * @property fieldCandidates OCR 无法唯一确定、需要用户选择的字段候选。
      * @property manualEntryReason OCR 无法安全形成草稿时，保留原图并转为空白手动录入的原因。
      */
     data class Review(
@@ -41,6 +43,7 @@ sealed interface AppScreen {
         val imageRef: ImageRef?,
         val evaluation: TicketReviewEvaluation,
         val fieldRegions: List<TicketFieldRegion>,
+        val fieldCandidates: List<TicketFieldCandidate> = emptyList(),
         val manualEntryReason: String? = null,
     ) : AppScreen
 

@@ -78,6 +78,27 @@ data class TicketFieldRegion(
     val bounds: NormalizedBounds,
 )
 
+/** OCR 无法唯一确定、需要用户对照原图选择的字段候选。 */
+sealed interface TicketFieldCandidate {
+    /**
+     * 开奖期号候选。
+     *
+     * @property value OCR 识别到的合法期号。
+     */
+    data class Issue(
+        val value: String,
+    ) : TicketFieldCandidate
+
+    /**
+     * 票面合计金额候选。
+     *
+     * @property valueFen OCR 识别到的非负金额，单位为分。
+     */
+    data class PaidAmount(
+        val valueFen: Long,
+    ) : TicketFieldCandidate
+}
+
 /** 本地 OCR 结果。 */
 sealed interface RecognitionResult {
     /**
@@ -146,12 +167,14 @@ sealed interface TicketParseResult {
      *
      * @property message 面向用户的修正说明。
      * @property draft 已安全解析的可编辑草稿；无法保证票型或投注结构时为 `null`。
-     * @property fieldRegions 草稿存在时可供校正页对照原图的字段区域。
+     * @property fieldRegions 草稿或候选存在时可供校正页对照原图的字段区域。
+     * @property fieldCandidates OCR 已识别但无法唯一确定的安全候选值。
      */
     data class NeedsCorrection(
         val message: String,
         val draft: TicketDraft? = null,
         val fieldRegions: List<TicketFieldRegion> = emptyList(),
+        val fieldCandidates: List<TicketFieldCandidate> = emptyList(),
     ) : TicketParseResult
 }
 

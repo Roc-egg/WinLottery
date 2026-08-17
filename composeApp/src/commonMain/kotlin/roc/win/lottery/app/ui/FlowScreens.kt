@@ -48,6 +48,7 @@ import roc.win.lottery.domain.LotteryType
 import roc.win.lottery.domain.TicketFieldOrigin
 import roc.win.lottery.domain.TicketValidationProblem
 import roc.win.lottery.recognition.ImageRef
+import roc.win.lottery.recognition.TicketFieldCandidate
 import roc.win.lottery.recognition.TicketFieldRegion
 
 /** 显示本地分析进度和取消入口。 */
@@ -90,6 +91,7 @@ fun AnalysisScreen(
  * @param evaluation 当前领域评估。
  * @param imageRef OCR 流程的私有临时图片引用，手动录入时为 `null`。
  * @param fieldRegions 可在原图中定位的 OCR 字段区域。
+ * @param fieldCandidates OCR 无法唯一确定、需要用户选择的字段候选。
  * @param manualEntryReason OCR 无法安全形成草稿时，转为原图辅助手动录入的原因。
  * @param isDemo 开奖等后续能力是否仍为开发演示实现。
  * @param usesRealRecognition 当前草稿是否来自真实图片导入和本地 OCR。
@@ -113,6 +115,7 @@ fun ReviewScreen(
     evaluation: TicketReviewEvaluation,
     imageRef: ImageRef?,
     fieldRegions: List<TicketFieldRegion>,
+    fieldCandidates: List<TicketFieldCandidate>,
     manualEntryReason: String?,
     isDemo: Boolean,
     usesRealRecognition: Boolean,
@@ -214,6 +217,12 @@ fun ReviewScreen(
                     Icon(LotteryIcons.Done, contentDescription = "完成期号输入")
                 }
             },
+        )
+        CandidateChoiceRow(
+            title = "识别到多个期号，请按原图选择",
+            values = fieldCandidates.filterIsInstance<TicketFieldCandidate.Issue>().map { it.value },
+            selectedValue = editor.issue.value,
+            onSelect = onIssueChange,
         )
         evaluation.problems.firstMessageFor("issue")?.let { message ->
             FieldProblem(message)
@@ -318,6 +327,16 @@ fun ReviewScreen(
                 }
             },
         )
+        CandidateChoiceRow(
+            title = "识别到多个合计金额，请按原图选择",
+            values =
+                fieldCandidates
+                    .filterIsInstance<TicketFieldCandidate.PaidAmount>()
+                    .map { it.valueFen.toYuanInput() },
+            selectedValue = editor.paidAmountYuan.value,
+            valueSuffix = " 元",
+            onSelect = onPaidAmountChange,
+        )
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -352,6 +371,47 @@ fun ReviewScreen(
             shape = MaterialTheme.shapes.small,
         ) {
             Text("已核对，继续")
+        }
+    }
+}
+
+/**
+ * 显示一组需要用户对照原图明确选择的 OCR 候选。
+ *
+ * @param title 候选字段说明。
+ * @param values 可写入编辑器的候选值。
+ * @param selectedValue 当前编辑值。
+ * @param valueSuffix 仅用于候选标签的单位后缀。
+ * @param onSelect 用户选择候选值的操作。
+ */
+@Composable
+private fun CandidateChoiceRow(
+    title: String,
+    values: List<String>,
+    selectedValue: String,
+    valueSuffix: String = "",
+    onSelect: (String) -> Unit,
+) {
+    if (values.isEmpty()) return
+    val instructionColor =
+        if (selectedValue in values) {
+            MaterialTheme.colorScheme.onSurfaceVariant
+        } else {
+            MaterialTheme.colorScheme.error
+        }
+    Spacer(Modifier.height(8.dp))
+    Text(title, style = MaterialTheme.typography.bodyMedium, color = instructionColor)
+    Spacer(Modifier.height(6.dp))
+    Row(
+        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        values.forEach { value ->
+            FilterChip(
+                selected = value == selectedValue,
+                onClick = { onSelect(value) },
+                label = { Text(value + valueSuffix) },
+            )
         }
     }
 }
@@ -903,6 +963,9 @@ private fun Long?.toYuanText(): String =
     } else {
         "${this / 100}.${(this % 100).toString().padStart(2, '0')} 元"
     }
+
+/** 把 OCR 金额候选转换为金额输入框使用的元文本。 */
+private fun Long.toYuanInput(): String = "${this / 100}.${(this % 100).toString().padStart(2, '0')}"
 
 /** 判断问题列表是否包含指定字段。 */
 private fun List<TicketValidationProblem>.hasField(field: String): Boolean = any { it.field == field }

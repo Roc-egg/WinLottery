@@ -15,6 +15,7 @@ import roc.win.lottery.recognition.ImageAcquisitionSource
 import roc.win.lottery.recognition.ImageQualityResult
 import roc.win.lottery.recognition.ImageRef
 import roc.win.lottery.recognition.RecognitionResult
+import roc.win.lottery.recognition.TicketFieldCandidate
 import roc.win.lottery.recognition.TicketFieldRegion
 import roc.win.lottery.recognition.TicketParseResult
 
@@ -447,6 +448,7 @@ class LotteryAppController(
                                             editor = TicketReviewState.createManual(),
                                             imageRef = acquisition.imageRef,
                                             fieldRegions = parsed.fieldRegions,
+                                            fieldCandidates = parsed.fieldCandidates,
                                             manualEntryReason = parsed.message,
                                         ),
                                 )
@@ -459,6 +461,7 @@ class LotteryAppController(
                                             editor = TicketReviewState.fromDraft(draft),
                                             imageRef = acquisition.imageRef,
                                             fieldRegions = parsed.fieldRegions,
+                                            fieldCandidates = parsed.fieldCandidates,
                                         ),
                                 )
                             }
@@ -493,6 +496,7 @@ class LotteryAppController(
         editor: TicketReviewState,
         imageRef: ImageRef?,
         fieldRegions: List<TicketFieldRegion>,
+        fieldCandidates: List<TicketFieldCandidate> = emptyList(),
         manualEntryReason: String? = null,
     ): AppScreen.Review =
         AppScreen.Review(
@@ -500,6 +504,7 @@ class LotteryAppController(
             imageRef = imageRef,
             evaluation = editor.evaluate(container.ticketValidator),
             fieldRegions = fieldRegions,
+            fieldCandidates = fieldCandidates,
             manualEntryReason = manualEntryReason,
         )
 
@@ -508,6 +513,7 @@ class LotteryAppController(
         copy(
             imageRef = null,
             fieldRegions = emptyList(),
+            fieldCandidates = emptyList(),
             manualEntryReason = null,
         )
 

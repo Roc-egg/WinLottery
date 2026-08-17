@@ -589,9 +589,9 @@ class ConservativeTicketParserTest {
         assertEquals(2_000L, assertNotNull(correction.draft).paidAmountFen)
     }
 
-    /** 多个期号候选可能代表不同彩票，不得任选或生成可恢复草稿。 */
+    /** 多个期号可能来自不同彩票，只提供候选并转为空白原图辅助录入。 */
     @Test
-    fun conflictingIssuesDoNotProvideDraft() {
+    fun conflictingIssuesProvideExplicitCandidates() {
         val result =
             parser.parse(
                 document(
@@ -605,11 +605,16 @@ class ConservativeTicketParserTest {
         val correction = assertIs<TicketParseResult.NeedsCorrection>(result)
         assertTrue(correction.message.contains("多个开奖期号"))
         assertNull(correction.draft)
+        assertEquals(
+            listOf(TicketFieldCandidate.Issue("26999"), TicketFieldCandidate.Issue("26998")),
+            correction.fieldCandidates,
+        )
+        assertTrue(correction.fieldRegions.any { it.field == TicketFieldReference.Issue })
     }
 
-    /** 多个合计金额候选存在歧义时不得任选或生成可恢复草稿。 */
+    /** 多个合计金额不得按理论金额猜测，只提供候选并转为空白原图辅助录入。 */
     @Test
-    fun conflictingAmountsDoNotProvideDraft() {
+    fun conflictingAmountsProvideExplicitCandidates() {
         val result =
             parser.parse(
                 document(
@@ -624,6 +629,11 @@ class ConservativeTicketParserTest {
         val correction = assertIs<TicketParseResult.NeedsCorrection>(result)
         assertTrue(correction.message.contains("多个票面合计金额"))
         assertNull(correction.draft)
+        assertEquals(
+            listOf(TicketFieldCandidate.PaidAmount(200L), TicketFieldCandidate.PaidAmount(400L)),
+            correction.fieldCandidates,
+        )
+        assertTrue(correction.fieldRegions.any { it.field == TicketFieldReference.PaidAmount })
     }
 
     /** 倍数无法确定时应保留空值进入校正，但明确的单式票仍可确定为基本投注。 */

@@ -80,6 +80,7 @@ fun App(container: AppContainer = remember { AppContainer.createDemo(getPlatform
                     evaluation = screen.evaluation,
                     imageRef = screen.imageRef,
                     fieldRegions = screen.fieldRegions,
+                    fieldCandidates = screen.fieldCandidates,
                     manualEntryReason = screen.manualEntryReason,
                     isDemo = uiState.isDemo,
                     usesRealRecognition = container.usesRealRecognition,

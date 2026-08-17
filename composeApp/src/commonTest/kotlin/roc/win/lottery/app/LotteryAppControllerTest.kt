@@ -34,6 +34,7 @@ import roc.win.lottery.recognition.ImageQualityAnalyzer
 import roc.win.lottery.recognition.ImageRef
 import roc.win.lottery.recognition.NormalizedBounds
 import roc.win.lottery.recognition.RecognitionResult
+import roc.win.lottery.recognition.TicketFieldCandidate
 import roc.win.lottery.recognition.TicketFieldReference
 import roc.win.lottery.recognition.TicketFieldRegion
 import roc.win.lottery.recognition.TicketParseResult
@@ -676,7 +677,24 @@ class LotteryAppControllerTest {
     fun unsafeDraftFallsBackToImageAssistedManualEntry() =
         runTest {
             val paths = TrackingAppPaths()
-            val parser = TicketParser { TicketParseResult.NeedsCorrection("无法安全划分投注行") }
+            val parser =
+                TicketParser {
+                    TicketParseResult.NeedsCorrection(
+                        message = "识别到多个开奖期号，请对照原图明确选择",
+                        fieldRegions =
+                            listOf(
+                                TicketFieldRegion(
+                                    field = TicketFieldReference.Issue,
+                                    bounds = NormalizedBounds(0.1f, 0.2f, 0.8f, 0.3f),
+                                ),
+                            ),
+                        fieldCandidates =
+                            listOf(
+                                TicketFieldCandidate.Issue("26091"),
+                                TicketFieldCandidate.Issue("26092"),
+                            ),
+                    )
+                }
             val controller =
                 createController(
                     repository = CountingDrawRepository(),
@@ -687,12 +705,22 @@ class LotteryAppControllerTest {
             controller.startAnalysis(ImageAcquisitionSource.SYSTEM_PICKER)
 
             val review = assertIs<AppScreen.Review>(controller.uiState.value.screen)
-            assertEquals("无法安全划分投注行", review.manualEntryReason)
+            assertEquals("识别到多个开奖期号，请对照原图明确选择", review.manualEntryReason)
             assertEquals("b1-demo-ticket", review.imageRef?.id)
             assertNull(review.editor.lotteryType.value)
             assertEquals(1, review.editor.betLines.size)
+            assertEquals(TicketFieldReference.Issue, review.fieldRegions.single().field)
+            assertEquals(
+                listOf(TicketFieldCandidate.Issue("26091"), TicketFieldCandidate.Issue("26092")),
+                review.fieldCandidates,
+            )
             assertFalse(review.evaluation.canConfirm)
             assertTrue(paths.deletedImageIds.isEmpty())
+
+            controller.updateTicketReview(TicketReviewAction.ChangeIssue("26091"))
+            val selectedReview = assertIs<AppScreen.Review>(controller.uiState.value.screen)
+            assertEquals("26091", selectedReview.editor.issue.value)
+            assertFalse(selectedReview.evaluation.canConfirm)
 
             controller.updateTicketReview(TicketReviewAction.AddBetLine)
             assertEquals(2, assertIs<AppScreen.Review>(controller.uiState.value.screen).editor.betLines.size)
