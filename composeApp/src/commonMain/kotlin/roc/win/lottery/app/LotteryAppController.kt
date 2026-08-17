@@ -449,6 +449,7 @@ class LotteryAppController(
                                             imageRef = acquisition.imageRef,
                                             fieldRegions = parsed.fieldRegions,
                                             fieldCandidates = parsed.fieldCandidates,
+                                            ocrEngineName = recognition.document.engineName,
                                             manualEntryReason = parsed.message,
                                         ),
                                 )
@@ -462,6 +463,7 @@ class LotteryAppController(
                                             imageRef = acquisition.imageRef,
                                             fieldRegions = parsed.fieldRegions,
                                             fieldCandidates = parsed.fieldCandidates,
+                                            ocrEngineName = recognition.document.engineName,
                                         ),
                                 )
                             }
@@ -481,6 +483,7 @@ class LotteryAppController(
                                             editor = TicketReviewState.fromDraft(parsed.draft),
                                             imageRef = acquisition.imageRef,
                                             fieldRegions = parsed.fieldRegions,
+                                            ocrEngineName = recognition.document.engineName,
                                         ),
                                 )
                             }
@@ -497,6 +500,7 @@ class LotteryAppController(
         imageRef: ImageRef?,
         fieldRegions: List<TicketFieldRegion>,
         fieldCandidates: List<TicketFieldCandidate> = emptyList(),
+        ocrEngineName: String? = null,
         manualEntryReason: String? = null,
     ): AppScreen.Review =
         AppScreen.Review(
@@ -505,6 +509,7 @@ class LotteryAppController(
             evaluation = editor.evaluate(container.ticketValidator),
             fieldRegions = fieldRegions,
             fieldCandidates = fieldCandidates,
+            ocrEngineName = ocrEngineName,
             manualEntryReason = manualEntryReason,
         )
 
@@ -514,6 +519,7 @@ class LotteryAppController(
             imageRef = null,
             fieldRegions = emptyList(),
             fieldCandidates = emptyList(),
+            ocrEngineName = null,
             manualEntryReason = null,
         )
 

@@ -69,6 +69,7 @@ class LotteryAppControllerTest {
             val initialReview = assertIs<AppScreen.Review>(controller.uiState.value.screen)
             assertNull(initialReview.imageRef)
             assertTrue(initialReview.fieldRegions.isEmpty())
+            assertNull(initialReview.ocrEngineName)
             assertFalse(initialReview.evaluation.canConfirm)
             controller.updateTicketReview(TicketReviewAction.ChangeLotteryType(LotteryType.SUPER_LOTTO))
             controller.updateTicketReview(TicketReviewAction.ChangeIssue("26091"))
@@ -207,6 +208,8 @@ class LotteryAppControllerTest {
 
             val review = assertIs<AppScreen.Review>(controller.uiState.value.screen)
             assertTrue(review.evaluation.canConfirm)
+            assertEquals("B1 Fake OCR", review.ocrEngineName)
+            assertTrue(review.fieldRegions.all { it.rawConfidence == 1.0f })
             controller.confirmTicket()
 
             assertEquals(1, repository.queryCount)
@@ -471,6 +474,7 @@ class LotteryAppControllerTest {
             assertTrue(restored.evaluation.canConfirm)
             assertNull(restored.imageRef)
             assertTrue(restored.fieldRegions.isEmpty())
+            assertNull(restored.ocrEngineName)
             assertEquals(listOf("b1-demo-ticket"), paths.deletedImageIds)
         }
 
@@ -710,6 +714,8 @@ class LotteryAppControllerTest {
             assertNull(review.editor.lotteryType.value)
             assertEquals(1, review.editor.betLines.size)
             assertEquals(TicketFieldReference.Issue, review.fieldRegions.single().field)
+            assertNull(review.fieldRegions.single().rawConfidence)
+            assertEquals("B1 Fake OCR", review.ocrEngineName)
             assertEquals(
                 listOf(TicketFieldCandidate.Issue("26091"), TicketFieldCandidate.Issue("26092")),
                 review.fieldCandidates,

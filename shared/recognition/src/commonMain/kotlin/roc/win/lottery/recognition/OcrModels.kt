@@ -72,10 +72,12 @@ sealed interface TicketFieldReference {
  *
  * @property field 可定位的草稿字段。
  * @property bounds 字段所在 OCR 视觉行的归一化边界。
+ * @property rawConfidence 平台校准前的保守原始置信度；任一必要片段未提供时为 `null`。
  */
 data class TicketFieldRegion(
     val field: TicketFieldReference,
     val bounds: NormalizedBounds,
+    val rawConfidence: Float? = null,
 )
 
 /** OCR 无法唯一确定、需要用户对照原图选择的字段候选。 */

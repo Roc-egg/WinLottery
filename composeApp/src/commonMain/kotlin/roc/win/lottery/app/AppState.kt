@@ -36,6 +36,7 @@ sealed interface AppScreen {
      * @property evaluation 当前编辑状态的领域评估。
      * @property fieldRegions 可在原图中定位的 OCR 字段区域。
      * @property fieldCandidates OCR 无法唯一确定、需要用户选择的字段候选。
+     * @property ocrEngineName 当前字段所来自的 OCR 引擎；手动录入时为 `null`。
      * @property manualEntryReason OCR 无法安全形成草稿时，保留原图并转为空白手动录入的原因。
      */
     data class Review(
@@ -44,6 +45,7 @@ sealed interface AppScreen {
         val evaluation: TicketReviewEvaluation,
         val fieldRegions: List<TicketFieldRegion>,
         val fieldCandidates: List<TicketFieldCandidate> = emptyList(),
+        val ocrEngineName: String? = null,
         val manualEntryReason: String? = null,
     ) : AppScreen
 

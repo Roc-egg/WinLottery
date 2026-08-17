@@ -53,6 +53,7 @@ class ConservativeTicketParserTest {
             ),
             review.fieldRegions.map { it.field },
         )
+        assertTrue(review.fieldRegions.all { it.rawConfidence == TEST_CONFIDENCE })
     }
 
     /** 同一视觉行的分散 OCR 片段应按横向位置合并后解析大乐透追加票。 */
@@ -67,13 +68,13 @@ class ConservativeTicketParserTest {
                         listOf(
                             line("大乐透", left = 0.35f, top = 0.08f),
                             line("体彩", left = 0.10f, top = 0.08f),
-                            line("第26999期", left = 0.10f, top = 0.18f),
-                            line("单式票", left = 0.10f, top = 0.28f),
-                            line("追加投注", left = 0.35f, top = 0.28f),
-                            line("1期1倍", left = 0.62f, top = 0.28f),
-                            line("合计3元", left = 0.78f, top = 0.28f),
-                            line("① 01 07 14 22 35", left = 0.10f, top = 0.38f),
-                            line("+ 03 11", left = 0.70f, top = 0.38f),
+                            line("第26999期", left = 0.10f, top = 0.18f, confidence = 0.91f),
+                            line("单式票", left = 0.10f, top = 0.28f, confidence = 0.88f),
+                            line("追加投注", left = 0.35f, top = 0.28f, confidence = 0.77f),
+                            line("1期1倍", left = 0.62f, top = 0.28f, confidence = null),
+                            line("合计3元", left = 0.78f, top = 0.28f, confidence = 0.66f),
+                            line("① 01 07 14 22 35", left = 0.10f, top = 0.38f, confidence = 0.62f),
+                            line("+ 03 11", left = 0.70f, top = 0.38f, confidence = 0.48f),
                         ),
                 ),
             )
@@ -85,8 +86,14 @@ class ConservativeTicketParserTest {
         val betRegion = review.fieldRegions.single { it.field == TicketFieldReference.BetLine(0) }
         assertEquals(0.10f, betRegion.bounds.left)
         assertEquals(0.88f, betRegion.bounds.right)
-        assertTrue(review.fieldRegions.any { it.field == TicketFieldReference.Multiplier })
-        assertTrue(review.fieldRegions.any { it.field == TicketFieldReference.Additional })
+        assertEquals(0.48f, betRegion.rawConfidence)
+        assertEquals(
+            0.91f,
+            review.fieldRegions.single { it.field == TicketFieldReference.Issue }.rawConfidence,
+        )
+        assertNull(review.fieldRegions.single { it.field == TicketFieldReference.Multiplier }.rawConfidence)
+        assertNull(review.fieldRegions.single { it.field == TicketFieldReference.Additional }.rawConfidence)
+        assertNull(review.fieldRegions.single { it.field == TicketFieldReference.PaidAmount }.rawConfidence)
     }
 
     /** 标题和摘要单位受损且加号漏识别时，应依据发行机构、坐标间隔和金额关系保留多期草稿。 */
@@ -567,7 +574,10 @@ class ConservativeTicketParserTest {
         assertEquals("26999", draft.issue)
         assertNull(draft.paidAmountFen)
         assertFalse(correction.fieldRegions.any { it.field == TicketFieldReference.PaidAmount })
-        assertTrue(correction.fieldRegions.any { it.field == TicketFieldReference.Issue })
+        assertEquals(
+            TEST_CONFIDENCE,
+            correction.fieldRegions.single { it.field == TicketFieldReference.Issue }.rawConfidence,
+        )
         assertTrue(correction.fieldRegions.any { it.field == TicketFieldReference.BetLine(0) })
     }
 
@@ -609,7 +619,10 @@ class ConservativeTicketParserTest {
             listOf(TicketFieldCandidate.Issue("26999"), TicketFieldCandidate.Issue("26998")),
             correction.fieldCandidates,
         )
-        assertTrue(correction.fieldRegions.any { it.field == TicketFieldReference.Issue })
+        assertEquals(
+            TEST_CONFIDENCE,
+            correction.fieldRegions.single { it.field == TicketFieldReference.Issue }.rawConfidence,
+        )
     }
 
     /** 多个合计金额不得按理论金额猜测，只提供候选并转为空白原图辅助录入。 */
@@ -633,7 +646,10 @@ class ConservativeTicketParserTest {
             listOf(TicketFieldCandidate.PaidAmount(200L), TicketFieldCandidate.PaidAmount(400L)),
             correction.fieldCandidates,
         )
-        assertTrue(correction.fieldRegions.any { it.field == TicketFieldReference.PaidAmount })
+        assertEquals(
+            TEST_CONFIDENCE,
+            correction.fieldRegions.single { it.field == TicketFieldReference.PaidAmount }.rawConfidence,
+        )
     }
 
     /** 倍数无法确定时应保留空值进入校正，但明确的单式票仍可确定为基本投注。 */
@@ -732,6 +748,7 @@ class ConservativeTicketParserTest {
         top: Float,
         width: Float = 0.18f,
         height: Float = 0.03f,
+        confidence: Float? = TEST_CONFIDENCE,
     ): OcrTextLine =
         OcrTextLine(
             text = text,
@@ -742,7 +759,7 @@ class ConservativeTicketParserTest {
                     right = (left + width).coerceAtMost(0.98f),
                     bottom = (top + height).coerceAtMost(0.98f),
                 ),
-            confidence = TEST_CONFIDENCE,
+            confidence = confidence,
         )
 
     /** 测试共用的解析器和脱敏 OCR 元数据。 */

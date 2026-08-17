@@ -114,6 +114,7 @@ class ConservativeTicketParser : TicketParser {
                 FieldExtraction(
                     recoveredSummary?.multiplier,
                     recoveredSummary?.bounds ?: explicitMultiplierExtraction.bounds,
+                    recoveredSummary?.rawConfidence ?: explicitMultiplierExtraction.rawConfidence,
                 )
             }
         val multiplier = multiplierExtraction.value
@@ -151,14 +152,32 @@ class ConservativeTicketParser : TicketParser {
             buildList {
                 candidateFieldRegions.firstOrNull { it.field == TicketFieldReference.Issue }?.let(::add)
                 parsedBets.forEachIndexed { index, parsed ->
-                    add(TicketFieldRegion(TicketFieldReference.BetLine(index), parsed.bounds))
+                    add(
+                        TicketFieldRegion(
+                            field = TicketFieldReference.BetLine(index),
+                            bounds = parsed.bounds,
+                            rawConfidence = parsed.rawConfidence,
+                        ),
+                    )
                 }
                 multiplierExtraction.bounds?.let { bounds ->
-                    add(TicketFieldRegion(TicketFieldReference.Multiplier, bounds))
+                    add(
+                        TicketFieldRegion(
+                            field = TicketFieldReference.Multiplier,
+                            bounds = bounds,
+                            rawConfidence = multiplierExtraction.rawConfidence,
+                        ),
+                    )
                 }
                 if (lotteryType == LotteryType.SUPER_LOTTO) {
                     additionalExtraction.bounds?.let { bounds ->
-                        add(TicketFieldRegion(TicketFieldReference.Additional, bounds))
+                        add(
+                            TicketFieldRegion(
+                                field = TicketFieldReference.Additional,
+                                bounds = bounds,
+                                rawConfidence = additionalExtraction.rawConfidence,
+                            ),
+                        )
                     }
                 }
                 candidateFieldRegions.firstOrNull { it.field == TicketFieldReference.PaidAmount }?.let(::add)
@@ -319,7 +338,7 @@ class ConservativeTicketParser : TicketParser {
                     val text = row.text.normalizedForParsing()
                     regex
                         .findAll(text)
-                        .map { match -> LocatedValue(match.groupValues[1], row.bounds) }
+                        .map { match -> LocatedValue(match.groupValues[1], row.bounds, row.rawConfidence) }
                 }.toList()
         return candidates
     }
@@ -356,6 +375,7 @@ class ConservativeTicketParser : TicketParser {
                     rowMultiplier = split.rowMultiplier,
                     originalText = row.text,
                     bounds = row.bounds,
+                    rawConfidence = row.rawConfidence,
                 )
         }
         return when {
@@ -486,13 +506,14 @@ class ConservativeTicketParser : TicketParser {
                             ?.get(1)
                             ?.toIntOrNull()
                             ?: extractDegradedSummary(row)?.multiplier
-                    value?.let { LocatedValue(it, row.bounds) }
+                    value?.let { LocatedValue(it, row.bounds, row.rawConfidence) }
                 }.toList()
         if (summaryCandidates.isNotEmpty()) {
             val values = summaryCandidates.map { it.value }.toSet()
             return FieldExtraction(
                 value = values.singleOrNull()?.takeIf { it in VALID_MULTIPLIER_RANGE },
                 bounds = summaryCandidates.map { it.bounds }.coveringBoundsOrNull(),
+                rawConfidence = summaryCandidates.map { it.rawConfidence }.minimumCompleteConfidence(),
             )
         }
         if (lotteryType != LotteryType.DOUBLE_COLOR_BALL) return FieldExtraction(value = null, bounds = null)
@@ -506,6 +527,7 @@ class ConservativeTicketParser : TicketParser {
         return FieldExtraction(
             value = value,
             bounds = rowsWithMultiplier.map { it.bounds }.coveringBoundsOrNull(),
+            rawConfidence = rowsWithMultiplier.map { it.rawConfidence }.minimumCompleteConfidence(),
         )
     }
 
@@ -523,7 +545,7 @@ class ConservativeTicketParser : TicketParser {
                         compactText.contains(ADDITIONAL_KEYWORD) ||
                         compactText.contains(SINGLE_PLAY_KEYWORD)
                     ) {
-                        LocatedValue(compactText.contains(ADDITIONAL_KEYWORD), row.bounds)
+                        LocatedValue(compactText.contains(ADDITIONAL_KEYWORD), row.bounds, row.rawConfidence)
                     } else {
                         null
                     }
@@ -531,6 +553,7 @@ class ConservativeTicketParser : TicketParser {
         return FieldExtraction(
             value = summaries.map { it.value }.toSet().singleOrNull(),
             bounds = summaries.map { it.bounds }.coveringBoundsOrNull(),
+            rawConfidence = summaries.map { it.rawConfidence }.minimumCompleteConfidence(),
         )
     }
 
@@ -579,7 +602,7 @@ class ConservativeTicketParser : TicketParser {
                             periodCount = periodCount,
                         ) == paidAmountFen
                     }.map { (periodCount, multiplier) ->
-                        RecoveredSummary(periodCount, multiplier, row.bounds)
+                        RecoveredSummary(periodCount, multiplier, row.bounds, row.rawConfidence)
                     }
             }
         val uniqueValues = candidates.map { it.periodCount to it.multiplier }.distinct()
@@ -593,6 +616,11 @@ class ConservativeTicketParser : TicketParser {
                     .map { it.bounds }
                     .coveringBoundsOrNull()
                     ?: return null,
+            rawConfidence =
+                candidates
+                    .filter { it.periodCount == unique.first && it.multiplier == unique.second }
+                    .map { it.rawConfidence }
+                    .minimumCompleteConfidence(),
         )
     }
 
@@ -644,7 +672,7 @@ class ConservativeTicketParser : TicketParser {
                         .findAll(text)
                         .mapNotNull { match ->
                             match.groupValues[1].toFenOrNull()?.let { value ->
-                                LocatedValue(value, row.bounds)
+                                LocatedValue(value, row.bounds, row.rawConfidence)
                             }
                         }
                 }.toList()
@@ -658,10 +686,22 @@ class ConservativeTicketParser : TicketParser {
     ): List<TicketFieldRegion> =
         buildList {
             issueCandidates.map { it.bounds }.coveringBoundsOrNull()?.let { bounds ->
-                add(TicketFieldRegion(TicketFieldReference.Issue, bounds))
+                add(
+                    TicketFieldRegion(
+                        field = TicketFieldReference.Issue,
+                        bounds = bounds,
+                        rawConfidence = issueCandidates.map { it.rawConfidence }.minimumCompleteConfidence(),
+                    ),
+                )
             }
             paidAmountCandidates.map { it.bounds }.coveringBoundsOrNull()?.let { bounds ->
-                add(TicketFieldRegion(TicketFieldReference.PaidAmount, bounds))
+                add(
+                    TicketFieldRegion(
+                        field = TicketFieldReference.PaidAmount,
+                        bounds = bounds,
+                        rawConfidence = paidAmountCandidates.map { it.rawConfidence }.minimumCompleteConfidence(),
+                    ),
+                )
             }
         }
 
@@ -761,6 +801,16 @@ class ConservativeTicketParser : TicketParser {
     private val NormalizedBounds.width: Float
         get() = kotlin.math.abs(right - left)
 
+    /** 返回视觉行全部必要片段中的最低原始置信度；任一片段缺失时保持未知。 */
+    private val VisualRow.rawConfidence: Float?
+        get() = fragments.map { it.confidence }.minimumCompleteConfidence()
+
+    /** 只在全部值均为合法原始置信度时返回最低值，避免忽略未知片段后抬高结果。 */
+    private fun List<Float?>.minimumCompleteConfidence(): Float? {
+        if (isEmpty() || any { confidence -> confidence == null || confidence !in 0f..1f }) return null
+        return filterNotNull().minOrNull()
+    }
+
     /** 返回所有区域的最小覆盖矩形；列表为空时返回 `null`。 */
     private fun List<NormalizedBounds>.coveringBoundsOrNull(): NormalizedBounds? {
         if (isEmpty()) return null
@@ -822,6 +872,7 @@ class ConservativeTicketParser : TicketParser {
      * @property rowMultiplier 双色球行尾倍数，未识别时为 `null`。
      * @property originalText 供确认界面对照的 OCR 行原文。
      * @property bounds 投注行在原始校正图中的归一化边界。
+     * @property rawConfidence 投注行全部 OCR 片段中的最低原始置信度。
      */
     private data class ParsedBetRow(
         val primaryNumbers: List<Int>,
@@ -829,6 +880,7 @@ class ConservativeTicketParser : TicketParser {
         val rowMultiplier: Int?,
         val originalText: String,
         val bounds: NormalizedBounds,
+        val rawConfidence: Float?,
     )
 
     /**
@@ -860,10 +912,12 @@ class ConservativeTicketParser : TicketParser {
      *
      * @property value 已解析字段值。
      * @property bounds 字段所在视觉行的归一化边界。
+     * @property rawConfidence 字段所在视觉行的保守原始置信度。
      */
     private data class LocatedValue<T>(
         val value: T,
         val bounds: NormalizedBounds,
+        val rawConfidence: Float?,
     )
 
     /**
@@ -871,10 +925,12 @@ class ConservativeTicketParser : TicketParser {
      *
      * @property value 唯一合法值；缺失、非法或冲突时为 `null`。
      * @property bounds 所有相关 OCR 视觉行的最小覆盖区域。
+     * @property rawConfidence 所有相关 OCR 视觉行中的最低完整原始置信度。
      */
     private data class FieldExtraction<T>(
         val value: T?,
         val bounds: NormalizedBounds?,
+        val rawConfidence: Float? = null,
     )
 
     /**
@@ -894,11 +950,13 @@ class ConservativeTicketParser : TicketParser {
      * @property periodCount 投注期数。
      * @property multiplier 投注倍数。
      * @property bounds 摘要在原图中的归一化区域。
+     * @property rawConfidence 摘要候选所依据 OCR 行的保守原始置信度。
      */
     private data class RecoveredSummary(
         val periodCount: Int,
         val multiplier: Int,
         val bounds: NormalizedBounds,
+        val rawConfidence: Float?,
     )
 
     /**
