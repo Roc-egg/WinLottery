@@ -378,6 +378,95 @@ class OfficialDrawRepositoryTest {
             assertEquals(DrawStatus.PUBLISHING, assertIs<DrawQueryResult.Unavailable>(result).status)
         }
 
+    /** 大乐透历史期应下载同一期官方 PDF，并在严格一致后返回最终奖金状态。 */
+    @Test
+    fun historicalSuperLottoUsesIndependentPdfEvidence() =
+        runTest {
+            val requests = mutableListOf<String>()
+            val repository =
+                repository(
+                    clock = MutableTestClock("2026-08-13T01:00:00Z"),
+                    superLottoPdfTextExtractor = fixedPdfExtractor(HISTORICAL_DLT_PDF_TEXT),
+                ) { request ->
+                    requests += request.url.toString()
+                    when (request.url.encodedPath) {
+                        DLT_MAIN_PATH -> {
+                            jsonResponse(
+                                DrawContractFixtures.superLottoMain(
+                                    issue = "26090",
+                                    numbers = "09 14 17 19 24 02 09",
+                                    drawDate = "2026-08-10",
+                                    firstAdditionalCount = "1",
+                                    firstAdditionalAmount = "8,000,000",
+                                ),
+                            )
+                        }
+
+                        DLT_SUPPORTING_PATH -> {
+                            jsonResponse(DrawContractFixtures.superLottoSupporting(issue = "26091"))
+                        }
+
+                        DLT_PDF_PATH -> {
+                            pdfResponse(SuperLottoAnnouncementTestFixtures.validPdfEnvelope())
+                        }
+
+                        else -> {
+                            error("收到未预期请求：${request.url}")
+                        }
+                    }
+                }
+
+            val result = repository.getDraw(LotteryType.SUPER_LOTTO, Issue("26090"))
+            val draw = assertIs<DrawQueryResult.Success>(result).drawResult
+
+            assertEquals(DrawStatus.FINAL_PAYOUT, draw.status)
+            assertEquals(3, requests.size)
+            assertEquals(SuperLottoAnnouncementTestFixtures.EXPECTED_PDF_URL, requests.last())
+            assertEquals("中国体彩网开奖公告 PDF", draw.supportingEvidence.single().sourceName)
+        }
+
+    /** PDF 公告与主记录号码不一致时必须进入冲突，不能形成开奖结果。 */
+    @Test
+    fun conflictingHistoricalSuperLottoPdfReturnsConflict() =
+        runTest {
+            val conflictingText = HISTORICAL_DLT_PDF_TEXT.replace("09 14 17 19 24 02 09", "08 14 17 19 24 02 09")
+            val repository =
+                repository(
+                    clock = MutableTestClock("2026-08-13T01:00:00Z"),
+                    superLottoPdfTextExtractor = fixedPdfExtractor(conflictingText),
+                ) { request ->
+                    when (request.url.encodedPath) {
+                        DLT_MAIN_PATH -> {
+                            jsonResponse(
+                                DrawContractFixtures.superLottoMain(
+                                    issue = "26090",
+                                    numbers = "09 14 17 19 24 02 09",
+                                    drawDate = "2026-08-10",
+                                    firstAdditionalCount = "1",
+                                    firstAdditionalAmount = "8,000,000",
+                                ),
+                            )
+                        }
+
+                        DLT_SUPPORTING_PATH -> {
+                            jsonResponse(DrawContractFixtures.superLottoSupporting(issue = "26091"))
+                        }
+
+                        DLT_PDF_PATH -> {
+                            pdfResponse(SuperLottoAnnouncementTestFixtures.validPdfEnvelope())
+                        }
+
+                        else -> {
+                            error("收到未预期请求：${request.url}")
+                        }
+                    }
+                }
+
+            val result = repository.getDraw(LotteryType.SUPER_LOTTO, Issue("26090"))
+
+            assertEquals(DrawStatus.CONFLICT, assertIs<DrawQueryResult.Unavailable>(result).status)
+        }
+
     /** 主源空结果不得触发辅助查询，也不得被解释为未中奖。 */
     @Test
     fun emptyMainResultDoesNotQuerySupportingSource() =
@@ -467,11 +556,16 @@ class OfficialDrawRepositoryTest {
     /** 创建带 MockEngine 的官网仓库。 */
     private fun repository(
         clock: MutableTestClock,
+        superLottoPdfTextExtractor: SuperLottoPdfTextExtractor? = null,
         handler: suspend MockRequestHandleScope.(io.ktor.client.request.HttpRequestData) ->
         io.ktor.client.request.HttpResponseData,
     ): OfficialDrawRepository {
         val client = HttpClient(MockEngine(handler))
-        return OfficialDrawRepository(httpClient = client, clock = clock)
+        return OfficialDrawRepository(
+            httpClient = client,
+            clock = clock,
+            superLottoPdfTextExtractor = superLottoPdfTextExtractor,
+        )
     }
 
     /** 返回 JSON 200 响应。 */
@@ -481,6 +575,26 @@ class OfficialDrawRepositoryTest {
             status = HttpStatusCode.OK,
             headers = headersOf(HttpHeaders.ContentType, "application/json"),
         )
+
+    /** 返回 PDF 200 响应。 */
+    private fun MockRequestHandleScope.pdfResponse(body: ByteArray) =
+        respond(
+            content = body,
+            status = HttpStatusCode.OK,
+            headers =
+                headersOf(
+                    HttpHeaders.ContentType to listOf("application/pdf"),
+                    HttpHeaders.ContentLength to listOf(body.size.toString()),
+                ),
+        )
+
+    /** 创建把测试 PDF 映射为固定公开文本的提取器。 */
+    private fun fixedPdfExtractor(text: String): SuperLottoPdfTextExtractor =
+        SuperLottoPdfTextExtractor {
+            SuperLottoPdfTextExtractionResult.Success(
+                SuperLottoAnnouncementTestFixtures.validDocument(text),
+            )
+        }
 
     /** 创建人工确认字段。 */
     private fun <T> confirmed(value: T): ConfirmedValue<T> = ConfirmedValue(value, TicketFieldOrigin.USER)
@@ -515,5 +629,25 @@ class OfficialDrawRepositoryTest {
 
         /** 大乐透聚合辅助接口路径。 */
         const val DLT_SUPPORTING_PATH = "/gateway/lottery/getDigitalDrawInfoV1.qry"
+
+        /** 大乐透 26090 期固定 PDF 路径。 */
+        const val DLT_PDF_PATH = "/33800/26090/26090.pdf"
+
+        /** 与大乐透主接口夹具严格一致的公开 PDF 文本。 */
+        val HISTORICAL_DLT_PDF_TEXT =
+            """
+            中国体育彩票超级大乐透第26090期开奖公告
+            开奖日期：2026年8月10日
+            本期开奖号码： 09 14 17 19 24 02 09
+            一等奖 基本 3注 10,000,000元 30,000,000元
+            追加 1注 8,000,000元 8,000,000元
+            二等奖 基本 65注 343,183元 22,306,895元
+            追加 15注 274,546元 4,118,190元
+            三等奖 780注 6,666元 5,199,480元
+            四等奖 13,907注 380元 5,284,660元
+            五等奖 57,982注 200元 11,596,400元
+            六等奖 648,165注 18元 11,666,970元
+            七等奖 7,001,956注 7元 49,013,692元
+            """.trimIndent()
     }
 }

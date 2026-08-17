@@ -3,6 +3,7 @@ package roc.win.lottery
 import android.os.Build
 import androidx.activity.ComponentActivity
 import roc.win.lottery.app.AppContainer
+import roc.win.lottery.data.AndroidSuperLottoPdfTextExtractor
 import roc.win.lottery.data.OfficialDrawRepository
 import roc.win.lottery.domain.LotteryPrizeCalculator
 import roc.win.lottery.domain.TicketValidator
@@ -47,7 +48,11 @@ fun createAndroidRecognitionContainer(activity: ComponentActivity): AppContainer
             ),
         ticketRecognizer = MlKitChineseTicketRecognizer(activity.applicationContext),
         ticketParser = ConservativeTicketParser(),
-        drawRepository = OfficialDrawRepository(),
+        drawRepository =
+            OfficialDrawRepository(
+                superLottoPdfTextExtractor =
+                    AndroidSuperLottoPdfTextExtractor(activity.applicationContext),
+            ),
         prizeCalculator = LotteryPrizeCalculator(),
         appPaths = appPaths,
         ticketValidator = TicketValidator(),

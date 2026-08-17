@@ -3,10 +3,13 @@ package roc.win.lottery.data
 import io.ktor.client.HttpClient
 import io.ktor.client.request.get
 import io.ktor.client.request.header
+import io.ktor.client.statement.bodyAsChannel
 import io.ktor.client.statement.bodyAsText
+import io.ktor.client.statement.request
 import io.ktor.http.HttpHeaders
 import io.ktor.http.URLBuilder
 import io.ktor.http.isSuccess
+import io.ktor.utils.io.readRemaining
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -18,6 +21,7 @@ import kotlinx.datetime.plus
 import kotlinx.datetime.toInstant
 import kotlinx.datetime.toLocalDateTime
 import kotlinx.io.IOException
+import kotlinx.io.readByteArray
 import roc.win.lottery.domain.DrawResult
 import roc.win.lottery.domain.DrawStatus
 import roc.win.lottery.domain.Issue
@@ -37,11 +41,13 @@ import kotlin.time.Instant
  * @property httpClient 使用当前平台网络引擎的 Ktor 客户端。
  * @property clock 为发布窗口和证据时间提供可测试时钟。
  * @property ruleVersionSelector 根据期号选择规则版本。
+ * @property superLottoPdfTextExtractor 当前移动平台的官方 PDF 文本层提取能力。
  */
 class OfficialDrawRepository(
     private val httpClient: HttpClient = createPlatformHttpClient(),
     private val clock: Clock = Clock.System,
     private val ruleVersionSelector: RuleVersionSelector = RuleVersionSelector(),
+    private val superLottoPdfTextExtractor: SuperLottoPdfTextExtractor? = null,
 ) : DrawRepository {
     /** 当前进程内每个精确期号的规范化观察状态。 */
     private val observations = mutableMapOf<DrawKey, DrawObservation>()
@@ -68,7 +74,7 @@ class OfficialDrawRepository(
         val key = DrawKey(lotteryType, issue.value)
 
         val mainBody =
-            when (val fetched = fetch(endpoints.mainUrl)) {
+            when (val fetched = fetch(endpoints.mainUrl, "主")) {
                 is FetchResult.Success -> {
                     fetched.body
                 }
@@ -133,7 +139,7 @@ class OfficialDrawRepository(
         }
 
         val supportingBody =
-            when (val fetched = fetch(endpoints.supportingUrl)) {
+            when (val fetched = fetch(endpoints.supportingUrl, "辅助")) {
                 is FetchResult.Success -> {
                     fetched.body
                 }
@@ -161,14 +167,18 @@ class OfficialDrawRepository(
                 }
 
                 SourceParseResult.NotPublished -> {
-                    return unavailable(
-                        DrawStatus.PUBLISHING,
-                        if (lotteryType == LotteryType.SUPER_LOTTO) {
-                            "该期已不是聚合接口的最新期，尚缺可解析的独立公告证据"
-                        } else {
-                            "双色球详情数据尚未发布"
-                        },
-                    )
+                    if (lotteryType != LotteryType.SUPER_LOTTO) {
+                        return unavailable(DrawStatus.PUBLISHING, "双色球详情数据尚未发布")
+                    }
+                    when (val historical = loadHistoricalSuperLottoSupporting(main, issue.value)) {
+                        is HistoricalSupportingResult.Success -> {
+                            historical.snapshot
+                        }
+
+                        is HistoricalSupportingResult.Unavailable -> {
+                            return unavailable(historical.status, historical.message)
+                        }
+                    }
                 }
 
                 is SourceParseResult.Publishing -> {
@@ -266,8 +276,11 @@ class OfficialDrawRepository(
             }
         }
 
-    /** 执行一个 GET 并将网络不可用与上游 HTTP 失败分开映射。 */
-    private suspend fun fetch(url: String): FetchResult =
+    /** 执行一个 JSON GET，并将网络不可用与上游 HTTP 失败分开映射。 */
+    private suspend fun fetch(
+        url: String,
+        sourceLabel: String,
+    ): FetchResult =
         try {
             val response =
                 httpClient.get(url) {
@@ -283,10 +296,133 @@ class OfficialDrawRepository(
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: IOException) {
-            FetchResult.NetworkUnavailable("当前无法连接官网数据源，请检查网络后主动重试")
+            FetchResult.NetworkUnavailable("当前无法连接官网${sourceLabel}数据源，请检查网络后主动重试")
         } catch (_: Exception) {
-            FetchResult.SourceUnavailable("官网数据源请求失败或响应结构异常")
+            FetchResult.SourceUnavailable("官网${sourceLabel}数据源请求失败或响应结构异常")
         }
+
+    /**
+     * 下载受限大小的官方 PDF 公告。
+     *
+     * 响应最多读取共享解析器上限加一字节，用于发现超限后立即失败，避免无界缓冲。
+     */
+    private suspend fun fetchPdf(url: String): BinaryFetchResult =
+        try {
+            val response =
+                httpClient.get(url) {
+                    header(HttpHeaders.Accept, PDF_CONTENT_TYPE)
+                    header(HttpHeaders.CacheControl, "no-cache, no-store")
+                    header(HttpHeaders.UserAgent, USER_AGENT)
+                }
+            if (response.request.url.toString() != url) {
+                BinaryFetchResult.SourceUnavailable("官方 PDF 公告发生非预期重定向")
+            } else if (!response.status.isSuccess()) {
+                BinaryFetchResult.SourceUnavailable("官方 PDF 公告返回 HTTP ${response.status.value}")
+            } else {
+                val contentType =
+                    response.headers[HttpHeaders.ContentType]
+                        ?.substringBefore(';')
+                        ?.trim()
+                        ?.lowercase()
+                val declaredLength = response.headers[HttpHeaders.ContentLength]?.toLongOrNull()
+                when {
+                    contentType != PDF_CONTENT_TYPE -> {
+                        BinaryFetchResult.SourceUnavailable("官方公告响应类型不是 PDF")
+                    }
+
+                    declaredLength != null && declaredLength > SuperLottoAnnouncementParser.MAXIMUM_PDF_BYTES -> {
+                        BinaryFetchResult.SourceUnavailable("官方 PDF 公告大小超出安全上限")
+                    }
+
+                    else -> {
+                        val bytes =
+                            response
+                                .bodyAsChannel()
+                                .readRemaining(SuperLottoAnnouncementParser.MAXIMUM_PDF_BYTES.toLong() + 1L)
+                                .readByteArray()
+                        if (bytes.size > SuperLottoAnnouncementParser.MAXIMUM_PDF_BYTES) {
+                            BinaryFetchResult.SourceUnavailable("官方 PDF 公告大小超出安全上限")
+                        } else {
+                            BinaryFetchResult.Success(bytes)
+                        }
+                    }
+                }
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: IOException) {
+            BinaryFetchResult.NetworkUnavailable("当前无法下载官方 PDF 公告，请检查网络后主动重试")
+        } catch (_: Exception) {
+            BinaryFetchResult.SourceUnavailable("官方 PDF 公告请求失败或响应结构异常")
+        }
+
+    /** 历史聚合接口不含目标期号时，改用主记录绑定的独立官方 PDF。 */
+    private suspend fun loadHistoricalSuperLottoSupporting(
+        main: MainDrawSnapshot,
+        targetIssue: String,
+    ): HistoricalSupportingResult {
+        val extractor =
+            superLottoPdfTextExtractor
+                ?: return HistoricalSupportingResult.Unavailable(
+                    DrawStatus.PUBLISHING,
+                    "该期已不是聚合接口的最新期，当前平台尚未接入独立公告解析",
+                )
+        val sourceUrl =
+            main.detailUrl
+                ?: return HistoricalSupportingResult.Unavailable(
+                    DrawStatus.PUBLISHING,
+                    "该期独立开奖公告地址尚未发布",
+                )
+        val pdfBytes =
+            when (val fetched = fetchPdf(sourceUrl)) {
+                is BinaryFetchResult.Success -> {
+                    fetched.body
+                }
+
+                is BinaryFetchResult.NetworkUnavailable -> {
+                    return HistoricalSupportingResult.Unavailable(
+                        DrawStatus.NETWORK_UNAVAILABLE,
+                        fetched.message,
+                    )
+                }
+
+                is BinaryFetchResult.SourceUnavailable -> {
+                    return HistoricalSupportingResult.Unavailable(
+                        DrawStatus.SOURCE_UNAVAILABLE,
+                        fetched.message,
+                    )
+                }
+            }
+        return when (
+            val parsed =
+                SuperLottoAnnouncementParser.parse(
+                    pdfBytes = pdfBytes,
+                    targetIssue = targetIssue,
+                    sourceUrl = sourceUrl,
+                    textExtractor = extractor,
+                )
+        ) {
+            is SourceParseResult.Success -> {
+                HistoricalSupportingResult.Success(parsed.value)
+            }
+
+            SourceParseResult.NotPublished -> {
+                HistoricalSupportingResult.Unavailable(DrawStatus.PUBLISHING, "独立开奖公告尚未发布")
+            }
+
+            is SourceParseResult.Publishing -> {
+                HistoricalSupportingResult.Unavailable(DrawStatus.PUBLISHING, parsed.message)
+            }
+
+            is SourceParseResult.SourceUnavailable -> {
+                HistoricalSupportingResult.Unavailable(DrawStatus.SOURCE_UNAVAILABLE, parsed.message)
+            }
+
+            is SourceParseResult.Conflict -> {
+                HistoricalSupportingResult.Unavailable(DrawStatus.CONFLICT, parsed.message)
+            }
+        }
+    }
 
     /** 比较主、辅助快照的期号、日期、号码、详情链接和基础奖级。 */
     private fun compareSnapshots(
@@ -671,6 +807,44 @@ class OfficialDrawRepository(
         ) : FetchResult
     }
 
+    /** 单次受限二进制 HTTP 获取结果。 */
+    private sealed interface BinaryFetchResult {
+        /** HTTP、类型和受限响应正文均已取得。 */
+        data class Success(
+            /** 只在当前调用栈中使用的 PDF 字节。 */
+            val body: ByteArray,
+        ) : BinaryFetchResult
+
+        /** 当前设备网络不可用或连接超时。 */
+        data class NetworkUnavailable(
+            /** 面向用户的恢复说明。 */
+            val message: String,
+        ) : BinaryFetchResult
+
+        /** 上游 HTTP、响应类型、大小或未知异常。 */
+        data class SourceUnavailable(
+            /** 面向用户的恢复说明。 */
+            val message: String,
+        ) : BinaryFetchResult
+    }
+
+    /** 历史大乐透独立公告加载结果。 */
+    private sealed interface HistoricalSupportingResult {
+        /** 已解析为可与主记录交叉核对的快照。 */
+        data class Success(
+            /** 官方 PDF 规范化辅助快照。 */
+            val snapshot: SupportingDrawSnapshot,
+        ) : HistoricalSupportingResult
+
+        /** 当前无法安全形成独立证据。 */
+        data class Unavailable(
+            /** 对外的保守开奖状态。 */
+            val status: DrawStatus,
+            /** 不包含公告原文的恢复说明。 */
+            val message: String,
+        ) : HistoricalSupportingResult
+    }
+
     /** 官网端点集合。 */
     private data class DrawEndpoints(
         /** 精确单期主查询地址。 */
@@ -763,6 +937,9 @@ class OfficialDrawRepository(
 
         /** 明确标识应用用途且不包含设备信息的请求标识。 */
         const val USER_AGENT = "WinLottery/0.1 (user-initiated draw lookup)"
+
+        /** 官方公告必须使用的响应类型。 */
+        const val PDF_CONTENT_TYPE = "application/pdf"
     }
 }
 

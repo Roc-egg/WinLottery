@@ -105,7 +105,7 @@ internal object SuperLottoSourceAdapter {
                     }
                 }
             val detailUrl =
-                normalizeDetailUrl(record.text("drawPdfUrl"))
+                normalizeDetailUrl(record.text("drawPdfUrl"), targetIssue)
                     ?: return@parseSafely SourceParseResult.Publishing("大乐透辅助公告链接尚未发布")
             val canonical =
                 canonicalSupportingDraw(
@@ -170,7 +170,7 @@ internal object SuperLottoSourceAdapter {
             return SourceParseResult.SourceUnavailable(tierResult.message)
         }
         val tiers = (tierResult as PrizeTierParseResult.Success).tiers
-        val detailUrl = normalizeDetailUrl(record.text("drawPdfUrl"))
+        val detailUrl = normalizeDetailUrl(record.text("drawPdfUrl"), targetIssue)
         val publicationFieldsComplete = !detailUrl.isNullOrBlank()
         val payoutFieldsComplete = hasCompletePayouts(tiers)
         val canonical =
@@ -291,11 +291,14 @@ internal object SuperLottoSourceAdapter {
     private fun hasCompletePayouts(tiers: List<PrizeTier>): Boolean =
         SuperLottoPrizeTierValidator.validate(tiers).status == SuperLottoPrizeTierValidationStatus.COMPLETE
 
-    /** 只接受 V1 期号使用的中国体彩网官方 PDF 公告地址。 */
-    private fun normalizeDetailUrl(raw: String?): String? =
+    /** 只接受与目标期号严格绑定的中国体彩网官方 PDF 公告地址。 */
+    private fun normalizeDetailUrl(
+        raw: String?,
+        targetIssue: String,
+    ): String? =
         raw
             ?.trim()
-            ?.takeIf { it.startsWith(SUPER_LOTTO_DETAIL_URL_PREFIX) && it.endsWith(".pdf") }
+            ?.takeIf { it == SuperLottoAnnouncementParser.expectedPdfUrl(targetIssue) }
 
     /** 将 JSON 解析异常收敛为数据源不可用，不泄漏原始响应。 */
     private inline fun <T> parseSafely(block: () -> SourceParseResult<T>): SourceParseResult<T> =
@@ -374,9 +377,6 @@ internal object SuperLottoSourceAdapter {
 
     /** 大乐透玩法编号。 */
     private const val SUPER_LOTTO_GAME_NUMBER = "85"
-
-    /** 大乐透开奖公告官方地址前缀。 */
-    private const val SUPER_LOTTO_DETAIL_URL_PREFIX = "https://pdf.sporttery.cn/"
 
     /** 已审核字段值。 */
     private const val VERIFIED_VALUE = 1

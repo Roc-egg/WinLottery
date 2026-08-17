@@ -1,0 +1,60 @@
+@file:OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
+
+package roc.win.lottery.data
+
+import kotlinx.coroutines.test.runTest
+import kotlinx.io.readByteArray
+import okio.FileSystem
+import okio.Path.Companion.toPath
+import platform.Foundation.NSProcessInfo
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertIs
+import kotlin.time.Duration.Companion.minutes
+
+/** iOS 显式启用的大乐透真实 PDFKit 文本层验收。 */
+class IOSHistoricalSuperLottoLiveTest {
+    /** 使用本机临时公开公告验证 PDFKit 结构、文本层和共享语义解析。 */
+    @Test
+    fun explicitlyEnabledHistoricalIssueUsesOfficialPdf() =
+        runTest(timeout = LIVE_TEST_TIMEOUT) {
+            val environment = NSProcessInfo.processInfo.environment
+            if (environment[ENABLE_ENVIRONMENT_VARIABLE] as? String != ENABLED_VALUE) return@runTest
+            val rawPath = environment[PDF_PATH_ENVIRONMENT_VARIABLE] as? String
+            check(!rawPath.isNullOrBlank()) { "iOS 真实 PDF 验收缺少临时文件路径" }
+            val pdfBytes = FileSystem.SYSTEM.read(rawPath.toPath()) { readByteArray() }
+            val result =
+                SuperLottoAnnouncementParser.parse(
+                    pdfBytes = pdfBytes,
+                    targetIssue = TARGET_ISSUE,
+                    sourceUrl = SuperLottoAnnouncementParser.expectedPdfUrl(TARGET_ISSUE),
+                    textExtractor = IOSSuperLottoPdfTextExtractor(),
+                )
+            val snapshot =
+                assertIs<SourceParseResult.Success<SupportingDrawSnapshot>>(
+                    result,
+                    "iOS PDFKit 未能形成安全公告快照：$result",
+                ).value
+
+            assertEquals(TARGET_ISSUE, snapshot.issue)
+            assertEquals("中国体彩网开奖公告 PDF", snapshot.evidence.sourceName)
+        }
+
+    /** 真实验收参数。 */
+    private companion object {
+        /** 显式启用真实 PDF 验收的环境变量。 */
+        const val ENABLE_ENVIRONMENT_VARIABLE = "WINLOTTERY_IOS_LIVE_PDF"
+
+        /** 验收变量启用值。 */
+        const val ENABLED_VALUE = "1"
+
+        /** 本机已下载公开 PDF 的临时绝对路径环境变量。 */
+        const val PDF_PATH_ENVIRONMENT_VARIABLE = "WINLOTTERY_IOS_LIVE_PDF_PATH"
+
+        /** 已纳入 B2 机器对账的公开历史期。 */
+        const val TARGET_ISSUE = "26090"
+
+        /** 单期真实验收最大时长。 */
+        val LIVE_TEST_TIMEOUT = 1.minutes
+    }
+}

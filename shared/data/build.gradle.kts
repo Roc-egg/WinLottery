@@ -21,6 +21,11 @@ kotlin {
             jvmTarget = JvmTarget.JVM_11
         }
         withHostTest {}
+        withDeviceTestBuilder {
+            sourceSetTreeName = "test"
+        }.configure {
+            instrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        }
     }
 
     jvm()
@@ -40,6 +45,16 @@ kotlin {
         }
         androidMain.dependencies {
             implementation(libs.ktor.clientOkhttp)
+            implementation("com.tom-roush:pdfbox-android:${libs.versions.tom.roush.pdfbox.get()}") {
+                exclude(group = "org.bouncycastle")
+            }
+        }
+        named("androidDeviceTest") {
+            dependencies {
+                implementation(libs.androidx.testExt.junit)
+                implementation(libs.androidx.test.runner)
+                implementation(libs.kotlinx.coroutinesCore)
+            }
         }
         iosMain.dependencies {
             implementation(libs.ktor.clientDarwin)

@@ -61,8 +61,8 @@ B4 仍处于进行中。OCR 低置信字段标记、期号与金额多候选处�
 ## 本轮构建基线
 
 - 最新命令 `./gradlew spotlessCheck jvmTest testAndroidHostTest iosSimulatorArm64Test :androidApp:assembleDebug --rerun-tasks --console=plain` 执行成功，182 个 Gradle 任务全部实际执行。
-- 自动化测试共 596 项：JVM 205 项、Android Host 198 项、iOS Simulator 193 项；失败、错误和跳过均为 0。
-- Android Debug APK：62,162,442 字节，SHA-256 `17a4cb8ce9d137fa98c8208974c517209552a9faa1c75a97849a5a1eeb6ba5d9`。
+- 自动化测试共 623 项：JVM 211 项、Android Host 208 项、iOS Simulator 204 项；失败、错误和跳过均为 0。
+- Android Debug APK：64,822,608 字节，SHA-256 `ad967b1f8fc6788ae9aac2ef802009f28d42842363fb9f672f99e84b4d2a34ba`。
 - iOS Simulator `iosApp` Debug 应用已使用 Xcode 完整构建成功；本轮共享 iOS Simulator 测试同时完成编译、链接和执行。
 - Android 真机已完成新 APK 覆盖安装、Activity 冷启动和进程存活检查；设备当时处于锁屏状态且系统禁止 ADB 输入注入，因此未把本次记录为界面交互通过。
 - iPhone 15 Pro 真机已使用个人开发者账号完成 arm64 Debug 包签名、安装、启动和进程存活检查。

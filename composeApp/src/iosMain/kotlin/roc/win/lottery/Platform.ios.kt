@@ -3,6 +3,7 @@ package roc.win.lottery
 import platform.UIKit.UIDevice
 import platform.UIKit.UIViewController
 import roc.win.lottery.app.AppContainer
+import roc.win.lottery.data.IOSSuperLottoPdfTextExtractor
 import roc.win.lottery.data.OfficialDrawRepository
 import roc.win.lottery.domain.LotteryPrizeCalculator
 import roc.win.lottery.domain.TicketValidator
@@ -47,7 +48,10 @@ fun createIOSRecognitionContainer(presenterProvider: () -> UIViewController?): A
             ),
         ticketRecognizer = VisionTicketRecognizer(),
         ticketParser = ConservativeTicketParser(),
-        drawRepository = OfficialDrawRepository(),
+        drawRepository =
+            OfficialDrawRepository(
+                superLottoPdfTextExtractor = IOSSuperLottoPdfTextExtractor(),
+            ),
         prizeCalculator = LotteryPrizeCalculator(),
         appPaths = appPaths,
         ticketValidator = TicketValidator(),

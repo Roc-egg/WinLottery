@@ -283,6 +283,7 @@ Desktop 首轮 PoC 使用以下有官方来源的组合，只有通过 B3 后才
 - 三个官方 Paddle 模型的下载体积量级约 22 MB，ONNX Runtime 官方全平台 JAR 实测约 54.4 MB。转换后的 ONNX、目标平台裁剪和最终安装包体积只能以 B3 实测为准，不在设计阶段承诺。
 - 模型随安装包离线提供，运行时不联网下载；加载前校验版本和 SHA-256。
 - PaddleOCR、模型和 Paddle2ONNX 使用 Apache-2.0，ONNX Runtime 使用 MIT。发行包必须附带许可证正文、第三方声明、模型来源、版本、哈希和转换说明。
+- Android 历史开奖公告使用 Apache-2.0 的 PDFBox Android `2.0.27.0`；只启用未加密文本层能力并排除 BouncyCastle 传递依赖。发布材料仍须加入 PDFBox Android 与上游 Apache PDFBox 的许可证和第三方声明，且只能处理严格官方域名、固定结构和受限大小的公告。
 
 官方来源：
 
