@@ -7,13 +7,47 @@ import kotlinx.io.readByteArray
 import okio.FileSystem
 import okio.Path.Companion.toPath
 import platform.Foundation.NSProcessInfo
+import roc.win.lottery.domain.DrawStatus
+import roc.win.lottery.domain.Issue
+import roc.win.lottery.domain.LotteryType
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.time.Duration.Companion.minutes
 
-/** iOS 显式启用的大乐透真实 PDFKit 文本层验收。 */
+/** iOS 显式启用的大乐透官网联网与 PDFKit 文本层验收。 */
 class IOSHistoricalSuperLottoLiveTest {
+    /** 使用 Darwin 系统网络栈验证主 JSON、聚合回退、官方 PDF 和双证据闭环。 */
+    @Test
+    fun explicitlyEnabledHistoricalIssueUsesOfficialNetwork() =
+        runTest(timeout = LIVE_TEST_TIMEOUT) {
+            val environment = NSProcessInfo.processInfo.environment
+            if (environment[LIVE_DRAW_ENABLE_ENVIRONMENT_VARIABLE] as? String != ENABLED_VALUE) return@runTest
+            check((environment[ACCEPTANCE_PROXY_PORT_ENVIRONMENT_VARIABLE] as? String).isNullOrBlank()) {
+                "iOS 官网联网验收必须移除本地代理配置"
+            }
+            val client = createPlatformHttpClient()
+            try {
+                val repository =
+                    OfficialDrawRepository(
+                        httpClient = client,
+                        superLottoPdfTextExtractor = IOSSuperLottoPdfTextExtractor(),
+                    )
+                val result = repository.getDraw(LotteryType.SUPER_LOTTO, Issue(TARGET_ISSUE))
+                val draw =
+                    assertIs<DrawQueryResult.Success>(
+                        result,
+                        "iOS Darwin 网络栈未能形成大乐透历史期双证据：$result",
+                    ).drawResult
+
+                assertEquals(DrawStatus.FINAL_NUMBERS, draw.status)
+                assertEquals(TARGET_ISSUE, draw.issue.value)
+                assertEquals("中国体彩网开奖公告 PDF", draw.supportingEvidence.single().sourceName)
+            } finally {
+                client.close()
+            }
+        }
+
     /** 使用本机临时公开公告验证 PDFKit 结构、文本层和共享语义解析。 */
     @Test
     fun explicitlyEnabledHistoricalIssueUsesOfficialPdf() =
@@ -42,6 +76,12 @@ class IOSHistoricalSuperLottoLiveTest {
 
     /** 真实验收参数。 */
     private companion object {
+        /** 显式启用 iOS 官网历史期开奖闭环的环境变量。 */
+        const val LIVE_DRAW_ENABLE_ENVIRONMENT_VARIABLE = "WINLOTTERY_IOS_LIVE_DRAW"
+
+        /** 联网验收必须保持为空的本地代理端口环境变量。 */
+        const val ACCEPTANCE_PROXY_PORT_ENVIRONMENT_VARIABLE = "WINLOTTERY_IOS_ACCEPTANCE_PROXY_PORT"
+
         /** 显式启用真实 PDF 验收的环境变量。 */
         const val ENABLE_ENVIRONMENT_VARIABLE = "WINLOTTERY_IOS_LIVE_PDF"
 
