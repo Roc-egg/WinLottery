@@ -41,6 +41,7 @@ class ConservativeTicketParserTest {
         assertEquals(1_000L, draft.paidAmountFen)
         assertEquals(
             listOf(
+                TicketFieldReference.LotteryType,
                 TicketFieldReference.Issue,
                 TicketFieldReference.BetLine(0),
                 TicketFieldReference.BetLine(1),
@@ -66,6 +67,14 @@ class ConservativeTicketParserTest {
                     engineName = TEST_ENGINE_NAME,
                     lines =
                         listOf(
+                            line(
+                                "超级大乐透",
+                                left = 0.05f,
+                                top = 0.02f,
+                                width = 0.80f,
+                                height = 0.02f,
+                                confidence = 0.20f,
+                            ),
                             line("大乐透", left = 0.35f, top = 0.08f),
                             line("体彩", left = 0.10f, top = 0.08f),
                             line("第26999期", left = 0.10f, top = 0.18f, confidence = 0.91f),
@@ -91,8 +100,13 @@ class ConservativeTicketParserTest {
             0.91f,
             review.fieldRegions.single { it.field == TicketFieldReference.Issue }.rawConfidence,
         )
+        val lotteryTypeRegion = review.fieldRegions.single { it.field == TicketFieldReference.LotteryType }
+        assertEquals(0.35f, lotteryTypeRegion.bounds.left)
+        assertEquals(0.53f, lotteryTypeRegion.bounds.right)
+        assertEquals(TEST_CONFIDENCE, lotteryTypeRegion.rawConfidence)
         assertNull(review.fieldRegions.single { it.field == TicketFieldReference.Multiplier }.rawConfidence)
         assertNull(review.fieldRegions.single { it.field == TicketFieldReference.Additional }.rawConfidence)
+        assertNull(review.fieldRegions.single { it.field == TicketFieldReference.PeriodCount }.rawConfidence)
         assertNull(review.fieldRegions.single { it.field == TicketFieldReference.PaidAmount }.rawConfidence)
     }
 
@@ -106,14 +120,26 @@ class ConservativeTicketParserTest {
                     engineName = TEST_ENGINE_NAME,
                     lines =
                         listOf(
-                            line("体彩 超级东迭", left = 0.18f, top = 0.08f, width = 0.46f),
+                            line(
+                                "体彩 超级东迭",
+                                left = 0.18f,
+                                top = 0.08f,
+                                width = 0.46f,
+                                confidence = 0.82f,
+                            ),
                             line("第26999期", left = 0.16f, top = 0.18f),
                             line("单式票", left = 0.12f, top = 0.28f, width = 0.12f),
                             line("10}1f%", left = 0.38f, top = 0.28f, width = 0.11f),
                             line("合计20元", left = 0.66f, top = 0.28f, width = 0.15f),
-                            line("① 01 07 14 22 35", left = 0.12f, top = 0.38f, width = 0.40f),
-                            line("03", left = 0.68f, top = 0.38f, width = 0.04f),
-                            line("11", left = 0.77f, top = 0.38f, width = 0.04f),
+                            line(
+                                "① 01 07 14 22 35",
+                                left = 0.12f,
+                                top = 0.38f,
+                                width = 0.40f,
+                                confidence = 0.65f,
+                            ),
+                            line("03", left = 0.68f, top = 0.38f, width = 0.04f, confidence = 0.55f),
+                            line("11", left = 0.77f, top = 0.38f, width = 0.04f, confidence = 0.60f),
                         ),
                 ),
             )
@@ -128,6 +154,14 @@ class ConservativeTicketParserTest {
         assertEquals(1, draft.multiplier)
         assertEquals(10, draft.periodCount)
         assertEquals(2_000L, draft.paidAmountFen)
+        assertEquals(
+            0.55f,
+            review.fieldRegions.single { it.field == TicketFieldReference.LotteryType }.rawConfidence,
+        )
+        assertEquals(
+            TEST_CONFIDENCE,
+            review.fieldRegions.single { it.field == TicketFieldReference.PeriodCount }.rawConfidence,
+        )
     }
 
     /** 期、倍单位被误成连续数字时，只在金额关系能够排除其他解释后恢复字段。 */
@@ -163,6 +197,30 @@ class ConservativeTicketParserTest {
 
         val correction = assertIs<TicketParseResult.NeedsCorrection>(result)
         assertNull(assertNotNull(correction.draft).multiplier)
+    }
+
+    /** 多个明确期数互相冲突时应保留彩种与期数证据，但不得继续生成草稿。 */
+    @Test
+    fun conflictingPeriodCountsKeepEvidenceWithoutDraft() {
+        val result =
+            parser.parse(
+                document(
+                    "超级大乐透",
+                    "第26999期",
+                    "单式票 2期1倍 合计4元",
+                    "单式票 3期1倍 总计6元",
+                    "① 01 07 14 22 35 + 03 11",
+                ),
+            )
+
+        val correction = assertIs<TicketParseResult.NeedsCorrection>(result)
+        assertTrue(correction.message.contains("互相冲突的投注期数"))
+        assertNull(correction.draft)
+        assertEquals(
+            listOf(TicketFieldReference.LotteryType, TicketFieldReference.PeriodCount),
+            correction.fieldRegions.map { it.field },
+        )
+        assertTrue(correction.fieldRegions.all { it.rawConfidence == TEST_CONFIDENCE })
     }
 
     /** 受损摘要即使能由金额唯一解释，也不能覆盖票面已有的明确倍数冲突。 */
@@ -430,6 +488,10 @@ class ConservativeTicketParserTest {
 
         val review = assertIs<TicketParseResult.ReadyForReview>(result)
         assertEquals(10, review.draft.periodCount)
+        assertEquals(
+            TEST_CONFIDENCE,
+            review.fieldRegions.single { it.field == TicketFieldReference.PeriodCount }.rawConfidence,
+        )
     }
 
     /** Vision 把一倍识别成字母 l 时仍应保留已明确识别的十期期数。 */

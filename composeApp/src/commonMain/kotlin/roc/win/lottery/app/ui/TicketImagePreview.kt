@@ -43,6 +43,7 @@ import roc.win.lottery.recognition.ImageRef
 import roc.win.lottery.recognition.NormalizedBounds
 import roc.win.lottery.recognition.TicketFieldReference
 import roc.win.lottery.recognition.TicketFieldRegion
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /** 票图预览的异步加载状态。 */
@@ -88,7 +89,7 @@ internal fun TicketImagePreview(
     state: TicketPreviewState,
     fieldRegions: List<TicketFieldRegion>,
 ) {
-    val regions = fieldRegions.distinctBy { it.field }
+    val regions = previewableTicketRegions(fieldRegions)
     var selectedField by remember(regions) { mutableStateOf<TicketFieldReference?>(null) }
     val selectedRegion = regions.firstOrNull { it.field == selectedField }
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -147,6 +148,19 @@ internal fun TicketImagePreview(
         }
     }
 }
+
+/**
+ * 返回适合用户定位的去重字段区域。
+ *
+ * 部分 OCR 引擎会给标题返回覆盖大半票面的行框；彩种原始置信度仍保留在流程状态中，
+ * 但这种框不能作为定位入口展示，以免让用户误以为整张票都是标题区域。
+ */
+internal fun previewableTicketRegions(fieldRegions: List<TicketFieldRegion>): List<TicketFieldRegion> =
+    fieldRegions
+        .filter { region ->
+            region.field != TicketFieldReference.LotteryType ||
+                abs(region.bounds.bottom - region.bounds.top) <= MAX_LOTTERY_TYPE_REGION_HEIGHT
+        }.distinctBy { it.field }
 
 /** 绘制整票或选中字段的带上下文裁切区域。 */
 @Composable
@@ -291,10 +305,12 @@ private fun NormalizedBounds.toPixelRect(
 /** 返回字段定位控件使用的简短名称。 */
 private fun TicketFieldReference.displayName(): String =
     when (this) {
+        TicketFieldReference.LotteryType -> "彩种"
         TicketFieldReference.Issue -> "期号"
         is TicketFieldReference.BetLine -> "第 ${index + 1} 注"
         TicketFieldReference.Multiplier -> "倍数"
         TicketFieldReference.Additional -> "追加"
+        TicketFieldReference.PeriodCount -> "期数"
         TicketFieldReference.PaidAmount -> "金额"
     }
 
@@ -309,6 +325,9 @@ private const val MIN_HORIZONTAL_PADDING = 0.04f
 
 /** 字段裁切至少保留的纵向上下文。 */
 private const val MIN_VERTICAL_PADDING = 0.025f
+
+/** 彩种标题框允许展示为单行定位入口的最大归一化高度。 */
+private const val MAX_LOTTERY_TYPE_REGION_HEIGHT = 0.25f
 
 /** 字段高亮填充透明度。 */
 private const val HIGHLIGHT_FILL_ALPHA = 0.16f

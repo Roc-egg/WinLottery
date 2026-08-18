@@ -45,6 +45,9 @@ data class OcrDocument(
 
 /** 票面校正页可定位的 OCR 字段。 */
 sealed interface TicketFieldReference {
+    /** 彩票种类及其标题或联合识别证据。 */
+    data object LotteryType : TicketFieldReference
+
     /** 开奖期号。 */
     data object Issue : TicketFieldReference
 
@@ -62,6 +65,9 @@ sealed interface TicketFieldReference {
 
     /** 大乐透基本或追加投注属性。 */
     data object Additional : TicketFieldReference
+
+    /** 连续投注期数。 */
+    data object PeriodCount : TicketFieldReference
 
     /** 票面合计金额。 */
     data object PaidAmount : TicketFieldReference

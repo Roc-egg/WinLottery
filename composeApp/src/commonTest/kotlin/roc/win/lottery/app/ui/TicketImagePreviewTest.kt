@@ -1,6 +1,8 @@
 package roc.win.lottery.app.ui
 
 import roc.win.lottery.recognition.NormalizedBounds
+import roc.win.lottery.recognition.TicketFieldReference
+import roc.win.lottery.recognition.TicketFieldRegion
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -50,5 +52,33 @@ class TicketImagePreviewTest {
         assertFailsWith<IllegalArgumentException> {
             calculateTicketPreviewViewport(0, 100, null)
         }
+    }
+
+    /** 覆盖大半票面的彩种框应隐藏，但紧凑标题框和其他字段仍可定位。 */
+    @Test
+    fun oversizedLotteryTypeRegionIsNotOfferedForPreview() {
+        val oversizedLotteryType =
+            TicketFieldRegion(
+                field = TicketFieldReference.LotteryType,
+                bounds = NormalizedBounds(0.10f, 0.05f, 0.90f, 0.80f),
+                rawConfidence = 0.8f,
+            )
+        val compactLotteryType =
+            TicketFieldRegion(
+                field = TicketFieldReference.LotteryType,
+                bounds = NormalizedBounds(0.20f, 0.08f, 0.70f, 0.18f),
+                rawConfidence = 0.7f,
+            )
+        val issue =
+            TicketFieldRegion(
+                field = TicketFieldReference.Issue,
+                bounds = NormalizedBounds(0.20f, 0.20f, 0.60f, 0.26f),
+                rawConfidence = 0.9f,
+            )
+
+        assertEquals(
+            listOf(compactLotteryType, issue),
+            previewableTicketRegions(listOf(oversizedLotteryType, compactLotteryType, issue)),
+        )
     }
 }

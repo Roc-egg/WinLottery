@@ -19,21 +19,28 @@ class ConservativeTicketParser : TicketParser {
             return TicketParseResult.NeedsCorrection("未识别到可解析的票面文字")
         }
 
-        val lotteryType =
+        val lotteryTypeDetection =
             when (val result = detectLotteryType(rows)) {
-                is LotteryTypeDetection.Known -> result.lotteryType
+                is LotteryTypeDetection.Known -> result
                 is LotteryTypeDetection.Failed -> return TicketParseResult.NeedsCorrection(result.message)
             }
+        val lotteryType = lotteryTypeDetection.lotteryType
 
         detectUnsupportedTicket(rows)?.let { message ->
             return TicketParseResult.Unsupported(message)
         }
 
-        val explicitPeriodCounts = extractExplicitPeriodCounts(rows)
-        if (explicitPeriodCounts.size > 1) {
-            return TicketParseResult.NeedsCorrection("识别到互相冲突的投注期数，请人工核对")
+        val explicitPeriodCountCandidates = extractExplicitPeriodCounts(rows)
+        val explicitPeriodCountValues = explicitPeriodCountCandidates.map { it.value }.toSet()
+        val explicitPeriodCountRegion =
+            buildLocatedFieldRegion(TicketFieldReference.PeriodCount, explicitPeriodCountCandidates)
+        if (explicitPeriodCountValues.size > 1) {
+            return TicketParseResult.NeedsCorrection(
+                message = "识别到互相冲突的投注期数，请人工核对",
+                fieldRegions = listOfNotNull(lotteryTypeDetection.fieldRegion, explicitPeriodCountRegion),
+            )
         }
-        val explicitPeriodCount = explicitPeriodCounts.singleOrNull()
+        val explicitPeriodCount = explicitPeriodCountValues.singleOrNull()
         val issueCandidates = extractIssueCandidates(rows, lotteryType)
         val distinctIssueCandidates = issueCandidates.distinctBy { it.value }
         val issueCandidate = distinctIssueCandidates.singleOrNull()
@@ -51,7 +58,12 @@ class ConservativeTicketParser : TicketParser {
                     addAll(distinctPaidAmountCandidates.map { TicketFieldCandidate.PaidAmount(it.value) })
                 }
             }
-        val candidateFieldRegions = buildCandidateFieldRegions(issueCandidates, paidAmountCandidates)
+        val candidateFieldRegions =
+            buildList {
+                add(lotteryTypeDetection.fieldRegion)
+                explicitPeriodCountRegion?.let(::add)
+                addAll(buildCandidateFieldRegions(issueCandidates, paidAmountCandidates))
+            }
         if (fieldCandidates.isNotEmpty()) {
             val message =
                 buildList {
@@ -119,6 +131,15 @@ class ConservativeTicketParser : TicketParser {
             }
         val multiplier = multiplierExtraction.value
         val periodCount = explicitPeriodCount ?: recoveredSummary?.periodCount ?: V1_PERIOD_COUNT
+        val periodCountRegion =
+            explicitPeriodCountRegion
+                ?: recoveredSummary?.let { recovered ->
+                    TicketFieldRegion(
+                        field = TicketFieldReference.PeriodCount,
+                        bounds = recovered.bounds,
+                        rawConfidence = recovered.rawConfidence,
+                    )
+                }
         val expectedAmountFen =
             if (multiplier != null && isAdditional != null) {
                 TicketAmountCalculator.calculate(
@@ -150,6 +171,7 @@ class ConservativeTicketParser : TicketParser {
             )
         val fieldRegions =
             buildList {
+                add(lotteryTypeDetection.fieldRegion)
                 candidateFieldRegions.firstOrNull { it.field == TicketFieldReference.Issue }?.let(::add)
                 parsedBets.forEachIndexed { index, parsed ->
                     add(
@@ -180,6 +202,7 @@ class ConservativeTicketParser : TicketParser {
                         )
                     }
                 }
+                periodCountRegion?.let(::add)
                 candidateFieldRegions.firstOrNull { it.field == TicketFieldReference.PaidAmount }?.let(::add)
             }
         val correctionMessages =
@@ -217,53 +240,91 @@ class ConservativeTicketParser : TicketParser {
      * 优先根据精确标题识别彩种；标题缺失时，只接受发行机构与唯一合法单式号码结构的联合证据。
      */
     private fun detectLotteryType(rows: List<VisualRow>): LotteryTypeDetection {
-        val compactTexts = rows.map { it.text.compactForKeywords() }
-        val hasSuperLotto = compactTexts.any { it.contains(SUPER_LOTTO_KEYWORD) }
-        val hasDoubleColorBall = compactTexts.any { it.contains(DOUBLE_COLOR_BALL_KEYWORD) }
+        val superLottoTitleEvidence = extractKeywordEvidence(rows, SUPER_LOTTO_KEYWORD)
+        val doubleColorBallTitleEvidence = extractKeywordEvidence(rows, DOUBLE_COLOR_BALL_KEYWORD)
         when {
-            hasSuperLotto && hasDoubleColorBall -> LotteryTypeDetection.Failed("同时识别到大乐透和双色球标题")
-            hasSuperLotto -> LotteryTypeDetection.Known(LotteryType.SUPER_LOTTO)
-            hasDoubleColorBall -> LotteryTypeDetection.Known(LotteryType.DOUBLE_COLOR_BALL)
-            else -> null
+            superLottoTitleEvidence.isNotEmpty() && doubleColorBallTitleEvidence.isNotEmpty() -> {
+                LotteryTypeDetection.Failed("同时识别到大乐透和双色球标题")
+            }
+
+            superLottoTitleEvidence.isNotEmpty() -> {
+                LotteryTypeDetection.Known(
+                    lotteryType = LotteryType.SUPER_LOTTO,
+                    fieldRegion =
+                        checkNotNull(
+                            buildTightestLocatedFieldRegion(
+                                TicketFieldReference.LotteryType,
+                                superLottoTitleEvidence,
+                            ),
+                        ),
+                )
+            }
+
+            doubleColorBallTitleEvidence.isNotEmpty() -> {
+                LotteryTypeDetection.Known(
+                    lotteryType = LotteryType.DOUBLE_COLOR_BALL,
+                    fieldRegion =
+                        checkNotNull(
+                            buildTightestLocatedFieldRegion(
+                                TicketFieldReference.LotteryType,
+                                doubleColorBallTitleEvidence,
+                            ),
+                        ),
+                )
+            }
+
+            else -> {
+                null
+            }
         }?.let { return it }
 
-        val hasWelfareLotteryIssuer =
-            compactTexts.any { text ->
+        val welfareLotteryIssuerRows =
+            rows.filter { row ->
+                val text = row.text.compactForKeywords()
                 text.contains(WELFARE_LOTTERY_ISSUER_KEYWORD) ||
                     text.contains(WELFARE_LOTTERY_ISSUER_ABBREVIATION)
             }
-        val hasSportsLotteryIssuer =
-            compactTexts.any { text ->
+        val sportsLotteryIssuerRows =
+            rows.filter { row ->
+                val text = row.text.compactForKeywords()
                 text.contains(SPORTS_LOTTERY_ISSUER_KEYWORD) ||
                     text.contains(SPORTS_LOTTERY_ISSUER_ABBREVIATION)
             }
-        if (hasWelfareLotteryIssuer && hasSportsLotteryIssuer) {
+        if (welfareLotteryIssuerRows.isNotEmpty() && sportsLotteryIssuerRows.isNotEmpty()) {
             return LotteryTypeDetection.Failed("同时识别到福利彩票和体育彩票发行机构，请人工核对")
         }
-        if (!hasWelfareLotteryIssuer && !hasSportsLotteryIssuer) {
+        if (welfareLotteryIssuerRows.isEmpty() && sportsLotteryIssuerRows.isEmpty()) {
             return LotteryTypeDetection.Failed("未识别到受支持的彩种标题或发行机构")
         }
 
-        val structureType =
+        val structureDetection =
             detectUniqueStrictBetStructure(rows)
                 ?: return LotteryTypeDetection.Failed("彩种标题缺失，且单式号码结构不完整或存在冲突")
         val issuerType =
-            if (hasWelfareLotteryIssuer) {
+            if (welfareLotteryIssuerRows.isNotEmpty()) {
                 LotteryType.DOUBLE_COLOR_BALL
             } else {
                 LotteryType.SUPER_LOTTO
             }
-        return if (structureType == issuerType) {
-            LotteryTypeDetection.Known(issuerType)
+        val issuerRows = welfareLotteryIssuerRows.ifEmpty { sportsLotteryIssuerRows }
+        return if (structureDetection.lotteryType == issuerType) {
+            LotteryTypeDetection.Known(
+                lotteryType = issuerType,
+                fieldRegion =
+                    buildVisualRowFieldRegion(
+                        TicketFieldReference.LotteryType,
+                        issuerRows + structureDetection.evidenceRows,
+                    ),
+            )
         } else {
             LotteryTypeDetection.Failed("发行机构与单式号码结构不一致，请人工核对")
         }
     }
 
     /** 从所有疑似投注行提取唯一合法的 `6+1` 或 `5+2` 结构；任何残缺或混合结构都会失败。 */
-    private fun detectUniqueStrictBetStructure(rows: List<VisualRow>): LotteryType? {
+    private fun detectUniqueStrictBetStructure(rows: List<VisualRow>): LotteryStructureDetection? {
         val detectedTypes = mutableSetOf<LotteryType>()
-        var candidateFound = false
+        val evidenceRows = mutableListOf<VisualRow>()
         rows.forEach { row ->
             val normalized = row.text.normalizedForParsing()
             val matchingTypes =
@@ -280,12 +341,37 @@ class ConservativeTicketParser : TicketParser {
                 if (explicitCandidate) return null
                 return@forEach
             }
-            candidateFound = true
             if (matchingTypes.size != 1) return null
             detectedTypes += matchingTypes.single()
+            evidenceRows += row
         }
-        return detectedTypes.singleOrNull().takeIf { candidateFound }
+        return detectedTypes.singleOrNull()?.let { lotteryType ->
+            LotteryStructureDetection(lotteryType, evidenceRows.toList())
+        }
     }
+
+    /**
+     * 提取真正包含关键词的原始 OCR 片段；关键词跨片段时才退回合并视觉行。
+     *
+     * 这样只收紧原图定位区域，不改变彩种判断所使用的文字证据。
+     */
+    private fun extractKeywordEvidence(
+        rows: List<VisualRow>,
+        keyword: String,
+    ): List<LocatedValue<Unit>> =
+        rows.mapNotNull { row ->
+            if (!row.text.compactForKeywords().contains(keyword)) return@mapNotNull null
+            val matchingFragments = row.fragments.filter { it.text.compactForKeywords().contains(keyword) }
+            if (matchingFragments.isEmpty()) {
+                LocatedValue(Unit, row.bounds, row.rawConfidence)
+            } else {
+                LocatedValue(
+                    value = Unit,
+                    bounds = checkNotNull(matchingFragments.map { it.bounds }.coveringBoundsOrNull()),
+                    rawConfidence = matchingFragments.map { it.confidence }.minimumCompleteConfidence(),
+                )
+            }
+        }
 
     /** 识别无需继续解析即可确定的不支持票型。 */
     private fun detectUnsupportedTicket(rows: List<VisualRow>): String? {
@@ -308,18 +394,20 @@ class ConservativeTicketParser : TicketParser {
     }
 
     /** 从带倍数的投注摘要行提取明确期数，避免把开奖期号误识别为期数。 */
-    private fun extractExplicitPeriodCounts(rows: List<VisualRow>): Set<Int> =
+    private fun extractExplicitPeriodCounts(rows: List<VisualRow>): List<LocatedValue<Int>> =
         rows
             .asSequence()
             .mapNotNull { row ->
                 val text = row.text.normalizedForParsing()
-                PERIOD_WITH_MULTIPLIER_REGEX
-                    .find(text)
-                    ?.groupValues
-                    ?.get(1)
-                    ?.toIntOrNull()
-                    ?: extractDegradedSummary(row)?.periodCount
-            }.toSet()
+                val value =
+                    PERIOD_WITH_MULTIPLIER_REGEX
+                        .find(text)
+                        ?.groupValues
+                        ?.get(1)
+                        ?.toIntOrNull()
+                        ?: extractDegradedSummary(row)?.periodCount
+                value?.let { LocatedValue(it, row.bounds, row.rawConfidence) }
+            }.toList()
 
     /** 提取所有与彩种长度一致的开奖期号候选，交由主流程判断缺失或冲突。 */
     private fun extractIssueCandidates(
@@ -679,31 +767,55 @@ class ConservativeTicketParser : TicketParser {
         return candidates
     }
 
+    /** 把一组带位置的解析候选合并为单个字段区域，并保守聚合原始置信度。 */
+    private fun <T> buildLocatedFieldRegion(
+        field: TicketFieldReference,
+        candidates: List<LocatedValue<T>>,
+    ): TicketFieldRegion? {
+        val bounds = candidates.map { it.bounds }.coveringBoundsOrNull() ?: return null
+        return TicketFieldRegion(
+            field = field,
+            bounds = bounds,
+            rawConfidence = candidates.map { it.rawConfidence }.minimumCompleteConfidence(),
+        )
+    }
+
+    /** 对同值精确关键词选择面积最小的定位框，避免重复宽框把标题区域扩大到整票。 */
+    private fun <T> buildTightestLocatedFieldRegion(
+        field: TicketFieldReference,
+        candidates: List<LocatedValue<T>>,
+    ): TicketFieldRegion? {
+        val candidate = candidates.minByOrNull { it.bounds.width * it.bounds.height } ?: return null
+        return TicketFieldRegion(
+            field = field,
+            bounds = candidate.bounds,
+            rawConfidence = candidate.rawConfidence,
+        )
+    }
+
+    /** 把用于联合判断的视觉行合并为一个字段证据区域。 */
+    private fun buildVisualRowFieldRegion(
+        field: TicketFieldReference,
+        rows: List<VisualRow>,
+    ): TicketFieldRegion {
+        require(rows.isNotEmpty()) { "字段证据行不能为空" }
+        val bounds = checkNotNull(rows.map { it.bounds }.coveringBoundsOrNull())
+        return TicketFieldRegion(
+            field = field,
+            bounds = bounds,
+            rawConfidence = rows.map { it.rawConfidence }.minimumCompleteConfidence(),
+        )
+    }
+
     /** 为期号和金额候选合并原图定位区域，避免校正页出现重复字段入口。 */
     private fun buildCandidateFieldRegions(
         issueCandidates: List<LocatedValue<String>>,
         paidAmountCandidates: List<LocatedValue<Long>>,
     ): List<TicketFieldRegion> =
-        buildList {
-            issueCandidates.map { it.bounds }.coveringBoundsOrNull()?.let { bounds ->
-                add(
-                    TicketFieldRegion(
-                        field = TicketFieldReference.Issue,
-                        bounds = bounds,
-                        rawConfidence = issueCandidates.map { it.rawConfidence }.minimumCompleteConfidence(),
-                    ),
-                )
-            }
-            paidAmountCandidates.map { it.bounds }.coveringBoundsOrNull()?.let { bounds ->
-                add(
-                    TicketFieldRegion(
-                        field = TicketFieldReference.PaidAmount,
-                        bounds = bounds,
-                        rawConfidence = paidAmountCandidates.map { it.rawConfidence }.minimumCompleteConfidence(),
-                    ),
-                )
-            }
-        }
+        listOfNotNull(
+            buildLocatedFieldRegion(TicketFieldReference.Issue, issueCandidates),
+            buildLocatedFieldRegion(TicketFieldReference.PaidAmount, paidAmountCandidates),
+        )
 
     /** 把平台可能输出的全角字符归一化，但不替换形似数字的字母。 */
     private fun String.normalizedForParsing(): String {
@@ -828,9 +940,11 @@ class ConservativeTicketParser : TicketParser {
          * 已唯一识别彩种。
          *
          * @property lotteryType 识别到的彩种。
+         * @property fieldRegion 标题或联合证据在原图中的区域与原始置信度。
          */
         data class Known(
             val lotteryType: LotteryType,
+            val fieldRegion: TicketFieldRegion,
         ) : LotteryTypeDetection
 
         /**
@@ -842,6 +956,17 @@ class ConservativeTicketParser : TicketParser {
             val message: String,
         ) : LotteryTypeDetection
     }
+
+    /**
+     * 由严格单式号码结构识别到的彩种及其证据行。
+     *
+     * @property lotteryType 号码结构唯一对应的彩种。
+     * @property evidenceRows 参与结构判断的完整合法投注行。
+     */
+    private data class LotteryStructureDetection(
+        val lotteryType: LotteryType,
+        val evidenceRows: List<VisualRow>,
+    )
 
     /** 投注号码行解析结果。 */
     private sealed interface BetRowsResult {
