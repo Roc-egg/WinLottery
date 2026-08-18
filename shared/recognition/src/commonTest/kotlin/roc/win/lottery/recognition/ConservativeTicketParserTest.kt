@@ -473,6 +473,44 @@ class ConservativeTicketParserTest {
         assertTrue(correction.message.contains("结构"))
     }
 
+    /** 精确标题存在但号码行不完整时，只保留安全非号码证据且不得伪造默认单期期数区域。 */
+    @Test
+    fun incompleteBetRowsKeepSafeNonBetEvidenceWithoutPeriodRegion() {
+        val result =
+            parser.parse(
+                OcrDocument(
+                    imageId = TEST_IMAGE_ID,
+                    engineName = TEST_ENGINE_NAME,
+                    lines =
+                        listOf(
+                            line("玩法：双色球-单式", 0.15f, 0.05f, 0.36f, confidence = 0.91f),
+                            line("中国福利彩票", 0.10f, 0.12f, 0.70f, confidence = 0.80f),
+                            line("开奖期：2026999", 0.10f, 0.19f, 0.25f, confidence = 0.88f),
+                            line("A. 01 06 11 18 25 33 + 02 x1", 0.10f, 0.26f, 0.70f),
+                            line("B. 02 08 15 23 34 + 04 x1", 0.10f, 0.33f, 0.65f),
+                            line("合计：2元", 0.65f, 0.40f, 0.20f, confidence = 0.77f),
+                        ),
+                ),
+            )
+
+        val correction = assertIs<TicketParseResult.NeedsCorrection>(result)
+        assertTrue(correction.message.contains("投注号码不完整"))
+        assertNull(correction.draft)
+        assertEquals(
+            listOf(
+                TicketFieldReference.LotteryType,
+                TicketFieldReference.Issue,
+                TicketFieldReference.PaidAmount,
+            ),
+            correction.fieldRegions.map { it.field },
+        )
+        val lotteryTypeRegion = correction.fieldRegions.first()
+        assertEquals(NormalizedBounds(0.15f, 0.05f, 0.51f, 0.08f), lotteryTypeRegion.bounds)
+        assertEquals(0.91f, lotteryTypeRegion.rawConfidence)
+        assertEquals(0.88f, correction.fieldRegions[1].rawConfidence)
+        assertEquals(0.77f, correction.fieldRegions[2].rawConfidence)
+    }
+
     /** 明确出现多期投注且字段完整时应直接进入人工确认。 */
     @Test
     fun explicitMultiplePeriodsKeepRecognizedDraft() {

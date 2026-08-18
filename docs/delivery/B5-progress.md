@@ -59,7 +59,7 @@ B5 尚未通过发布验收。B2 已完成每种彩票 20 期机器首轮对账�
 ## 验证记录
 
 - 强制执行 `./gradlew spotlessCheck jvmTest testAndroidHostTest iosSimulatorArm64Test :androidApp:assembleDebug --rerun-tasks --console=plain`，182 个任务全部成功。
-- 自动化测试共 645 项：JVM 220 项、Android Host 214 项、iOS Simulator 211 项；失败、错误和跳过均为 0。
+- 自动化测试共 648 项：JVM 221 项、Android Host 215 项、iOS Simulator 212 项；失败、错误和跳过均为 0。
 - 2026-08-17 再次执行完整跨平台矩阵和 Android 调试构建，格式、编译、链接、测试及打包均成功；新增 iOS 联网测试默认直接返回，不改变离线 CI 行为。
 - 新增 iOS 验收代理配置覆盖：Release 强制忽略环境变量、非法或越界端口拒绝，以及合法端口只能生成固定回环地址。
 - 新增 OCR 多候选覆盖：多个合法期号或金额只保留去重候选和合并原图区域，不携带可能混票的其他自动草稿；候选选择后仍需完成全字段人工录入和领域校验。
