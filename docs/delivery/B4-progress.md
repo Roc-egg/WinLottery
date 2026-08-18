@@ -66,7 +66,7 @@ B4 仍处于进行中。多个期号和金额候选已在当前 Android/iOS 模�
 ## 本轮构建基线
 
 - 最新命令 `./gradlew spotlessCheck jvmTest testAndroidHostTest iosSimulatorArm64Test :androidApp:assembleDebug --rerun-tasks --console=plain` 执行成功，182 个 Gradle 任务全部实际执行。
-- 自动化测试共 648 项：JVM 221 项、Android Host 215 项、iOS Simulator 212 项；失败、错误和跳过均为 0。
+- 自动化测试共 651 项：JVM 222 项、Android Host 216 项、iOS Simulator 213 项；失败、错误和跳过均为 0。
 - Android Debug APK：64,855,376 字节，SHA-256 `09c07e81ca967e463d2e322efe01d94143ccf5c73a194cf5b12df79db334a155`。
 - iOS Simulator `iosApp` Debug 应用已使用 Xcode 完整构建成功；本轮共享 iOS Simulator 测试同时完成编译、链接和执行。
 - Android 16 物理机已完成 63 项设备测试，其中显式联网用例通过公开 `26090` 期主 JSON、官方 PDFBox 和双证据闭环；本轮没有把该数据层测试记为候选界面交互通过。

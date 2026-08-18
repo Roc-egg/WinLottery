@@ -497,6 +497,42 @@ class LotteryAppControllerTest {
             assertIs<AppScreen.Review>(controller.uiState.value.screen)
         }
 
+    /** 多期查询中返回应丢弃在途结果，并且不得继续请求后续期次。 */
+    @Test
+    fun multiPeriodQueryBackStopsLaterIssuesAndIgnoresLateResult() =
+        runTest {
+            val repository = SuspendedDrawRepository()
+            val draft =
+                validDraft().copy(
+                    issue = "26090",
+                    periodCount = 3,
+                    paidAmountFen = 900L,
+                )
+            val controller =
+                createController(
+                    repository = repository,
+                    usesRealDrawData = true,
+                    ticketParser = TicketParser { TicketParseResult.ReadyForReview(draft) },
+                )
+            controller.startAnalysis(ImageAcquisitionSource.SYSTEM_PICKER)
+            val queryJob = launch { controller.confirmTicket() }
+            repository.started.await()
+            val query = assertIs<AppScreen.DrawQuery>(controller.uiState.value.screen)
+            assertEquals(Issue("26090"), query.currentIssue)
+
+            controller.navigateBack()
+            val restored = assertIs<AppScreen.Review>(controller.uiState.value.screen)
+            assertEquals("26090", restored.editor.issue.value)
+            repository.completion.complete(
+                DrawQueryResult.Success(verifiedDraw().copy(issue = Issue("26090"))),
+            )
+            queryJob.join()
+
+            assertEquals(restored, assertIs<AppScreen.Review>(controller.uiState.value.screen))
+            assertEquals(listOf(Issue("26090")), repository.queriedIssues)
+            assertEquals(1, repository.queryCount)
+        }
+
     /** 结果页发起重查后返回应恢复原结果，而不是跳过上一级回到确认页。 */
     @Test
     fun retryQueryBackRestoresPreviousResult() =
@@ -942,7 +978,11 @@ class LotteryAppControllerTest {
         private val initialResult: DrawQueryResult? = null,
     ) : DrawRepository {
         /** 已收到的查询次数。 */
-        private var queryCount: Int = 0
+        var queryCount: Int = 0
+            private set
+
+        /** 按实际调用顺序保存的精确期号。 */
+        val queriedIssues = mutableListOf<Issue>()
 
         /** 第一次查询已经进入仓库的信号。 */
         val started = CompletableDeferred<Unit>()
@@ -956,6 +996,7 @@ class LotteryAppControllerTest {
             issue: Issue,
         ): DrawQueryResult {
             queryCount += 1
+            queriedIssues += issue
             if (queryCount == 1 && initialResult != null) return initialResult
             started.complete(Unit)
             return completion.await()
