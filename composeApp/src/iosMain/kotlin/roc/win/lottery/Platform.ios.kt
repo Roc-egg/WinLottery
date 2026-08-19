@@ -1,8 +1,11 @@
 package roc.win.lottery
 
+import platform.Foundation.NSLog
 import platform.UIKit.UIDevice
 import platform.UIKit.UIViewController
 import roc.win.lottery.app.AppContainer
+import roc.win.lottery.app.LogOcrConfidenceDiagnostics
+import roc.win.lottery.app.OcrConfidenceDiagnostics
 import roc.win.lottery.data.IOSSuperLottoPdfTextExtractor
 import roc.win.lottery.data.OfficialDrawRepository
 import roc.win.lottery.domain.LotteryPrizeCalculator
@@ -15,6 +18,8 @@ import roc.win.lottery.recognition.ImageDimensionQualityAnalyzer
 import roc.win.lottery.recognition.ImageQualityAnalyzerChain
 import roc.win.lottery.recognition.PixelImageQualityAnalyzer
 import roc.win.lottery.recognition.VisionTicketRecognizer
+import kotlin.experimental.ExperimentalNativeApi
+import kotlin.native.Platform as NativePlatform
 
 /** iOS 平台能力。 */
 class IOSPlatform : Platform {
@@ -59,5 +64,15 @@ fun createIOSRecognitionContainer(presenterProvider: () -> UIViewController?): A
         usesRealImageAcquisition = true,
         usesRealRecognition = true,
         usesRealDrawData = true,
+        ocrConfidenceDiagnostics = createIOSOcrConfidenceDiagnostics(),
     )
 }
+
+/** 只为 Kotlin/Native Debug 二进制创建匿名置信度日志，Release 保持完全禁用。 */
+@OptIn(ExperimentalNativeApi::class)
+private fun createIOSOcrConfidenceDiagnostics(): OcrConfidenceDiagnostics =
+    if (NativePlatform.isDebugBinary) {
+        LogOcrConfidenceDiagnostics { line -> NSLog(line.replace("%", "%%")) }
+    } else {
+        OcrConfidenceDiagnostics.Disabled
+    }

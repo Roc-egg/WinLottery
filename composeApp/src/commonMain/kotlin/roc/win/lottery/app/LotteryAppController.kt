@@ -458,7 +458,12 @@ class LotteryAppController(
                 mutableUiState.update {
                     it.copy(screen = AppScreen.Analysis("结构解析", "正在整理期号、号码和投注属性", 0.82f))
                 }
-                when (val parsed = container.ticketParser.parse(recognition.document)) {
+                val parsed = container.ticketParser.parse(recognition.document)
+                container.ocrConfidenceDiagnostics.record(
+                    recognition.document.engineName,
+                    parsed.toOcrConfidenceSample(),
+                )
+                when (parsed) {
                     is TicketParseResult.NeedsCorrection -> {
                         val draft = parsed.draft
                         if (draft == null) {

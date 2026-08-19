@@ -203,13 +203,24 @@ class LotteryAppControllerTest {
         runTest {
             val repository = CountingDrawRepository()
             val paths = TrackingAppPaths()
-            val controller = createController(repository, paths, usesRealRecognition = true)
+            val diagnostics = TrackingOcrConfidenceDiagnostics()
+            val controller =
+                createController(
+                    repository = repository,
+                    appPaths = paths,
+                    usesRealRecognition = true,
+                    ocrConfidenceDiagnostics = diagnostics,
+                )
             controller.startAnalysis(ImageAcquisitionSource.SYSTEM_PICKER)
 
             val review = assertIs<AppScreen.Review>(controller.uiState.value.screen)
             assertTrue(review.evaluation.canConfirm)
             assertEquals("B1 Fake OCR", review.ocrEngineName)
             assertTrue(review.fieldRegions.all { it.rawConfidence == 1.0f })
+            val diagnosticRecord = diagnostics.records.single()
+            assertEquals("B1 Fake OCR", diagnosticRecord.first)
+            assertEquals(OcrConfidenceOutcome.READY, diagnosticRecord.second.outcome)
+            assertTrue(diagnosticRecord.second.fields.isNotEmpty())
             controller.confirmTicket()
 
             assertEquals(1, repository.queryCount)
@@ -857,6 +868,7 @@ class LotteryAppControllerTest {
         imageAcquirer: ImageAcquirer = FakeImageAcquirer(supportsCamera = false),
         imageQualityAnalyzer: ImageQualityAnalyzer = ImageDimensionQualityAnalyzer(),
         ticketParser: TicketParser = ConservativeTicketParser(),
+        ocrConfidenceDiagnostics: OcrConfidenceDiagnostics = OcrConfidenceDiagnostics.Disabled,
     ): LotteryAppController {
         val platform =
             object : Platform {
@@ -881,6 +893,7 @@ class LotteryAppControllerTest {
                 usesRealImageAcquisition = false,
                 usesRealRecognition = usesRealRecognition,
                 usesRealDrawData = usesRealDrawData,
+                ocrConfidenceDiagnostics = ocrConfidenceDiagnostics,
             ),
         )
     }
@@ -1172,6 +1185,20 @@ class LotteryAppControllerTest {
         override suspend fun acquire(source: ImageAcquisitionSource): ImageAcquisitionResult {
             acquisitionCount += 1
             return ImageAcquisitionResult.Cancelled
+        }
+    }
+
+    /** 记录控制器提交的匿名 OCR 诊断调用。 */
+    private class TrackingOcrConfidenceDiagnostics : OcrConfidenceDiagnostics {
+        /** 按调用顺序保存的引擎名和匿名样本。 */
+        val records = mutableListOf<Pair<String, OcrConfidenceSample>>()
+
+        /** 保存一次诊断调用，不读取图片或 OCR 文本。 */
+        override fun record(
+            engineName: String,
+            sample: OcrConfidenceSample,
+        ) {
+            records += engineName to sample
         }
     }
 

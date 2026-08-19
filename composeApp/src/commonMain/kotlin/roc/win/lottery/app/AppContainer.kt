@@ -33,6 +33,7 @@ import roc.win.lottery.recognition.TicketRecognizer
  * @property usesRealImageAcquisition 图片采集是否由真实平台实现提供。
  * @property usesRealRecognition 本地 OCR 是否由真实平台实现提供。
  * @property usesRealDrawData 开奖查询是否使用真实官网数据。
+ * @property ocrConfidenceDiagnostics Debug 包使用的匿名字段置信度诊断，默认禁用。
  */
 class AppContainer(
     val platform: Platform,
@@ -48,6 +49,7 @@ class AppContainer(
     val usesRealImageAcquisition: Boolean,
     val usesRealRecognition: Boolean,
     val usesRealDrawData: Boolean,
+    val ocrConfidenceDiagnostics: OcrConfidenceDiagnostics = OcrConfidenceDiagnostics.Disabled,
 ) {
     /** 创建无相机、无真实 OCR、无网络也能演示状态流的开发容器。 */
     companion object {

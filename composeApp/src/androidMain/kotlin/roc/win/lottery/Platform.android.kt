@@ -1,8 +1,12 @@
 package roc.win.lottery
 
+import android.content.pm.ApplicationInfo
 import android.os.Build
+import android.util.Log
 import androidx.activity.ComponentActivity
 import roc.win.lottery.app.AppContainer
+import roc.win.lottery.app.LogOcrConfidenceDiagnostics
+import roc.win.lottery.app.OcrConfidenceDiagnostics
 import roc.win.lottery.data.AndroidSuperLottoPdfTextExtractor
 import roc.win.lottery.data.OfficialDrawRepository
 import roc.win.lottery.domain.LotteryPrizeCalculator
@@ -60,5 +64,17 @@ fun createAndroidRecognitionContainer(activity: ComponentActivity): AppContainer
         usesRealImageAcquisition = true,
         usesRealRecognition = true,
         usesRealDrawData = true,
+        ocrConfidenceDiagnostics = createAndroidOcrConfidenceDiagnostics(activity),
     )
 }
+
+/** 只为可调试 Android 包创建匿名置信度日志，Release 保持完全禁用。 */
+private fun createAndroidOcrConfidenceDiagnostics(activity: ComponentActivity): OcrConfidenceDiagnostics =
+    if (activity.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) {
+        LogOcrConfidenceDiagnostics { line -> Log.i(OCR_CONFIDENCE_LOG_TAG, line) }
+    } else {
+        OcrConfidenceDiagnostics.Disabled
+    }
+
+/** Android 匿名 OCR 置信度日志的专用标签。 */
+private const val OCR_CONFIDENCE_LOG_TAG = "WinLotteryOcrConfidence"
