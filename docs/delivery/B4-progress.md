@@ -66,8 +66,8 @@ B4 仍处于进行中。多个期号和金额候选已在当前 Android/iOS 模�
 ## 本轮构建基线
 
 - 最新命令 `./gradlew spotlessCheck jvmTest testAndroidHostTest iosSimulatorArm64Test :androidApp:assembleDebug --rerun-tasks --console=plain` 执行成功，182 个 Gradle 任务全部实际执行。
-- 自动化测试共 656 项：JVM 224 项、Android Host 217 项、iOS Simulator 215 项；失败、错误和跳过均为 0。
-- Android Debug APK：64,855,376 字节，SHA-256 `75cba842362cf62daec792d7fbf440e3bdadd478afb26a2970f6a292a621cdf9`。
+- 自动化测试共 659 项：JVM 225 项、Android Host 218 项、iOS Simulator 216 项；失败、错误和跳过均为 0。
+- Android Debug APK：64,855,376 字节，SHA-256 `6db95457a83b80c09da6e4a9117f2e85d4ecc458d4f7eeac86a1c67d0595a75d`。
 - iOS Simulator `iosApp` Debug 应用已使用 Xcode 完整构建成功；本轮共享 iOS Simulator 测试同时完成编译、链接和执行。
 - Android 16 物理机已完成 63 项设备测试，其中显式联网用例通过公开 `26090` 期主 JSON、官方 PDFBox 和双证据闭环；本轮没有把该数据层测试记为候选界面交互通过。
 - 当前 iPhone 15 Pro arm64 Debug 包已完成签名、覆盖安装、启动和进程存活检查；XCUITest 自动点击受 iOS 26.5 RemoteXPC 管理员通道阻断，未把启动结果记为候选界面交互通过。

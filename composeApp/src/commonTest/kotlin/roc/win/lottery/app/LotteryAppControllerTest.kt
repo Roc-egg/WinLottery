@@ -354,6 +354,69 @@ class LotteryAppControllerTest {
             assertFalse(assertIs<PeriodVerification.Unavailable>(screen.periodResults[3]).wasQueried)
         }
 
+    /** 多期查询断网恢复时只补查未完成期，并在全部完成后支持再次全量刷新。 */
+    @Test
+    fun multiPeriodNetworkRecoveryPreservesCompletedIssuesAndResumesInOrder() =
+        runTest {
+            val repository = RecoverableMultiPeriodRepository()
+            val draft =
+                validDraft().copy(
+                    issue = "26090",
+                    periodCount = 3,
+                    paidAmountFen = 900L,
+                )
+            val controller =
+                createController(
+                    repository = repository,
+                    usesRealDrawData = true,
+                    ticketParser = TicketParser { TicketParseResult.ReadyForReview(draft) },
+                )
+            controller.startAnalysis(ImageAcquisitionSource.SYSTEM_PICKER)
+
+            controller.confirmTicket()
+
+            val interrupted = assertIs<AppScreen.MultiPeriodVerificationResult>(controller.uiState.value.screen)
+            val completedFirstPeriod = assertIs<PeriodVerification.Verified>(interrupted.periodResults[0])
+            assertEquals(1, interrupted.verifiedPeriodCount)
+            assertEquals(2, interrupted.unresolvedPeriodCount)
+            assertTrue(assertIs<PeriodVerification.Unavailable>(interrupted.periodResults[1]).wasQueried)
+            assertFalse(assertIs<PeriodVerification.Unavailable>(interrupted.periodResults[2]).wasQueried)
+            assertEquals(listOf("26090", "26091"), repository.queriedIssues.map { it.value })
+
+            controller.retryDrawQuery()
+
+            val recovered = assertIs<AppScreen.MultiPeriodVerificationResult>(controller.uiState.value.screen)
+            assertTrue(recovered.isConclusive)
+            assertEquals(3, recovered.verifiedPeriodCount)
+            assertEquals(completedFirstPeriod, recovered.periodResults[0])
+            assertEquals(
+                listOf("26090", "26091", "26091", "26092"),
+                repository.queriedIssues.map { it.value },
+            )
+
+            repository.scheduleNetworkFailure()
+            controller.retryDrawQuery()
+
+            val preserved = assertIs<AppScreen.MultiPeriodVerificationResult>(controller.uiState.value.screen)
+            assertTrue(preserved.isConclusive)
+            assertEquals(recovered.periodResults, preserved.periodResults)
+            assertEquals(DrawStatus.NETWORK_UNAVAILABLE, preserved.retryNotice?.status)
+            assertEquals(
+                listOf("26090", "26091", "26091", "26092", "26090"),
+                repository.queriedIssues.map { it.value },
+            )
+
+            controller.retryDrawQuery()
+
+            val refreshed = assertIs<AppScreen.MultiPeriodVerificationResult>(controller.uiState.value.screen)
+            assertTrue(refreshed.isConclusive)
+            assertNull(refreshed.retryNotice)
+            assertEquals(
+                listOf("26090", "26091", "26091", "26092", "26090", "26090", "26091", "26092"),
+                repository.queriedIssues.map { it.value },
+            )
+        }
+
     /** 所有多期期次均完成时才允许安全汇总整票奖金。 */
     @Test
     fun completedMultiPeriodTicketAggregatesAllPeriodPrizes() =
@@ -382,7 +445,7 @@ class LotteryAppControllerTest {
             assertEquals(listOf("26090", "26091", "26092"), repository.queriedIssues.map { it.value })
         }
 
-    /** 多期票已确认中奖但奖金未完整时应只重查这些待补全期次。 */
+    /** 多期票已确认奖级但奖金未完整时，断网重查不得抹掉既有证据。 */
     @Test
     fun multiPeriodWinningTiersWithoutPayoutRemainRetryable() =
         runTest {
@@ -407,10 +470,23 @@ class LotteryAppControllerTest {
             assertEquals(2, firstResult.unresolvedPeriodCount)
             assertNull(firstResult.estimatedPrizeFen)
 
+            repository.scheduleUnavailable(DrawStatus.NETWORK_UNAVAILABLE)
             controller.retryDrawQuery()
 
+            val preserved = assertIs<AppScreen.MultiPeriodVerificationResult>(controller.uiState.value.screen)
+            assertEquals(firstResult.periodResults, preserved.periodResults)
+            assertEquals(DrawStatus.NETWORK_UNAVAILABLE, preserved.retryNotice?.status)
             assertEquals(
-                listOf("26090", "26091", "26090", "26091"),
+                listOf("26090", "26091", "26090"),
+                repository.queriedIssues.map { it.value },
+            )
+
+            controller.retryDrawQuery()
+
+            val recovered = assertIs<AppScreen.MultiPeriodVerificationResult>(controller.uiState.value.screen)
+            assertNull(recovered.retryNotice)
+            assertEquals(
+                listOf("26090", "26091", "26090", "26090", "26091"),
                 repository.queriedIssues.map { it.value },
             )
         }
@@ -1011,13 +1087,56 @@ class LotteryAppControllerTest {
         /** 按实际调用顺序保存的精确期号。 */
         val queriedIssues = mutableListOf<Issue>()
 
+        /** 下一次调用需要返回的瞬时不可用状态。 */
+        private var nextUnavailableStatus: DrawStatus? = null
+
+        /** 安排下一次仓库调用返回指定的不可用状态。 */
+        fun scheduleUnavailable(status: DrawStatus) {
+            nextUnavailableStatus = status
+        }
+
         /** 返回期号与请求严格一致的测试开奖。 */
         override suspend fun getDraw(
             lotteryType: LotteryType,
             issue: Issue,
         ): DrawQueryResult {
             queriedIssues += issue
+            nextUnavailableStatus?.let { status ->
+                nextUnavailableStatus = null
+                return DrawQueryResult.Unavailable(status, "测试瞬时不可用")
+            }
             return DrawQueryResult.Success(verifiedDraw().copy(issue = issue, status = drawStatus))
+        }
+    }
+
+    /** 首轮第二次查询模拟断网，后续查询按请求期号恢复成功。 */
+    private inner class RecoverableMultiPeriodRepository : DrawRepository {
+        /** 按实际调用顺序保存的精确期号。 */
+        val queriedIssues = mutableListOf<Issue>()
+
+        /** 已收到的查询次数，用于只在首轮第二期制造一次网络失败。 */
+        private var queryCount: Int = 0
+
+        /** 是否需要让下一次主动重查模拟网络不可用。 */
+        private var shouldFailNextQuery: Boolean = false
+
+        /** 安排下一次仓库调用返回网络不可用。 */
+        fun scheduleNetworkFailure() {
+            shouldFailNextQuery = true
+        }
+
+        /** 首轮第二期返回网络不可用，其余调用返回与请求期号匹配的双证据结果。 */
+        override suspend fun getDraw(
+            lotteryType: LotteryType,
+            issue: Issue,
+        ): DrawQueryResult {
+            queriedIssues += issue
+            queryCount += 1
+            if (queryCount == 2 || shouldFailNextQuery) {
+                shouldFailNextQuery = false
+                return DrawQueryResult.Unavailable(DrawStatus.NETWORK_UNAVAILABLE, "测试网络不可用")
+            }
+            return DrawQueryResult.Success(verifiedDraw().copy(issue = issue))
         }
     }
 

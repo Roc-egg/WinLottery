@@ -44,13 +44,13 @@ B2 核心代码、离线契约测试、跨平台构建和每种彩票 20 个真�
 ./gradlew spotlessCheck jvmTest testAndroidHostTest iosSimulatorArm64Test --rerun-tasks
 ```
 
-最新结果：182 个 Gradle 任务执行成功，共运行 656 项测试，失败、错误和跳过均为 0；另有 Android 16 物理机 63 项历史设备测试通过。
+最新结果：182 个 Gradle 任务执行成功，共运行 659 项测试，失败、错误和跳过均为 0；另有 Android 16 物理机 63 项历史设备测试通过。
 
 | 平台 | 离线测试 | 结果 |
 |---|---:|---|
-| Desktop JVM | 224 | 通过 |
-| Android Host | 217 | 通过 |
-| iOS Simulator arm64 | 215 | 通过 |
+| Desktop JVM | 225 | 通过 |
+| Android Host | 218 | 通过 |
+| iOS Simulator arm64 | 216 | 通过 |
 
 测试覆盖规则边界、完整命中矩阵、票据约束、奖金严格语义、类型漂移、未知奖级、特别规定、刷新间隔、发布补全、数据修订、冲突、网络失败、Repository 到规则引擎的夹具闭环，以及大乐透 PDF 的文件身份、三种已观察表格布局、金额乘法和失败关闭行为。
 

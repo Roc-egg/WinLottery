@@ -221,6 +221,23 @@ fun MultiPeriodVerificationScreen(
         onNavigate = onBack,
     ) {
         MultiPeriodSummary(result)
+        result.retryNotice?.let { notice ->
+            Spacer(Modifier.height(12.dp))
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = MaterialTheme.shapes.small,
+                color = MaterialTheme.colorScheme.secondaryContainer,
+            ) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("本次重查未完成", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "${notice.status.displayName()}：${notice.message}。已保留此前确认的开奖号码和测算结果。",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    )
+                }
+            }
+        }
         Spacer(Modifier.height(24.dp))
         VerificationInfo(
             rows =

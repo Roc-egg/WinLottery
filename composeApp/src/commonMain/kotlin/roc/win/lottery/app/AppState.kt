@@ -104,10 +104,12 @@ sealed interface AppScreen {
      *
      * @property ticket 用户确认的多期票据。
      * @property periodResults 按票面起始期号顺序保存的逐期结果。
+     * @property retryNotice 本次重查未完成但已保留既有验证结果时的恢复提示。
      */
     data class MultiPeriodVerificationResult(
         val ticket: ConfirmedTicket,
         val periodResults: List<PeriodVerification>,
+        val retryNotice: MultiPeriodRetryNotice? = null,
     ) : AppScreen {
         /** 已取得足够官方证据并执行本地规则计算的期次数量。 */
         val verifiedPeriodCount: Int
@@ -226,6 +228,17 @@ sealed interface PeriodVerification {
         val wasQueried: Boolean,
     ) : PeriodVerification
 }
+
+/**
+ * 多期主动重查未能取得新证据时的非破坏性提示。
+ *
+ * @property status 本次重查遇到的瞬时不可用状态。
+ * @property message 开奖仓库返回的不含票面敏感信息的说明。
+ */
+data class MultiPeriodRetryNotice(
+    val status: DrawStatus,
+    val message: String,
+)
 
 /**
  * 应用顶层 UI 状态。

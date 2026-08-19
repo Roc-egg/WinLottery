@@ -319,6 +319,7 @@ class LotteryAppController(
         val targetIssues = selectMultiPeriodRetryTargets(issues, previousResults)
         val updatedByIssue = previousByIssue.toMutableMap()
         var stopResult: DrawQueryResult.Unavailable? = null
+        var retryNotice: MultiPeriodRetryNotice? = null
         var completedCount = 0
 
         for (issue in issues) {
@@ -337,13 +338,15 @@ class LotteryAppController(
             }
             val stopped = stopResult
             if (stopped != null) {
-                updatedByIssue[issue] =
-                    PeriodVerification.Unavailable(
-                        issue = issue,
-                        status = stopped.status,
-                        message = stopped.skippedPeriodMessage(),
-                        wasQueried = false,
-                    )
+                if (previousByIssue[issue] !is PeriodVerification.Verified) {
+                    updatedByIssue[issue] =
+                        PeriodVerification.Unavailable(
+                            issue = issue,
+                            status = stopped.status,
+                            message = stopped.skippedPeriodMessage(),
+                            wasQueried = false,
+                        )
+                }
                 completedCount += 1
                 continue
             }
@@ -360,13 +363,24 @@ class LotteryAppController(
                 }
 
                 is DrawQueryResult.Unavailable -> {
-                    updatedByIssue[issue] =
-                        PeriodVerification.Unavailable(
-                            issue = issue,
-                            status = result.status,
-                            message = result.message,
-                            wasQueried = true,
-                        )
+                    val previous = previousByIssue[issue]
+                    if (previous is PeriodVerification.Verified && result.status in PRESERVE_VERIFIED_STATUSES) {
+                        updatedByIssue[issue] = previous
+                        retryNotice =
+                            retryNotice
+                                ?: MultiPeriodRetryNotice(
+                                    status = result.status,
+                                    message = result.message,
+                                )
+                    } else {
+                        updatedByIssue[issue] =
+                            PeriodVerification.Unavailable(
+                                issue = issue,
+                                status = result.status,
+                                message = result.message,
+                                wasQueried = true,
+                            )
+                    }
                     if (result.status in STOP_REMAINING_PERIOD_STATUSES) {
                         stopResult = result
                     }
@@ -387,7 +401,14 @@ class LotteryAppController(
             }
         queryReturnScreen = null
         mutableUiState.update {
-            it.copy(screen = AppScreen.MultiPeriodVerificationResult(ticket, periodResults))
+            it.copy(
+                screen =
+                    AppScreen.MultiPeriodVerificationResult(
+                        ticket = ticket,
+                        periodResults = periodResults,
+                        retryNotice = retryNotice,
+                    ),
+            )
         }
     }
 
@@ -559,6 +580,13 @@ class LotteryAppController(
         val STOP_REMAINING_PERIOD_STATUSES =
             setOf(
                 DrawStatus.NOT_PUBLISHED,
+                DrawStatus.NETWORK_UNAVAILABLE,
+                DrawStatus.SOURCE_UNAVAILABLE,
+            )
+
+        /** 瞬时失败没有提供更强新证据，不得覆盖此前已经确认的开奖号码和测算结果。 */
+        val PRESERVE_VERIFIED_STATUSES =
+            setOf(
                 DrawStatus.NETWORK_UNAVAILABLE,
                 DrawStatus.SOURCE_UNAVAILABLE,
             )
