@@ -147,6 +147,7 @@ internal object DrawContractFixtures {
         fortuneCount: String = "",
         fortuneMoney: String = "",
         specialRuleInfo: String = "",
+        prizeSpecialInfo: String = "",
         firstPrizeAmount: String = "10000000",
         thirdPrizeAmount: String = "3000",
         extraPrizeType: Int? = null,
@@ -169,6 +170,7 @@ internal object DrawContractFixtures {
                                 fortuneCount = fortuneCount,
                                 fortuneMoney = fortuneMoney,
                                 specialRuleInfo = specialRuleInfo,
+                                prizeSpecialInfo = prizeSpecialInfo,
                                 firstPrizeAmount = firstPrizeAmount,
                                 thirdPrizeAmount = thirdPrizeAmount,
                                 extraPrizeType = extraPrizeType,
@@ -186,6 +188,7 @@ internal object DrawContractFixtures {
                                     fortuneCount = fortuneCount,
                                     fortuneMoney = fortuneMoney,
                                     specialRuleInfo = specialRuleInfo,
+                                    prizeSpecialInfo = prizeSpecialInfo,
                                     firstPrizeAmount = firstPrizeAmount,
                                     thirdPrizeAmount = thirdPrizeAmount,
                                     extraPrizeType = extraPrizeType,
@@ -230,6 +233,7 @@ internal object DrawContractFixtures {
                                 fortuneCount = "",
                                 fortuneMoney = "",
                                 specialRuleInfo = "",
+                                prizeSpecialInfo = "",
                                 firstPrizeAmount = firstPrizeAmount,
                                 thirdPrizeAmount = thirdPrizeAmount,
                                 extraPrizeType = extraPrizeType,
@@ -247,6 +251,7 @@ internal object DrawContractFixtures {
                                     fortuneCount = "",
                                     fortuneMoney = "",
                                     specialRuleInfo = "",
+                                    prizeSpecialInfo = "",
                                     firstPrizeAmount = firstPrizeAmount,
                                     thirdPrizeAmount = thirdPrizeAmount,
                                     extraPrizeType = extraPrizeType,
@@ -337,6 +342,7 @@ internal object DrawContractFixtures {
         fortuneCount: String,
         fortuneMoney: String,
         specialRuleInfo: String,
+        prizeSpecialInfo: String,
         firstPrizeAmount: String,
         thirdPrizeAmount: String,
         extraPrizeType: Int?,
@@ -351,6 +357,7 @@ internal object DrawContractFixtures {
             put("fyjCount", fortuneCount)
             put("fyjMoney", fortuneMoney)
             put("specialRuleInfo", specialRuleInfo)
+            put("prizeSpecialInfo", prizeSpecialInfo)
             put("prizegrades", doubleColorBallPrizeRows(firstPrizeAmount, thirdPrizeAmount, extraPrizeType))
         }
 

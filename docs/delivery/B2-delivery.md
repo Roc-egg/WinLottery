@@ -1,6 +1,6 @@
 # B2 开奖查询与规则引擎交付记录
 
-记录日期：2026-08-17
+记录日期：2026-08-19
 
 ## 状态结论
 
@@ -33,7 +33,7 @@ B2 核心代码、离线契约测试、跨平台构建和每种彩票 20 个真�
 ### 双色球
 
 - `findDrawNotice` 为主源，`forIssue` 只辅助核对号码和一至六等奖，不能单独驱动 `FINAL_NUMBERS`。
-- 已核验 `2026014` 至 `2026075` 为特别规定期间，`2026076` 至 `2026093` 为普通状态。
+- 已核验 `2026014` 至 `2026075` 为特别规定期间，`2026076` 至 `2026095` 为普通状态。
 - 超出已固化政策范围且当期响应不能提供充分政策证据时返回 `PUBLISHING`，不得猜测活动是否继续。
 
 ## 自动化测试
@@ -44,17 +44,17 @@ B2 核心代码、离线契约测试、跨平台构建和每种彩票 20 个真�
 ./gradlew spotlessCheck jvmTest testAndroidHostTest iosSimulatorArm64Test --rerun-tasks
 ```
 
-最新结果：182 个 Gradle 任务执行成功，共运行 636 项测试，失败、错误和跳过均为 0；另有 Android 16 物理机 63 项设备测试通过。
+最新结果：182 个 Gradle 任务执行成功，共运行 656 项测试，失败、错误和跳过均为 0；另有 Android 16 物理机 63 项历史设备测试通过。
 
 | 平台 | 离线测试 | 结果 |
 |---|---:|---|
-| Desktop JVM | 215 | 通过 |
-| Android Host | 212 | 通过 |
-| iOS Simulator arm64 | 209 | 通过 |
+| Desktop JVM | 224 | 通过 |
+| Android Host | 217 | 通过 |
+| iOS Simulator arm64 | 215 | 通过 |
 
 测试覆盖规则边界、完整命中矩阵、票据约束、奖金严格语义、类型漂移、未知奖级、特别规定、刷新间隔、发布补全、数据修订、冲突、网络失败、Repository 到规则引擎的夹具闭环，以及大乐透 PDF 的文件身份、三种已观察表格布局、金额乘法和失败关闭行为。
 
-JVM 另有 1 个可选官网 smoke 测试入口。2026-08-13 已使用项目自身 Ktor 仓库对大乐透 `26091` 和双色球 `2026092` 执行一次低频验证，统一状态和双源 SHA-256 断言通过。2026-08-14 再次低频复核，并使用两期官网规范化开奖号码在内存构造合成头奖票，均由本地规则引擎识别为一等奖。2026-08-15 核对规则阈值、前一期奖池和当期双公告后，将双色球普通状态边界扩展至 `2026093`；同一期 smoke 随后通过。验证未打印或保存原始响应，也不计入 6 个开奖窗口闸门。
+JVM 另有 1 个可选官网 smoke 测试入口。2026-08-13 已使用项目自身 Ktor 仓库对大乐透 `26091` 和双色球 `2026092` 执行一次低频验证，统一状态和双源 SHA-256 断言通过。2026-08-14 再次低频复核，并使用两期官网规范化开奖号码在内存构造合成头奖票，均由本地规则引擎识别为一等奖。2026-08-15 将双色球普通状态边界扩展至 `2026093`；2026-08-19 又分别对 `2026094`、`2026095` 完成双源 smoke 和规则引擎头奖闭环，边界滚动至 `2026095`。验证未打印或保存原始响应，也不计入 6 个开奖窗口闸门。
 
 iOS 另有默认不联网的 Darwin 历史期闭环测试。只有显式设置 `WINLOTTERY_IOS_LIVE_DRAW=1` 才查询固定公开 `26090` 期；测试复用正式 `OfficialDrawRepository` 和 `IOSSuperLottoPdfTextExtractor`，并断言主、辅助证据形成 `FINAL_NUMBERS`。该单期复测用于诊断系统 TLS 和运行链路，不计入发布窗口样本。
 
@@ -62,8 +62,8 @@ iOS 另有默认不联网的 Darwin 历史期闭环测试。只有显式设置 `
 
 ```bash
 WINLOTTERY_LIVE_SMOKE=1 \
-WINLOTTERY_DLT_ISSUE=26091 \
-WINLOTTERY_SSQ_ISSUE=2026093 \
+WINLOTTERY_DLT_ISSUE=26093 \
+WINLOTTERY_SSQ_ISSUE=2026095 \
 ./gradlew :shared:data:jvmTest \
   --tests roc.win.lottery.data.OfficialDrawRepositoryLiveSmokeTest
 ```
@@ -77,6 +77,17 @@ WINLOTTERY_SSQ_ISSUE=2026093 \
 - 固定台账通过代码断言覆盖两种彩票规则生效首期、本轮最新期、浮动奖、无人中出奖级、大乐透实际追加中奖，以及双色球 `2026075` 特别规定末期和 `2026076` 普通规则首期。
 - 40 期均使用规范化开奖号码在内存构造单倍基本投注，并由正式 `LotteryPrizeCalculator` 识别为一等奖。
 - 构建目录报告 `shared/data/build/reports/b2/live-reconciliation.tsv` 共 41 行，包含表头和 40 行规范化字段；期号无重复，80 个证据哈希均为合法 SHA-256。报告和官网原始响应均不提交 Git。
+
+2026-08-19 将双色球代码台账滚动为 `2026014`、特别规定末期 `2026075`、普通首期 `2026076` 和 `2026079` 至 `2026095`，独立复跑 20/20 期主、详情双源一致且规则引擎头奖路径通过。同期合并 40 期复跑在大乐透 `26073` 的当前历史 JSON 被既有“追加奖金必须符合基本奖金 80%”闸门阻断，因此没有把本次结果写成新的 40/40 通过；该体彩上游漂移需独立核查。
+
+双色球独立滚动对账运行方式：
+
+```bash
+WINLOTTERY_LIVE_SSQ_RECONCILIATION=1 \
+./gradlew :shared:data:jvmTest \
+  --tests roc.win.lottery.data.OfficialDrawHistoricalReconciliationLiveTest.explicitlyEnabledTwentyDoubleColorBallIssuesMatchOfficialEvidence \
+  --rerun-tasks
+```
 
 显式运行方式：
 

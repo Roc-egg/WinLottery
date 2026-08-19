@@ -279,6 +279,10 @@ internal object DoubleColorBallSourceAdapter {
     ): PolicyParseResult {
         val fortuneCountRaw = record.text("fyjCount")
         val fortuneMoneyRaw = record.text("fyjMoney")
+        val prizeSpecialInfo = record.text("prizeSpecialInfo")
+        if (!prizeSpecialInfo.isNullOrEmpty() && !isKnownFirstPrizeCapInfo(prizeSpecialInfo)) {
+            return PolicyParseResult.Unknown("双色球当期奖项说明尚未完成规则建模")
+        }
         return when {
             issue in FORTUNE_FIRST_ISSUE..FORTUNE_LAST_ISSUE -> {
                 val count =
@@ -321,6 +325,9 @@ internal object DoubleColorBallSourceAdapter {
             }
         }
     }
+
+    /** 只接受已核实的现行一等奖总额封顶说明，实际单注金额仍以奖级表为准。 */
+    private fun isKnownFirstPrizeCapInfo(value: String): Boolean = FIRST_PRIZE_CAP_INFO_FRAGMENTS.all(value::contains)
 
     /** 将福彩相对详情链接归一化为官网绝对地址。 */
     private fun normalizeDetailUrl(raw: String?): String? {
@@ -414,8 +421,17 @@ internal object DoubleColorBallSourceAdapter {
     /** 本轮特别规定退出后的首个普通期号。 */
     private const val FIRST_CONFIRMED_STANDARD_ISSUE = "2026076"
 
-    /** 截至核查日已由前期奖池、主详情接口和规则阈值共同确认的普通末期。 */
-    private const val LAST_CONFIRMED_STANDARD_ISSUE = "2026093"
+    /** 截至核查日已由主详情接口和活动字段共同确认的普通末期。 */
+    private const val LAST_CONFIRMED_STANDARD_ISSUE = "2026095"
+
+    /** 已核实的一等奖总额封顶说明必须同时包含的稳定语义片段。 */
+    private val FIRST_PRIZE_CAP_INFO_FRAGMENTS =
+        listOf(
+            "一等奖",
+            "奖金总额超出1亿元",
+            "一等奖封顶规定",
+            "调整后金额详见",
+        )
 
     /** 福彩奖级类型到领域编码的映射。 */
     private val DOUBLE_COLOR_BALL_TIER_TYPES =

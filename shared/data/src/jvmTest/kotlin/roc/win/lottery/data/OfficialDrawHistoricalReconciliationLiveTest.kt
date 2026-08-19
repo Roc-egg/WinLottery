@@ -59,6 +59,23 @@ class OfficialDrawHistoricalReconciliationLiveTest {
             writeNormalizedReport(draws.map { it.toReportRow() })
         }
 
+    /** 独立滚动双色球 20 期台账，避免另一彩种的上游漂移阻断本次政策边界核验。 */
+    @Test
+    fun explicitlyEnabledTwentyDoubleColorBallIssuesMatchOfficialEvidence() =
+        runTest(timeout = LIVE_TEST_TIMEOUT) {
+            if (System.getenv(ENABLE_DOUBLE_COLOR_BALL_ENVIRONMENT_VARIABLE) != ENABLED_VALUE) return@runTest
+            requireTwentyUniqueIssues(DOUBLE_COLOR_BALL_ISSUES, DOUBLE_COLOR_BALL_ISSUE_PATTERN)
+
+            val httpClient = createPlatformHttpClient()
+            val draws =
+                try {
+                    reconcileDoubleColorBall(httpClient)
+                } finally {
+                    httpClient.close()
+                }
+            assertEquals(DOUBLE_COLOR_BALL_ISSUES, draws.map { it.issue.value })
+        }
+
     /** 逐期比较中国体彩网历史 JSON 与独立官方 PDF。 */
     private suspend fun reconcileSuperLotto(httpClient: HttpClient): List<DrawResult> {
         val draws = mutableListOf<DrawResult>()
@@ -395,6 +412,9 @@ class OfficialDrawHistoricalReconciliationLiveTest {
         /** 显式启用真实历史对账的环境变量。 */
         const val ENABLE_ENVIRONMENT_VARIABLE = "WINLOTTERY_LIVE_RECONCILIATION"
 
+        /** 显式启用双色球独立滚动对账的环境变量。 */
+        const val ENABLE_DOUBLE_COLOR_BALL_ENVIRONMENT_VARIABLE = "WINLOTTERY_LIVE_SSQ_RECONCILIATION"
+
         /** 真实历史对账的启用值。 */
         const val ENABLED_VALUE = "1"
 
@@ -460,8 +480,6 @@ class OfficialDrawHistoricalReconciliationLiveTest {
                 "2026014",
                 "2026075",
                 "2026076",
-                "2026077",
-                "2026078",
                 "2026079",
                 "2026080",
                 "2026081",
@@ -477,6 +495,8 @@ class OfficialDrawHistoricalReconciliationLiveTest {
                 "2026091",
                 "2026092",
                 "2026093",
+                "2026094",
+                "2026095",
             )
 
         /** 大乐透期号格式。 */
@@ -501,7 +521,7 @@ class OfficialDrawHistoricalReconciliationLiveTest {
         const val DOUBLE_COLOR_BALL_FIRST_SUPPORTED_ISSUE = "2026014"
 
         /** 双色球本轮最新期。 */
-        const val DOUBLE_COLOR_BALL_LATEST_ISSUE = "2026093"
+        const val DOUBLE_COLOR_BALL_LATEST_ISSUE = "2026095"
 
         /** 双色球特别规定最后一期。 */
         const val DOUBLE_COLOR_BALL_SPECIAL_LAST_ISSUE = "2026075"

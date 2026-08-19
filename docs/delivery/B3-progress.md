@@ -1,6 +1,6 @@
 # B3 图片采集与 OCR PoC 进展记录
 
-记录日期：2026-08-18
+记录日期：2026-08-19
 
 ## 状态结论
 
@@ -112,8 +112,8 @@ Windows/macOS 已完成系统导图、ONNX Runtime 无遥测工作进程、PP-OC
 ## 本轮构建基线
 
 - 完整命令 `./gradlew spotlessCheck jvmTest testAndroidHostTest iosSimulatorArm64Test :androidApp:assembleDebug --rerun-tasks --console=plain` 执行成功，共 182 个 Gradle 任务实际执行。
-- 当前自动化测试共 651 项：JVM 222 项、Android Host 216 项、iOS Simulator 213 项；失败、错误和跳过均为 0。新增覆盖彩种联合证据最低分、默认单期无伪造期数区域、冲突期数证据保留、超大彩种框隐藏、精确标题存在但号码行不完整时只保留安全非号码证据，以及多期首期查询返回后不再请求后续期次。
-- Android Debug APK：64,855,376 字节，SHA-256 `09c07e81ca967e463d2e322efe01d94143ccf5c73a194cf5b12df79db334a155`。
+- 当前自动化测试共 656 项：JVM 224 项、Android Host 217 项、iOS Simulator 215 项；失败、错误和跳过均为 0。新增覆盖彩种联合证据最低分、默认单期无伪造期数区域、冲突期数证据保留、超大彩种框隐藏、精确标题存在但号码行不完整时只保留安全非号码证据、多期首期查询返回后不再请求后续期次，以及双色球滚动边界与 iOS 双期联网入口。
+- Android Debug APK：64,855,376 字节，SHA-256 `75cba842362cf62daec792d7fbf440e3bdadd478afb26a2970f6a292a621cdf9`。
 - Xcode `iosApp` Scheme 已针对 iPhone 17 Pro、iOS 26.5 Simulator 完整构建成功；当前 `.app` 安装后完成专项真实票图 OCR 草稿验收。
 - 本轮未重新构建 Windows/macOS 分发包；桌面 OCR 底座继续按 ADR-011 保留并延期，不属于 Android/iOS V1 当前回归范围。
 - 以上均为开发构建基线，包含调试符号，不能作为发布包体积承诺。

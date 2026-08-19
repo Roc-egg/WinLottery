@@ -57,26 +57,28 @@ class DoubleColorBallSourceAdapterTest {
         )
     }
 
-    /** 最新固化期应按普通状态解析，不得继续停留在发布中。 */
+    /** 新核验的两个已发布期应按普通状态解析，不得继续停留在发布中。 */
     @Test
-    fun latestConfirmedStandardIssueIsNormalized() {
-        val raw = DrawContractFixtures.doubleColorBallMain(issue = "2026093")
+    fun newlyConfirmedStandardIssuesAreNormalized() {
+        listOf("2026094", "2026095").forEach { issue ->
+            val raw = DrawContractFixtures.doubleColorBallMain(issue = issue)
 
-        val snapshot =
-            assertIs<SourceParseResult.Success<MainDrawSnapshot>>(
-                DoubleColorBallSourceAdapter.parseMain(raw, "2026093", MAIN_URL),
-            ).value
+            val snapshot =
+                assertIs<SourceParseResult.Success<MainDrawSnapshot>>(
+                    DoubleColorBallSourceAdapter.parseMain(raw, issue, MAIN_URL),
+                ).value
 
-        assertEquals(DrawPolicy.STANDARD, snapshot.policy)
+            assertEquals(DrawPolicy.STANDARD, snapshot.policy)
+        }
     }
 
     /** 超过已固化政策证据末期时不能把空字段猜成普通状态。 */
     @Test
     fun futurePolicyWithoutEvidenceIsPublishing() {
-        val raw = DrawContractFixtures.doubleColorBallMain(issue = "2026094")
+        val raw = DrawContractFixtures.doubleColorBallMain(issue = "2026096")
 
         assertIs<SourceParseResult.Publishing>(
-            DoubleColorBallSourceAdapter.parseMain(raw, "2026094", MAIN_URL),
+            DoubleColorBallSourceAdapter.parseMain(raw, "2026096", MAIN_URL),
         )
     }
 
@@ -86,6 +88,22 @@ class DoubleColorBallSourceAdapterTest {
         val raw = DrawContractFixtures.doubleColorBallMain(specialRuleInfo = "新的特别规定")
 
         assertIs<SourceParseResult.Publishing>(parseMain(raw))
+    }
+
+    /** 一等奖封顶说明可使用奖级表实际金额，其他未知奖项说明必须停留在发布中。 */
+    @Test
+    fun firstPrizeCapInfoIsWhitelistedNarrowly() {
+        val known =
+            DrawContractFixtures.doubleColorBallMain(
+                prizeSpecialInfo =
+                    "本期“一等奖”奖金总额超出1亿元，触发一等奖封顶规定，调整后金额详见中奖情况表。",
+                firstPrizeAmount = "5882352",
+            )
+        val snapshot = assertIs<SourceParseResult.Success<MainDrawSnapshot>>(parseMain(known)).value
+        assertEquals(588_235_200L, snapshot.prizeTiers.single { it.code == PrizeTierCodes.FIRST }.singlePrizeFen)
+
+        val unknown = DrawContractFixtures.doubleColorBallMain(prizeSpecialInfo = "新的奖项说明")
+        assertIs<SourceParseResult.Publishing>(parseMain(unknown))
     }
 
     /** 福彩网无记录业务提示必须映射为未发布。 */
