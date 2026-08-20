@@ -1,6 +1,6 @@
 # 彩票中奖测算工具
 
-基于 Kotlin Multiplatform 和 Compose Multiplatform 的跨平台项目。V1 优先交付 Android 和 iOS，Windows、macOS 保留已完成的工程与 OCR 底座，延期到 V1.1 或后续版本。
+基于 Kotlin Multiplatform 和 Compose Multiplatform 的跨平台项目。V1 至 V1.5 的产品路线以 Android 和 iOS 为当前目标平台；Windows、macOS 保留已完成的工程与 OCR 底座，使用独立路线图另行排期。
 
 ## 开发推进进度
 
@@ -15,7 +15,8 @@
 | B4 移动票面解析与人工校正 | 进行中 | 已实现彩种/期号校正、号码球、倍数与期数步进、追加选择、金额推导、候选选择及 `ConfirmedTicket` 来源追踪；当前 OCR 引擎名和字段原始置信度只在校正流程内存中保留，Debug 包可输出不含票面内容的匿名分布样本；彩种与期数也可携带证据区域 | Android ML Kit 与 iOS Vision 尚未结合逐 token 真值分别校准，低置信视觉标记和足量真实票样验收未完成；复式、胆拖、补打及未知序列仍阻断 |
 | B5 移动核心端到端闭环 | 核心完成，待验收 | Android/iOS 已接入拍照/OCR、原图辅助录入与无图手动录入、精确期号官网查询、本地规则计算、逐注结果、双源证据及重试；当前 Android 36.1 与 iOS 26.5 模拟器已完成五注十期真实票图、逐期双证据、首个未发布期停止、断网保留既有证据及主动重查闭环 | Android/iPhone 完整物理真机矩阵、跨年度期次日历、发布窗口、授权及足量票样仍未完成；这些发布差距不在当前仅使用虚拟机的执行范围内冒充完成 |
 | B6 Android/iOS V1 发布 | 未开始 | 已建立移动端发布指标并具备 Android/iOS 签名和真机开发链路 | 盲测、性能、AAB/IPA、隐私材料、商店合规和数据授权未完成 |
-| V1.1+ Windows/macOS | 延期 | 已完成桌面宿主、导图、无遥测 ONNX 工作进程、PP-OCRv5 来源锁和可复现转换 | 真实桌面 OCR、ZXing、Windows 实机、目标平台裁剪和正式分发均不属于移动 V1 闸门 |
+| V1.1 至 V1.5 移动路线 | 已规划 | V1.1 本机存储、V1.2 随机号码、V1.3 历史走势与数学预测、V1.4 AI 分析、V1.5 传统文化娱乐推演的范围和闸门已形成文档基线 | 均在 V1 发布后按顺序单独立项；数据库依赖、数据授权、算法评测、AI 合规和敏感个人信息处理仍需逐版冻结 |
+| Windows/macOS 独立路线 | 延期 | 已完成桌面宿主、导图、无遥测 ONNX 工作进程、PP-OCRv5 来源锁和可复现转换 | 真实桌面 OCR、ZXing、Windows 实机、目标平台裁剪和正式分发均不属于移动 V1 至 V1.5 的默认范围 |
 
 上一轮包含 JVM、Android Host 与 iOS Simulator 的完整自动化基线共 665 项：JVM 227 项、Android Host 220 项、iOS Simulator 218 项，失败、错误和跳过均为 0；本轮按执行约束不再使用 JVM 或 Android Host 作为验收目标，新增回归只在当前 iOS Simulator 和 Android 虚拟机复跑。另有 Android 16 物理机 63 项历史设备测试通过，但不属于本轮验收。Android 和 iOS 核心相机流程已通过真机冒烟；满足当前保守解析条件的真实图片，以及结构安全但缺失期号、倍数、追加或金额及属性矛盾的 OCR 结果可以进入人工校正，并对照原图定位已有字段。多个期号或金额候选只作为原图辅助录入的显式选项，不携带可能来自另一张彩票的其他自动草稿。倍数和追加未知时不会填入默认值，必须由用户明确选择；仅在图片预览可用且领域校验通过后生成 `ConfirmedTicket`。
 
@@ -85,7 +86,7 @@ Android/iOS 确认票面后，单期票只查询用户确认的精确期号；�
 
 > 当前开发验证版已具备真实开奖结果查询和中奖测算能力，但不能替代彩票验真或实体票兑奖，也不能解释为支持任何省份、销售终端或票面版式。B0、B2、移动 B3 均未通过发布验收闸门，禁止据此宣称达到公开发布标准。
 
-桌面端已完成 ONNX Runtime 底座、独立本地工作进程，以及 PP-OCRv5 三段官方 Paddle 模型的来源锁定、opset 17 转换和 Paddle/ONNX 合成张量逐元素对比。转换后的约 22.3 MB 模型二进制尚未纳入仓库或安装包，图片预处理、后处理和工作进程推理协议也未实现；这些成果作为 V1.1 或后续版本基础保留，不再阻塞 Android/iOS V1。
+桌面端已完成 ONNX Runtime 底座、独立本地工作进程，以及 PP-OCRv5 三段官方 Paddle 模型的来源锁定、opset 17 转换和 Paddle/ONNX 合成张量逐元素对比。转换后的约 22.3 MB 模型二进制尚未纳入仓库或安装包，图片预处理、后处理和工作进程推理协议也未实现；这些成果作为独立桌面路线的基础保留，不再阻塞 Android/iOS V1。
 
 开发基线文档：
 
@@ -93,6 +94,7 @@ Android/iOS 确认票面后，单期票只查询用户确认的精确期号；�
 - [开奖数据与中奖测算规则](docs/02-draw-data-and-rules.md)
 - [分批开发与验收计划](docs/03-delivery-plan.md)
 - [架构决策记录](docs/04-decisions.md)
+- [V1 至 V1.5 版本规划](docs/05-version-roadmap.md)
 - [B1 四端工程骨架交付记录](docs/delivery/B1-delivery.md)
 - [B2 开奖查询与规则引擎交付记录](docs/delivery/B2-delivery.md)
 - [B3 图片采集与 OCR PoC 进展记录](docs/delivery/B3-progress.md)
