@@ -428,6 +428,104 @@ class LotteryAppControllerTest {
             )
         }
 
+    /** 官网数据源整体异常时应保留全部已验证期次，恢复后再完整刷新。 */
+    @Test
+    fun multiPeriodSourceFailurePreservesVerifiedResultsAndRecovers() =
+        runTest {
+            val repository = IssueAwareSuccessRepository()
+            val draft =
+                validDraft().copy(
+                    issue = "26090",
+                    periodCount = 3,
+                    paidAmountFen = 900L,
+                )
+            val controller =
+                createController(
+                    repository = repository,
+                    usesRealDrawData = true,
+                    ticketParser = TicketParser { TicketParseResult.ReadyForReview(draft) },
+                )
+            controller.startAnalysis(ImageAcquisitionSource.SYSTEM_PICKER)
+            controller.confirmTicket()
+
+            val completed = assertIs<AppScreen.MultiPeriodVerificationResult>(controller.uiState.value.screen)
+            assertTrue(completed.isConclusive)
+            assertEquals(3, completed.verifiedPeriodCount)
+
+            repository.scheduleUnavailable(DrawStatus.SOURCE_UNAVAILABLE)
+            controller.retryDrawQuery()
+
+            val preserved = assertIs<AppScreen.MultiPeriodVerificationResult>(controller.uiState.value.screen)
+            assertEquals(completed.periodResults, preserved.periodResults)
+            assertTrue(preserved.isConclusive)
+            assertEquals(DrawStatus.SOURCE_UNAVAILABLE, preserved.retryNotice?.status)
+            assertEquals(
+                listOf("26090", "26091", "26092", "26090"),
+                repository.queriedIssues.map { it.value },
+            )
+
+            controller.retryDrawQuery()
+
+            val recovered = assertIs<AppScreen.MultiPeriodVerificationResult>(controller.uiState.value.screen)
+            assertTrue(recovered.isConclusive)
+            assertNull(recovered.retryNotice)
+            assertEquals(
+                listOf("26090", "26091", "26092", "26090", "26090", "26091", "26092"),
+                repository.queriedIssues.map { it.value },
+            )
+        }
+
+    /** 新证据冲突必须撤销对应期次结论，且恢复时只补查该期。 */
+    @Test
+    fun multiPeriodConflictInvalidatesOnlyAffectedIssueUntilRecovery() =
+        runTest {
+            val repository = IssueAwareSuccessRepository()
+            val draft =
+                validDraft().copy(
+                    issue = "26090",
+                    periodCount = 3,
+                    paidAmountFen = 900L,
+                )
+            val controller =
+                createController(
+                    repository = repository,
+                    usesRealDrawData = true,
+                    ticketParser = TicketParser { TicketParseResult.ReadyForReview(draft) },
+                )
+            controller.startAnalysis(ImageAcquisitionSource.SYSTEM_PICKER)
+            controller.confirmTicket()
+
+            repository.scheduleUnavailable(DrawStatus.CONFLICT)
+            controller.retryDrawQuery()
+
+            val conflicted = assertIs<AppScreen.MultiPeriodVerificationResult>(controller.uiState.value.screen)
+            assertFalse(conflicted.isConclusive)
+            assertEquals(2, conflicted.verifiedPeriodCount)
+            assertEquals(1, conflicted.unresolvedPeriodCount)
+            assertNull(conflicted.estimatedPrizeFen)
+            assertNull(conflicted.retryNotice)
+            val affected = assertIs<PeriodVerification.Unavailable>(conflicted.periodResults[0])
+            assertEquals(DrawStatus.CONFLICT, affected.status)
+            assertTrue(affected.wasQueried)
+            assertIs<PeriodVerification.Verified>(conflicted.periodResults[1])
+            assertIs<PeriodVerification.Verified>(conflicted.periodResults[2])
+            assertEquals(
+                listOf("26090", "26091", "26092", "26090", "26091", "26092"),
+                repository.queriedIssues.map { it.value },
+            )
+
+            controller.retryDrawQuery()
+
+            val recovered = assertIs<AppScreen.MultiPeriodVerificationResult>(controller.uiState.value.screen)
+            assertTrue(recovered.isConclusive)
+            assertEquals(3, recovered.verifiedPeriodCount)
+            assertNull(recovered.retryNotice)
+            assertEquals(
+                listOf("26090", "26091", "26092", "26090", "26091", "26092", "26090"),
+                repository.queriedIssues.map { it.value },
+            )
+        }
+
     /** 所有多期期次均完成时才允许安全汇总整票奖金。 */
     @Test
     fun completedMultiPeriodTicketAggregatesAllPeriodPrizes() =
