@@ -8,6 +8,7 @@ readonly ANDROID_ACTIVITY="roc.win.lottery.MainActivity"
 readonly IOS_EXPECTED_BUNDLE_ID="roc.win.lottery.WinLottery"
 readonly VERIFY_INSTALL_LIFECYCLE="${WINLOTTERY_VERIFY_INSTALL_LIFECYCLE:-0}"
 readonly VERIFY_PROCESS_RECOVERY="${WINLOTTERY_VERIFY_PROCESS_RECOVERY:-0}"
+readonly VERIFY_ABRUPT_TERMINATION="${WINLOTTERY_VERIFY_ABRUPT_TERMINATION:-0}"
 
 source "${0:A:h}/current-vm-guard.sh"
 
@@ -99,6 +100,113 @@ verify_ios_process_recovery() {
   ios_restore_required=0
 }
 
+# 使用应用自身 UID 强杀 Android 主进程，验证异常终止后的初始化清扫和 Release 恢复。
+verify_android_abrupt_termination() {
+  local debug_apk="$1"
+  local release_apk="$2"
+  local ticket_marker="cache/ticket-images/abrupt-marker.jpg"
+  local camera_marker="cache/camera-captures/abrupt-marker.jpg"
+
+  android_restore_required=1
+  adb -s "$CURRENT_ANDROID_SERIAL_ID" install -r -d "$debug_apk"
+  adb -s "$CURRENT_ANDROID_SERIAL_ID" shell am start -W -n "$ANDROID_APPLICATION_ID/$ANDROID_ACTIVITY"
+  local debug_package_flags
+  debug_package_flags="$(adb -s "$CURRENT_ANDROID_SERIAL_ID" shell dumpsys package "$ANDROID_APPLICATION_ID" | rg 'pkgFlags=' | head -n 1)"
+  [[ "$debug_package_flags" == *DEBUGGABLE* ]] || current_vm_fail "Android 异常终止测试包不可调试"
+  adb -s "$CURRENT_ANDROID_SERIAL_ID" shell run-as "$ANDROID_APPLICATION_ID" \
+    mkdir -p cache/ticket-images cache/camera-captures
+  adb -s "$CURRENT_ANDROID_SERIAL_ID" shell run-as "$ANDROID_APPLICATION_ID" touch "$ticket_marker" "$camera_marker"
+  adb -s "$CURRENT_ANDROID_SERIAL_ID" shell run-as "$ANDROID_APPLICATION_ID" test -f "$ticket_marker" ||
+    current_vm_fail "Android 异常终止前票图标记不存在"
+  adb -s "$CURRENT_ANDROID_SERIAL_ID" shell run-as "$ANDROID_APPLICATION_ID" test -f "$camera_marker" ||
+    current_vm_fail "Android 异常终止前成片标记不存在"
+
+  local killed_process_id
+  killed_process_id="$(adb -s "$CURRENT_ANDROID_SERIAL_ID" shell pidof "$ANDROID_APPLICATION_ID" | tr -d '\r')"
+  print -r -- "$killed_process_id" | rg -q '^[0-9]+$' ||
+    current_vm_fail "Android 目标应用 PID 不是单个纯数字"
+  local process_name
+  process_name="$({
+    adb -s "$CURRENT_ANDROID_SERIAL_ID" shell run-as "$ANDROID_APPLICATION_ID" \
+      cat "/proc/$killed_process_id/cmdline" | tr '\000' '\n' | head -n 1 | tr -d '\r'
+  })"
+  [[ "$process_name" == "$ANDROID_APPLICATION_ID" ]] ||
+    current_vm_fail "Android PID 不属于目标应用主进程"
+  local app_user_id process_user_id
+  app_user_id="$(adb -s "$CURRENT_ANDROID_SERIAL_ID" shell run-as "$ANDROID_APPLICATION_ID" id -u | tr -d '\r')"
+  process_user_id="$({
+    adb -s "$CURRENT_ANDROID_SERIAL_ID" shell run-as "$ANDROID_APPLICATION_ID" \
+      cat "/proc/$killed_process_id/status" | awk '$1 == "Uid:" { print $2; exit }'
+  })"
+  print -r -- "$app_user_id" | rg -q '^[0-9]+$' || current_vm_fail "Android 应用 UID 不是纯数字"
+  [[ "$process_user_id" == "$app_user_id" ]] || current_vm_fail "Android PID 与目标应用 UID 不一致"
+
+  adb -s "$CURRENT_ANDROID_SERIAL_ID" shell run-as "$ANDROID_APPLICATION_ID" kill -9 "$killed_process_id"
+  sleep 1
+  [[ -z "$(adb -s "$CURRENT_ANDROID_SERIAL_ID" shell pidof "$ANDROID_APPLICATION_ID" | tr -d '\r')" ]] ||
+    current_vm_fail "Android SIGKILL 后目标应用进程仍存活"
+  adb -s "$CURRENT_ANDROID_SERIAL_ID" shell am start -W -n "$ANDROID_APPLICATION_ID/$ANDROID_ACTIVITY"
+  if adb -s "$CURRENT_ANDROID_SERIAL_ID" shell run-as "$ANDROID_APPLICATION_ID" test -e "$ticket_marker" ||
+    adb -s "$CURRENT_ANDROID_SERIAL_ID" shell run-as "$ANDROID_APPLICATION_ID" test -e "$camera_marker"; then
+    current_vm_fail "Android 异常终止后重新启动仍存在匿名标记"
+  fi
+
+  adb -s "$CURRENT_ANDROID_SERIAL_ID" install -r -d "$release_apk"
+  adb -s "$CURRENT_ANDROID_SERIAL_ID" shell am force-stop "$ANDROID_APPLICATION_ID"
+  adb -s "$CURRENT_ANDROID_SERIAL_ID" shell am start -W -n "$ANDROID_APPLICATION_ID/$ANDROID_ACTIVITY"
+  local release_package_flags
+  release_package_flags="$(adb -s "$CURRENT_ANDROID_SERIAL_ID" shell dumpsys package "$ANDROID_APPLICATION_ID" | rg 'pkgFlags=' | head -n 1)"
+  [[ "$release_package_flags" != *DEBUGGABLE* ]] || current_vm_fail "Android 异常终止专项结束后没有恢复 Release 包"
+  android_process_id="$(adb -s "$CURRENT_ANDROID_SERIAL_ID" shell pidof "$ANDROID_APPLICATION_ID" | tr -d '\r')"
+  print -r -- "$android_process_id" | rg -q '^[0-9]+$' ||
+    current_vm_fail "Android 异常终止专项结束后 Release 进程未存活"
+  android_restore_required=0
+}
+
+# 强杀指定 Simulator 中的 iOS Release 进程，验证异常终止后的初始化清扫。
+verify_ios_abrupt_termination() {
+  local initial_launch_result="$1"
+  local expected_data_prefix="$HOME/Library/Developer/CoreSimulator/Devices/$CURRENT_IOS_SIMULATOR_UDID/data/Containers/Data/Application/"
+  local expected_app_prefix="$HOME/Library/Developer/CoreSimulator/Devices/$CURRENT_IOS_SIMULATOR_UDID/data/Containers/Bundle/Application/"
+  local data_container app_container
+  data_container="$(xcrun simctl get_app_container "$CURRENT_IOS_SIMULATOR_UDID" "$IOS_EXPECTED_BUNDLE_ID" data)"
+  app_container="$(xcrun simctl get_app_container "$CURRENT_IOS_SIMULATOR_UDID" "$IOS_EXPECTED_BUNDLE_ID" app)"
+  [[ "$data_container" == "$expected_data_prefix"* ]] || current_vm_fail "iOS 数据容器不属于指定 Simulator"
+  [[ "$app_container" == "$expected_app_prefix"* ]] || current_vm_fail "iOS 应用容器不属于指定 Simulator"
+  local marker_directory="$data_container/tmp/WinLotteryTicketImages"
+  local marker_path="$marker_directory/abrupt-marker.jpg"
+  mkdir -p "$marker_directory"
+  touch "$marker_path"
+  [[ -f "$marker_path" ]] || current_vm_fail "iOS 异常终止前匿名标记不存在"
+
+  [[ "$initial_launch_result" == "$IOS_EXPECTED_BUNDLE_ID: "* ]] ||
+    current_vm_fail "iOS 启动结果不属于目标应用"
+  local killed_process_id="${initial_launch_result##*: }"
+  print -r -- "$killed_process_id" | rg -q '^[0-9]+$' || current_vm_fail "iOS 目标应用 PID 不是纯数字"
+  local expected_executable="$app_container/WinLottery"
+  local process_command
+  process_command="$(ps -p "$killed_process_id" -o command= | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+  [[ "$process_command" == "$expected_executable" || "$process_command" == "$expected_executable "* ]] ||
+    current_vm_fail "iOS PID 不属于指定 Simulator 的目标应用"
+
+  ios_restore_required=1
+  kill -9 "$killed_process_id"
+  local wait_attempt
+  for wait_attempt in {1..50}; do
+    ps -p "$killed_process_id" >/dev/null 2>&1 || break
+    sleep 0.1
+  done
+  ps -p "$killed_process_id" >/dev/null 2>&1 && current_vm_fail "iOS SIGKILL 后目标应用进程仍存活"
+  ios_launch_result="$({
+    xcrun simctl launch "$CURRENT_IOS_SIMULATOR_UDID" "$IOS_EXPECTED_BUNDLE_ID"
+  })"
+  [[ "$ios_launch_result" == "$IOS_EXPECTED_BUNDLE_ID: "* ]] ||
+    current_vm_fail "iOS 异常终止后重新启动结果异常"
+  sleep 1
+  [[ ! -e "$marker_path" ]] || current_vm_fail "iOS 异常终止后重新启动仍存在匿名标记"
+  ios_restore_required=0
+}
+
 # 使用可调试测试包放置匿名标记，验证 Android 卸载清除数据并恢复 Release 包。
 verify_android_install_lifecycle() {
   local debug_apk="$1"
@@ -176,6 +284,8 @@ verify_current_mobile_vms
   current_vm_fail "WINLOTTERY_VERIFY_INSTALL_LIFECYCLE 只允许 0 或 1"
 [[ "$VERIFY_PROCESS_RECOVERY" == "0" || "$VERIFY_PROCESS_RECOVERY" == "1" ]] ||
   current_vm_fail "WINLOTTERY_VERIFY_PROCESS_RECOVERY 只允许 0 或 1"
+[[ "$VERIFY_ABRUPT_TERMINATION" == "0" || "$VERIFY_ABRUPT_TERMINATION" == "1" ]] ||
+  current_vm_fail "WINLOTTERY_VERIFY_ABRUPT_TERMINATION 只允许 0 或 1"
 
 for required_command in codesign file jarsigner plutil rg shasum unzip xcodebuild; do
   command -v "$required_command" >/dev/null || current_vm_fail "缺少命令 $required_command"
@@ -206,7 +316,7 @@ cd "$REPOSITORY_ROOT"
 export ANDROID_SERIAL="$CURRENT_ANDROID_SERIAL_ID"
 
 release_gradle_tasks=(spotlessCheck :androidApp:assembleRelease :androidApp:bundleRelease)
-if [[ "$VERIFY_INSTALL_LIFECYCLE" == "1" || "$VERIFY_PROCESS_RECOVERY" == "1" ]]; then
+if [[ "$VERIFY_INSTALL_LIFECYCLE" == "1" || "$VERIFY_PROCESS_RECOVERY" == "1" || "$VERIFY_ABRUPT_TERMINATION" == "1" ]]; then
   release_gradle_tasks+=(:androidApp:assembleDebug)
 fi
 ./gradlew "${release_gradle_tasks[@]}" --rerun-tasks --console=plain
@@ -218,7 +328,7 @@ readonly aligned_android_apk="$release_check_directory/androidApp-release-aligne
 readonly signed_android_apk="$release_check_directory/androidApp-release-test-signed.apk"
 require_release_file "$unsigned_android_apk"
 require_release_file "$android_aab"
-if [[ "$VERIFY_INSTALL_LIFECYCLE" == "1" || "$VERIFY_PROCESS_RECOVERY" == "1" ]]; then
+if [[ "$VERIFY_INSTALL_LIFECYCLE" == "1" || "$VERIFY_PROCESS_RECOVERY" == "1" || "$VERIFY_ABRUPT_TERMINATION" == "1" ]]; then
   require_release_file "$android_debug_apk"
 fi
 
@@ -295,6 +405,10 @@ if [[ "$VERIFY_PROCESS_RECOVERY" == "1" ]]; then
   verify_android_process_recovery "$android_debug_apk" "$signed_android_apk"
   verify_ios_process_recovery
 fi
+if [[ "$VERIFY_ABRUPT_TERMINATION" == "1" ]]; then
+  verify_android_abrupt_termination "$android_debug_apk" "$signed_android_apk"
+  verify_ios_abrupt_termination "$ios_launch_result"
+fi
 if [[ "$VERIFY_INSTALL_LIFECYCLE" == "1" ]]; then
   verify_android_install_lifecycle "$android_debug_apk" "$signed_android_apk"
   verify_ios_install_lifecycle "$ios_release_app"
@@ -313,6 +427,9 @@ if [[ "$VERIFY_INSTALL_LIFECYCLE" == "1" ]]; then
 fi
 if [[ "$VERIFY_PROCESS_RECOVERY" == "1" ]]; then
   print "双虚拟机受控进程终止、遗留标记清扫和 Release 恢复检查通过"
+fi
+if [[ "$VERIFY_ABRUPT_TERMINATION" == "1" ]]; then
+  print "双虚拟机 SIGKILL 异常终止、遗留标记清扫和 Release 恢复检查通过"
 fi
 print "Android APK SHA-256：$(shasum -a 256 "$signed_android_apk" | awk '{print $1}')"
 print "Android AAB SHA-256：$(shasum -a 256 "$android_aab" | awk '{print $1}')"
