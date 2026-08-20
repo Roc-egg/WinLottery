@@ -121,4 +121,4 @@ Android/iOS 确认票面后，单期票只查询用户确认的精确期号；�
 - iOS Simulator：用 Xcode 打开 `iosApp/iosApp.xcodeproj`，构建 `iosApp` Scheme
 - iOS 真机：参考 `iosApp/Configuration/Local.xcconfig.example` 创建不提交 Git 的 `Local.xcconfig`，填写自己的 `DEVELOPMENT_TEAM_ID` 后构建 `iosApp` Scheme
 
-B0 票样白名单尚未完成。当前已收到 13 张探索图片，并据此实现了共享保守票面解析器、Android/iOS 本地 OCR PoC 及 Windows/macOS 图片导入 PoC。样本数量、彩种分布、票型和省份覆盖均未达到白名单门槛，因此不承诺自动票面解析范围。
+B0 票样白名单尚未完成。当前已收到 13 张探索图片，并据此实现了共享保守票面解析器、Android/iOS 本地 OCR PoC 及 Windows/macOS 图片导入 PoC。后续只检索和验收能够证明为 2025 年及以后出票的样本；公开网络票图不计入白名单或准确率。现有样本数量、彩种分布、票型和省份覆盖均未达到白名单门槛，因此不承诺自动票面解析范围。
