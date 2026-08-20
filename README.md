@@ -112,6 +112,7 @@ Android/iOS 确认票面后，单期票只查询用户确认的精确期号；�
 - JVM 共享测试：`./gradlew jvmTest`
 - B2 真实历史对账：`WINLOTTERY_LIVE_RECONCILIATION=1 ./gradlew :shared:data:jvmTest --tests roc.win.lottery.data.OfficialDrawHistoricalReconciliationLiveTest --rerun-tasks`
 - 完整共享测试矩阵：`./gradlew jvmTest testAndroidHostTest iosSimulatorArm64Test`
+- 当前双虚拟机安全回归：先启动指定 Android AVD 和 iOS Simulator，再执行 `tools/mobile/run-current-vm-tests.sh`；脚本会校验精确设备身份并拒绝回退到其他 ADB 目标。
 - 格式检查：`./gradlew spotlessCheck`
 - iOS Simulator：用 Xcode 打开 `iosApp/iosApp.xcodeproj`，构建 `iosApp` Scheme
 - iOS 真机：参考 `iosApp/Configuration/Local.xcconfig.example` 创建不提交 Git 的 `Local.xcconfig`，填写自己的 `DEVELOPMENT_TEAM_ID` 后构建 `iosApp` Scheme
