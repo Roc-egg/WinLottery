@@ -152,7 +152,7 @@ class OfficialDrawRepository(
                     return unavailable(DrawStatus.SOURCE_UNAVAILABLE, fetched.message)
                 }
             }
-        val supporting =
+        val selectedSupporting =
             when (
                 val parsed =
                     parseSupporting(
@@ -163,20 +163,26 @@ class OfficialDrawRepository(
                     )
             ) {
                 is SourceParseResult.Success -> {
-                    parsed.value
+                    SelectedSupportingSnapshot(
+                        snapshot = parsed.value,
+                        isLatestAggregate = lotteryType == LotteryType.SUPER_LOTTO,
+                    )
                 }
 
                 SourceParseResult.NotPublished -> {
                     if (lotteryType != LotteryType.SUPER_LOTTO) {
                         return unavailable(DrawStatus.PUBLISHING, "双色球详情数据尚未发布")
                     }
-                    when (val historical = loadHistoricalSuperLottoSupporting(main, issue.value)) {
-                        is HistoricalSupportingResult.Success -> {
-                            historical.snapshot
+                    when (val pdf = loadSuperLottoPdfSupporting(main, issue.value)) {
+                        is SuperLottoPdfSupportingResult.Success -> {
+                            SelectedSupportingSnapshot(
+                                snapshot = pdf.snapshot,
+                                isLatestAggregate = false,
+                            )
                         }
 
-                        is HistoricalSupportingResult.Unavailable -> {
-                            return unavailable(historical.status, historical.message)
+                        is SuperLottoPdfSupportingResult.Unavailable -> {
+                            return unavailable(pdf.status, pdf.message)
                         }
                     }
                 }
@@ -194,6 +200,7 @@ class OfficialDrawRepository(
                     return unavailable(DrawStatus.CONFLICT, parsed.message)
                 }
             }
+        val supporting = selectedSupporting.snapshot
 
         val snapshotConsistency = compareSnapshots(main, supporting)
         if (snapshotConsistency == SnapshotConsistency.CONFLICT) {
@@ -204,12 +211,42 @@ class OfficialDrawRepository(
             return unavailable(DrawStatus.PUBLISHING, "主、辅助官网数据面的奖级金额尚未同步完整")
         }
         val history = isPastHistoricalCutoff(main.drawDate, fetchedAtMillis)
+        var additionalPdfSupporting: SupportingDrawSnapshot? = null
+        if (
+            !history &&
+            lotteryType == LotteryType.SUPER_LOTTO &&
+            selectedSupporting.isLatestAggregate
+        ) {
+            when (val pdf = loadSuperLottoPdfSupporting(main, issue.value)) {
+                is SuperLottoPdfSupportingResult.Success -> {
+                    when (compareSnapshots(main, pdf.snapshot)) {
+                        SnapshotConsistency.CONSISTENT -> {
+                            additionalPdfSupporting = pdf.snapshot
+                        }
+
+                        SnapshotConsistency.INCOMPLETE -> {}
+
+                        SnapshotConsistency.CONFLICT -> {
+                            markConflict(key)
+                            return unavailable(DrawStatus.CONFLICT, "最新聚合数据与同期开奖公告内容不一致")
+                        }
+                    }
+                }
+
+                is SuperLottoPdfSupportingResult.Unavailable -> {
+                    if (pdf.status == DrawStatus.CONFLICT) {
+                        markConflict(key)
+                        return unavailable(pdf.status, pdf.message)
+                    }
+                }
+            }
+        }
         val stableDecision =
             observeConsistentSupporting(
                 key = key,
                 canonicalSupportingContent = supporting.evidence.canonicalContent,
                 fetchedAtMillis = fetchedAtMillis,
-                bypassRefreshDelay = history,
+                bypassRefreshDelay = history || additionalPdfSupporting != null,
             )
         val revision =
             when (stableDecision) {
@@ -242,7 +279,11 @@ class OfficialDrawRepository(
                 policy = requireNotNull(main.policy),
                 prizeTiers = main.prizeTiers,
                 evidence = main.evidence.toSourceEvidence(fetchedAtMillis),
-                supportingEvidence = listOf(supporting.evidence.toSourceEvidence(fetchedAtMillis)),
+                supportingEvidence =
+                    buildList {
+                        add(supporting.evidence.toSourceEvidence(fetchedAtMillis))
+                        additionalPdfSupporting?.let { add(it.evidence.toSourceEvidence(fetchedAtMillis)) }
+                    },
             ),
         )
     }
@@ -356,20 +397,20 @@ class OfficialDrawRepository(
             BinaryFetchResult.SourceUnavailable("官方 PDF 公告请求失败或响应结构异常")
         }
 
-    /** 历史聚合接口不含目标期号时，改用主记录绑定的独立官方 PDF。 */
-    private suspend fun loadHistoricalSuperLottoSupporting(
+    /** 加载并解析主记录绑定的同一期大乐透官方 PDF。 */
+    private suspend fun loadSuperLottoPdfSupporting(
         main: MainDrawSnapshot,
         targetIssue: String,
-    ): HistoricalSupportingResult {
+    ): SuperLottoPdfSupportingResult {
         val extractor =
             superLottoPdfTextExtractor
-                ?: return HistoricalSupportingResult.Unavailable(
+                ?: return SuperLottoPdfSupportingResult.Unavailable(
                     DrawStatus.PUBLISHING,
                     "该期已不是聚合接口的最新期，当前平台尚未接入独立公告解析",
                 )
         val sourceUrl =
             main.detailUrl
-                ?: return HistoricalSupportingResult.Unavailable(
+                ?: return SuperLottoPdfSupportingResult.Unavailable(
                     DrawStatus.PUBLISHING,
                     "该期独立开奖公告地址尚未发布",
                 )
@@ -380,14 +421,14 @@ class OfficialDrawRepository(
                 }
 
                 is BinaryFetchResult.NetworkUnavailable -> {
-                    return HistoricalSupportingResult.Unavailable(
+                    return SuperLottoPdfSupportingResult.Unavailable(
                         DrawStatus.NETWORK_UNAVAILABLE,
                         fetched.message,
                     )
                 }
 
                 is BinaryFetchResult.SourceUnavailable -> {
-                    return HistoricalSupportingResult.Unavailable(
+                    return SuperLottoPdfSupportingResult.Unavailable(
                         DrawStatus.SOURCE_UNAVAILABLE,
                         fetched.message,
                     )
@@ -403,23 +444,23 @@ class OfficialDrawRepository(
                 )
         ) {
             is SourceParseResult.Success -> {
-                HistoricalSupportingResult.Success(parsed.value)
+                SuperLottoPdfSupportingResult.Success(parsed.value)
             }
 
             SourceParseResult.NotPublished -> {
-                HistoricalSupportingResult.Unavailable(DrawStatus.PUBLISHING, "独立开奖公告尚未发布")
+                SuperLottoPdfSupportingResult.Unavailable(DrawStatus.PUBLISHING, "独立开奖公告尚未发布")
             }
 
             is SourceParseResult.Publishing -> {
-                HistoricalSupportingResult.Unavailable(DrawStatus.PUBLISHING, parsed.message)
+                SuperLottoPdfSupportingResult.Unavailable(DrawStatus.PUBLISHING, parsed.message)
             }
 
             is SourceParseResult.SourceUnavailable -> {
-                HistoricalSupportingResult.Unavailable(DrawStatus.SOURCE_UNAVAILABLE, parsed.message)
+                SuperLottoPdfSupportingResult.Unavailable(DrawStatus.SOURCE_UNAVAILABLE, parsed.message)
             }
 
             is SourceParseResult.Conflict -> {
-                HistoricalSupportingResult.Unavailable(DrawStatus.CONFLICT, parsed.message)
+                SuperLottoPdfSupportingResult.Unavailable(DrawStatus.CONFLICT, parsed.message)
             }
         }
     }
@@ -828,13 +869,13 @@ class OfficialDrawRepository(
         ) : BinaryFetchResult
     }
 
-    /** 历史大乐透独立公告加载结果。 */
-    private sealed interface HistoricalSupportingResult {
+    /** 大乐透独立 PDF 公告加载结果。 */
+    private sealed interface SuperLottoPdfSupportingResult {
         /** 已解析为可与主记录交叉核对的快照。 */
         data class Success(
             /** 官方 PDF 规范化辅助快照。 */
             val snapshot: SupportingDrawSnapshot,
-        ) : HistoricalSupportingResult
+        ) : SuperLottoPdfSupportingResult
 
         /** 当前无法安全形成独立证据。 */
         data class Unavailable(
@@ -842,8 +883,16 @@ class OfficialDrawRepository(
             val status: DrawStatus,
             /** 不包含公告原文的恢复说明。 */
             val message: String,
-        ) : HistoricalSupportingResult
+        ) : SuperLottoPdfSupportingResult
     }
+
+    /** 本次主辅助证据选择结果。 */
+    private data class SelectedSupportingSnapshot(
+        /** 已通过适配器校验的辅助开奖快照。 */
+        val snapshot: SupportingDrawSnapshot,
+        /** 该快照是否来自大乐透最新开奖聚合接口。 */
+        val isLatestAggregate: Boolean,
+    )
 
     /** 官网端点集合。 */
     private data class DrawEndpoints(

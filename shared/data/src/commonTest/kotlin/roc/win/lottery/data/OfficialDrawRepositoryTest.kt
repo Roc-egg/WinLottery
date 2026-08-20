@@ -97,6 +97,79 @@ class OfficialDrawRepositoryTest {
             assertEquals(DrawStatus.FINAL_PAYOUT, assertIs<DrawQueryResult.Success>(stable).drawResult.status)
         }
 
+    /** 大乐透发布窗口内取得同期开奖 PDF 且三方一致时可在首次查询形成终态。 */
+    @Test
+    fun publishingSuperLottoWithConsistentPdfReturnsFinalResultImmediately() =
+        runTest {
+            val requests = mutableListOf<String>()
+            val repository =
+                repository(
+                    clock = MutableTestClock("2026-08-10T15:00:00Z"),
+                    superLottoPdfTextExtractor = fixedPdfExtractor(HISTORICAL_DLT_PDF_TEXT),
+                ) { request ->
+                    requests += request.url.encodedPath
+                    when (request.url.encodedPath) {
+                        DLT_MAIN_PATH -> {
+                            jsonResponse(
+                                DrawContractFixtures.superLottoMain(
+                                    issue = "26090",
+                                    numbers = "09 14 17 19 24 02 09",
+                                    drawDate = "2026-08-10",
+                                    firstAdditionalCount = "1",
+                                    firstAdditionalAmount = "8,000,000",
+                                ),
+                            )
+                        }
+
+                        DLT_SUPPORTING_PATH -> {
+                            jsonResponse(
+                                DrawContractFixtures.superLottoSupporting(
+                                    issue = "26090",
+                                    numbers = "09 14 17 19 24 02 09",
+                                    drawDate = "2026-08-10",
+                                    firstAdditionalCount = "1",
+                                    firstAdditionalAmount = "8,000,000",
+                                ),
+                            )
+                        }
+
+                        DLT_PDF_PATH -> {
+                            pdfResponse(SuperLottoAnnouncementTestFixtures.validPdfEnvelope())
+                        }
+
+                        else -> {
+                            error("收到未预期请求：${request.url}")
+                        }
+                    }
+                }
+
+            val result = repository.getDraw(LotteryType.SUPER_LOTTO, Issue("26090"))
+            val draw = assertIs<DrawQueryResult.Success>(result).drawResult
+
+            assertEquals(DrawStatus.FINAL_PAYOUT, draw.status)
+            assertEquals(2, draw.supportingEvidence.size)
+            assertEquals(3, requests.size)
+            assertEquals(DLT_PDF_PATH, requests.last())
+        }
+
+    /** 大乐透发布窗口内缺少可解析 PDF 时仍必须保留 60 秒主动复核闸门。 */
+    @Test
+    fun publishingSuperLottoWithoutPdfStillRequiresRefresh() =
+        runTest {
+            val repository =
+                repository(clock = MutableTestClock("2026-08-12T15:00:00Z")) { request ->
+                    when (request.url.encodedPath) {
+                        DLT_MAIN_PATH -> jsonResponse(DrawContractFixtures.superLottoMain())
+                        DLT_SUPPORTING_PATH -> jsonResponse(DrawContractFixtures.superLottoSupporting())
+                        else -> error("收到未预期请求：${request.url}")
+                    }
+                }
+
+            val result = repository.getDraw(LotteryType.SUPER_LOTTO, Issue("26091"))
+
+            assertEquals(DrawStatus.PUBLISHING, assertIs<DrawQueryResult.Unavailable>(result).status)
+        }
+
     /** 主、辅助号码不一致必须进入冲突，绝不能输出开奖或未中奖结论。 */
     @Test
     fun inconsistentSourcesReturnConflict() =

@@ -13,6 +13,7 @@ import roc.win.lottery.domain.LotteryType
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.minutes
 
 /** iOS 显式启用的大乐透官网联网与 PDFKit 文本层验收。 */
@@ -26,6 +27,7 @@ class IOSHistoricalSuperLottoLiveTest {
             check((environment[ACCEPTANCE_PROXY_PORT_ENVIRONMENT_VARIABLE] as? String).isNullOrBlank()) {
                 "iOS 官网联网验收必须移除本地代理配置"
             }
+            val targetIssue = environment[TARGET_ISSUE_ENVIRONMENT_VARIABLE] as? String ?: DEFAULT_TARGET_ISSUE
             val client = createPlatformHttpClient()
             try {
                 val repository =
@@ -33,16 +35,16 @@ class IOSHistoricalSuperLottoLiveTest {
                         httpClient = client,
                         superLottoPdfTextExtractor = IOSSuperLottoPdfTextExtractor(),
                     )
-                val result = repository.getDraw(LotteryType.SUPER_LOTTO, Issue(TARGET_ISSUE))
+                val result = repository.getDraw(LotteryType.SUPER_LOTTO, Issue(targetIssue))
                 val draw =
                     assertIs<DrawQueryResult.Success>(
                         result,
                         "iOS Darwin 网络栈未能形成大乐透历史期双证据：$result",
                     ).drawResult
 
-                assertEquals(DrawStatus.FINAL_NUMBERS, draw.status)
-                assertEquals(TARGET_ISSUE, draw.issue.value)
-                assertEquals("中国体彩网开奖公告 PDF", draw.supportingEvidence.single().sourceName)
+                assertTrue(draw.status in VERIFIED_STATUSES)
+                assertEquals(targetIssue, draw.issue.value)
+                assertTrue(draw.supportingEvidence.isNotEmpty())
             } finally {
                 client.close()
             }
@@ -56,12 +58,13 @@ class IOSHistoricalSuperLottoLiveTest {
             if (environment[ENABLE_ENVIRONMENT_VARIABLE] as? String != ENABLED_VALUE) return@runTest
             val rawPath = environment[PDF_PATH_ENVIRONMENT_VARIABLE] as? String
             check(!rawPath.isNullOrBlank()) { "iOS 真实 PDF 验收缺少临时文件路径" }
+            val targetIssue = environment[TARGET_ISSUE_ENVIRONMENT_VARIABLE] as? String ?: DEFAULT_TARGET_ISSUE
             val pdfBytes = FileSystem.SYSTEM.read(rawPath.toPath()) { readByteArray() }
             val result =
                 SuperLottoAnnouncementParser.parse(
                     pdfBytes = pdfBytes,
-                    targetIssue = TARGET_ISSUE,
-                    sourceUrl = SuperLottoAnnouncementParser.expectedPdfUrl(TARGET_ISSUE),
+                    targetIssue = targetIssue,
+                    sourceUrl = SuperLottoAnnouncementParser.expectedPdfUrl(targetIssue),
                     textExtractor = IOSSuperLottoPdfTextExtractor(),
                 )
             val snapshot =
@@ -70,7 +73,7 @@ class IOSHistoricalSuperLottoLiveTest {
                     "iOS PDFKit 未能形成安全公告快照：$result",
                 ).value
 
-            assertEquals(TARGET_ISSUE, snapshot.issue)
+            assertEquals(targetIssue, snapshot.issue)
             assertEquals("中国体彩网开奖公告 PDF", snapshot.evidence.sourceName)
         }
 
@@ -91,8 +94,14 @@ class IOSHistoricalSuperLottoLiveTest {
         /** 本机已下载公开 PDF 的临时绝对路径环境变量。 */
         const val PDF_PATH_ENVIRONMENT_VARIABLE = "WINLOTTERY_IOS_LIVE_PDF_PATH"
 
-        /** 已纳入 B2 机器对账的公开历史期。 */
-        const val TARGET_ISSUE = "26090"
+        /** 可选的大乐透目标期号环境变量。 */
+        const val TARGET_ISSUE_ENVIRONMENT_VARIABLE = "WINLOTTERY_IOS_DLT_ISSUE"
+
+        /** 未传入目标期号时使用的已对账公开历史期。 */
+        const val DEFAULT_TARGET_ISSUE = "26090"
+
+        /** 可以通过真实验收的统一开奖状态。 */
+        val VERIFIED_STATUSES = setOf(DrawStatus.FINAL_NUMBERS, DrawStatus.FINAL_PAYOUT)
 
         /** 单期真实验收最大时长。 */
         val LIVE_TEST_TIMEOUT = 1.minutes
