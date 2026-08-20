@@ -7,6 +7,7 @@ import androidx.activity.ComponentActivity
 import roc.win.lottery.app.AppContainer
 import roc.win.lottery.app.LogOcrConfidenceDiagnostics
 import roc.win.lottery.app.OcrConfidenceDiagnostics
+import roc.win.lottery.app.withOneShotConflictInjection
 import roc.win.lottery.data.AndroidSuperLottoPdfTextExtractor
 import roc.win.lottery.data.OfficialDrawRepository
 import roc.win.lottery.domain.LotteryPrizeCalculator
@@ -40,6 +41,12 @@ actual fun getPlatform(): Platform = AndroidPlatform()
  */
 fun createAndroidRecognitionContainer(activity: ComponentActivity): AppContainer {
     val appPaths = AndroidAppPaths(activity.applicationContext)
+    val isDebuggable = activity.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
+    val officialDrawRepository =
+        OfficialDrawRepository(
+            superLottoPdfTextExtractor =
+                AndroidSuperLottoPdfTextExtractor(activity.applicationContext),
+        )
     return AppContainer(
         platform = AndroidPlatform(),
         imageAcquirer = AndroidPhotoPickerImageAcquirer(activity, appPaths),
@@ -53,9 +60,9 @@ fun createAndroidRecognitionContainer(activity: ComponentActivity): AppContainer
         ticketRecognizer = MlKitChineseTicketRecognizer(activity.applicationContext),
         ticketParser = ConservativeTicketParser(),
         drawRepository =
-            OfficialDrawRepository(
-                superLottoPdfTextExtractor =
-                    AndroidSuperLottoPdfTextExtractor(activity.applicationContext),
+            officialDrawRepository.withOneShotConflictInjection(
+                rawIssue = activity.intent.getStringExtra(DEBUG_CONFLICT_ISSUE_EXTRA),
+                isDebugEnabled = isDebuggable,
             ),
         prizeCalculator = LotteryPrizeCalculator(),
         appPaths = appPaths,
@@ -78,3 +85,6 @@ private fun createAndroidOcrConfidenceDiagnostics(activity: ComponentActivity): 
 
 /** Android 匿名 OCR 置信度日志的专用标签。 */
 private const val OCR_CONFIDENCE_LOG_TAG = "WinLotteryOcrConfidence"
+
+/** Android Debug 包一次性冲突验收使用的 Intent extra。 */
+private const val DEBUG_CONFLICT_ISSUE_EXTRA = "roc.win.lottery.debug.CONFLICT_ISSUE"

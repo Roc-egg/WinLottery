@@ -1,11 +1,13 @@
 package roc.win.lottery
 
 import platform.Foundation.NSLog
+import platform.Foundation.NSProcessInfo
 import platform.UIKit.UIDevice
 import platform.UIKit.UIViewController
 import roc.win.lottery.app.AppContainer
 import roc.win.lottery.app.LogOcrConfidenceDiagnostics
 import roc.win.lottery.app.OcrConfidenceDiagnostics
+import roc.win.lottery.app.withOneShotConflictInjection
 import roc.win.lottery.data.IOSSuperLottoPdfTextExtractor
 import roc.win.lottery.data.OfficialDrawRepository
 import roc.win.lottery.domain.LotteryPrizeCalculator
@@ -41,6 +43,11 @@ actual fun getPlatform(): Platform = IOSPlatform()
  */
 fun createIOSRecognitionContainer(presenterProvider: () -> UIViewController?): AppContainer {
     val appPaths = IOSAppPaths()
+    val isDebugBinary = isIOSDebugBinary()
+    val officialDrawRepository =
+        OfficialDrawRepository(
+            superLottoPdfTextExtractor = IOSSuperLottoPdfTextExtractor(),
+        )
     return AppContainer(
         platform = IOSPlatform(),
         imageAcquirer = IOSPhotoPickerImageAcquirer(presenterProvider, appPaths),
@@ -54,8 +61,10 @@ fun createIOSRecognitionContainer(presenterProvider: () -> UIViewController?): A
         ticketRecognizer = VisionTicketRecognizer(),
         ticketParser = ConservativeTicketParser(),
         drawRepository =
-            OfficialDrawRepository(
-                superLottoPdfTextExtractor = IOSSuperLottoPdfTextExtractor(),
+            officialDrawRepository.withOneShotConflictInjection(
+                rawIssue =
+                    NSProcessInfo.processInfo.environment[DEBUG_CONFLICT_ISSUE_ENVIRONMENT] as? String,
+                isDebugEnabled = isDebugBinary,
             ),
         prizeCalculator = LotteryPrizeCalculator(),
         appPaths = appPaths,
@@ -71,8 +80,15 @@ fun createIOSRecognitionContainer(presenterProvider: () -> UIViewController?): A
 /** 只为 Kotlin/Native Debug 二进制创建匿名置信度日志，Release 保持完全禁用。 */
 @OptIn(ExperimentalNativeApi::class)
 private fun createIOSOcrConfidenceDiagnostics(): OcrConfidenceDiagnostics =
-    if (NativePlatform.isDebugBinary) {
+    if (isIOSDebugBinary()) {
         LogOcrConfidenceDiagnostics { line -> NSLog(line.replace("%", "%%")) }
     } else {
         OcrConfidenceDiagnostics.Disabled
     }
+
+/** 返回当前 Kotlin/Native 二进制是否允许 Debug 验收能力。 */
+@OptIn(ExperimentalNativeApi::class)
+private fun isIOSDebugBinary(): Boolean = NativePlatform.isDebugBinary
+
+/** iOS Debug 包一次性冲突验收使用的进程环境变量。 */
+private const val DEBUG_CONFLICT_ISSUE_ENVIRONMENT = "WINLOTTERY_DEBUG_CONFLICT_ISSUE"
