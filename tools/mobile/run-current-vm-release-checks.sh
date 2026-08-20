@@ -6,13 +6,17 @@ readonly REPOSITORY_ROOT="${0:A:h:h:h}"
 readonly ANDROID_APPLICATION_ID="roc.win.lottery"
 readonly ANDROID_ACTIVITY="roc.win.lottery.MainActivity"
 readonly ANDROID_DEBUG_CRASH_EXTRA="roc.win.lottery.debug.CRASH_ON_CREATE"
+readonly ANDROID_MEMORY_PRESSURE_LOG_TAG="WinLotteryMemoryPressure"
+readonly ANDROID_RUNNING_CRITICAL_LEVEL="15"
 readonly IOS_EXPECTED_BUNDLE_ID="roc.win.lottery.WinLottery"
 readonly IOS_DEBUG_CRASH_ENVIRONMENT="WINLOTTERY_DEBUG_CRASH_ON_LAUNCH"
 readonly CONTROLLED_CRASH_MARKER="WinLotteryControlledCrashAcceptance"
+readonly MEMORY_PRESSURE_MARKER="WinLotteryMemoryPressureAcceptance"
 readonly VERIFY_INSTALL_LIFECYCLE="${WINLOTTERY_VERIFY_INSTALL_LIFECYCLE:-0}"
 readonly VERIFY_PROCESS_RECOVERY="${WINLOTTERY_VERIFY_PROCESS_RECOVERY:-0}"
 readonly VERIFY_ABRUPT_TERMINATION="${WINLOTTERY_VERIFY_ABRUPT_TERMINATION:-0}"
 readonly VERIFY_CRASH_RECOVERY="${WINLOTTERY_VERIFY_CRASH_RECOVERY:-0}"
+readonly VERIFY_MEMORY_PRESSURE="${WINLOTTERY_VERIFY_MEMORY_PRESSURE:-0}"
 
 source "${0:A:h}/current-vm-guard.sh"
 
@@ -334,6 +338,121 @@ verify_ios_crash_recovery() {
   ios_restore_required=0
 }
 
+# 向 Android Debug 进程发送临界内存收紧通知，验证回调送达、存活和 Release 反向边界。
+verify_android_memory_pressure() {
+  local debug_apk="$1"
+  local release_apk="$2"
+
+  android_restore_required=1
+  adb -s "$CURRENT_ANDROID_SERIAL_ID" install -r -d "$debug_apk"
+  adb -s "$CURRENT_ANDROID_SERIAL_ID" shell am force-stop "$ANDROID_APPLICATION_ID"
+  adb -s "$CURRENT_ANDROID_SERIAL_ID" shell am start -W -n "$ANDROID_APPLICATION_ID/$ANDROID_ACTIVITY"
+  local debug_package_flags
+  debug_package_flags="$(adb -s "$CURRENT_ANDROID_SERIAL_ID" shell dumpsys package "$ANDROID_APPLICATION_ID" | rg 'pkgFlags=' | head -n 1)"
+  [[ "$debug_package_flags" == *DEBUGGABLE* ]] || current_vm_fail "Android 内存压力测试包不可调试"
+  local debug_process_id
+  debug_process_id="$(adb -s "$CURRENT_ANDROID_SERIAL_ID" shell pidof "$ANDROID_APPLICATION_ID" | tr -d '\r')"
+  print -r -- "$debug_process_id" | rg -q '^[0-9]+$' || current_vm_fail "Android Debug 进程 PID 不是纯数字"
+
+  adb -s "$CURRENT_ANDROID_SERIAL_ID" logcat -b main -c
+  adb -s "$CURRENT_ANDROID_SERIAL_ID" shell am send-trim-memory \
+    "$ANDROID_APPLICATION_ID" \
+    RUNNING_CRITICAL
+  sleep 1
+  local debug_process_after
+  debug_process_after="$(adb -s "$CURRENT_ANDROID_SERIAL_ID" shell pidof "$ANDROID_APPLICATION_ID" | tr -d '\r')"
+  [[ "$debug_process_after" == "$debug_process_id" ]] || current_vm_fail "Android 内存收紧通知后 Debug 进程没有保持存活"
+  local memory_log
+  memory_log="$(adb -s "$CURRENT_ANDROID_SERIAL_ID" logcat -b main -d -s "$ANDROID_MEMORY_PRESSURE_LOG_TAG:I" '*:S')"
+  print -r -- "$memory_log" | rg -Fq "$MEMORY_PRESSURE_MARKER:$ANDROID_RUNNING_CRITICAL_LEVEL" ||
+    current_vm_fail "Android Debug 没有收到 RUNNING_CRITICAL 回调"
+
+  adb -s "$CURRENT_ANDROID_SERIAL_ID" install -r -d "$release_apk"
+  adb -s "$CURRENT_ANDROID_SERIAL_ID" shell am force-stop "$ANDROID_APPLICATION_ID"
+  adb -s "$CURRENT_ANDROID_SERIAL_ID" shell am start -W -n "$ANDROID_APPLICATION_ID/$ANDROID_ACTIVITY"
+  local release_package_flags
+  release_package_flags="$(adb -s "$CURRENT_ANDROID_SERIAL_ID" shell dumpsys package "$ANDROID_APPLICATION_ID" | rg 'pkgFlags=' | head -n 1)"
+  [[ "$release_package_flags" != *DEBUGGABLE* ]] || current_vm_fail "Android 内存压力专项结束后没有恢复 Release 包"
+  android_process_id="$(adb -s "$CURRENT_ANDROID_SERIAL_ID" shell pidof "$ANDROID_APPLICATION_ID" | tr -d '\r')"
+  print -r -- "$android_process_id" | rg -q '^[0-9]+$' || current_vm_fail "Android Release 进程 PID 不是纯数字"
+  adb -s "$CURRENT_ANDROID_SERIAL_ID" logcat -b main -c
+  adb -s "$CURRENT_ANDROID_SERIAL_ID" shell am send-trim-memory \
+    "$ANDROID_APPLICATION_ID" \
+    RUNNING_CRITICAL
+  sleep 1
+  local release_process_after
+  release_process_after="$(adb -s "$CURRENT_ANDROID_SERIAL_ID" shell pidof "$ANDROID_APPLICATION_ID" | tr -d '\r')"
+  [[ "$release_process_after" == "$android_process_id" ]] || current_vm_fail "Android 内存收紧通知后 Release 进程没有保持存活"
+  if adb -s "$CURRENT_ANDROID_SERIAL_ID" logcat -b main -d | rg -F "$MEMORY_PRESSURE_MARKER" >/dev/null; then
+    current_vm_fail "Android Release 仍输出 Debug 内存压力标记"
+  fi
+  android_restore_required=0
+}
+
+# 向 iOS Debug 应用模拟 UIKit 内存警告，验证回调送达、进程存活和 Release 隔离。
+verify_ios_memory_pressure() {
+  local debug_app="$1"
+  local release_app="$2"
+  local expected_data_prefix="$HOME/Library/Developer/CoreSimulator/Devices/$CURRENT_IOS_SIMULATOR_UDID/data/Containers/Data/Application/"
+  local expected_app_prefix="$HOME/Library/Developer/CoreSimulator/Devices/$CURRENT_IOS_SIMULATOR_UDID/data/Containers/Bundle/Application/"
+
+  ios_restore_required=1
+  xcrun simctl install "$CURRENT_IOS_SIMULATOR_UDID" "$debug_app"
+  local debug_launch_result
+  debug_launch_result="$({
+    xcrun simctl launch --terminate-running-process \
+      "$CURRENT_IOS_SIMULATOR_UDID" \
+      "$IOS_EXPECTED_BUNDLE_ID"
+  })"
+  [[ "$debug_launch_result" == "$IOS_EXPECTED_BUNDLE_ID: "* ]] || current_vm_fail "iOS Debug 内存压力启动结果异常"
+  local debug_process_id="${debug_launch_result##*: }"
+  print -r -- "$debug_process_id" | rg -q '^[0-9]+$' || current_vm_fail "iOS Debug 进程 PID 不是纯数字"
+  local debug_data_container debug_app_container
+  debug_data_container="$(xcrun simctl get_app_container "$CURRENT_IOS_SIMULATOR_UDID" "$IOS_EXPECTED_BUNDLE_ID" data)"
+  debug_app_container="$(xcrun simctl get_app_container "$CURRENT_IOS_SIMULATOR_UDID" "$IOS_EXPECTED_BUNDLE_ID" app)"
+  [[ "$debug_data_container" == "$expected_data_prefix"* ]] || current_vm_fail "iOS Debug 数据容器不属于指定 Simulator"
+  [[ "$debug_app_container" == "$expected_app_prefix"* ]] || current_vm_fail "iOS Debug 应用容器不属于指定 Simulator"
+  local memory_marker="$debug_data_container/tmp/$MEMORY_PRESSURE_MARKER"
+  [[ ! -e "$memory_marker" ]] || current_vm_fail "iOS 模拟内存警告前已存在旧标记"
+  local debug_process_command
+  debug_process_command="$(ps -p "$debug_process_id" -o command= | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+  [[ "$debug_process_command" == "$debug_app_container/WinLottery" ]] ||
+    current_vm_fail "iOS Debug 进程不属于指定 Simulator 应用容器"
+
+  xcrun lldb --batch \
+    -p "$debug_process_id" \
+    -o 'expr -l objc++ -O -- [[UIApplication sharedApplication] _performMemoryWarning]' \
+    -o detach
+  local wait_attempt
+  for wait_attempt in {1..20}; do
+    [[ -e "$memory_marker" ]] && break
+    sleep 0.1
+  done
+  [[ -f "$memory_marker" ]] || current_vm_fail "iOS Debug 没有收到模拟 UIKit 内存警告"
+  debug_process_command="$(ps -p "$debug_process_id" -o command= | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+  [[ "$debug_process_command" == "$debug_app_container/WinLottery" ]] ||
+    current_vm_fail "iOS 模拟内存警告后 Debug 进程没有保持存活"
+  rm -f -- "$memory_marker"
+
+  xcrun simctl install "$CURRENT_IOS_SIMULATOR_UDID" "$release_app"
+  ios_launch_result="$({
+    xcrun simctl launch --terminate-running-process \
+      "$CURRENT_IOS_SIMULATOR_UDID" \
+      "$IOS_EXPECTED_BUNDLE_ID"
+  })"
+  [[ "$ios_launch_result" == "$IOS_EXPECTED_BUNDLE_ID: "* ]] || current_vm_fail "iOS Release 内存压力启动结果异常"
+  local release_process_id="${ios_launch_result##*: }"
+  print -r -- "$release_process_id" | rg -q '^[0-9]+$' || current_vm_fail "iOS Release 进程 PID 不是纯数字"
+  local release_app_container
+  release_app_container="$(xcrun simctl get_app_container "$CURRENT_IOS_SIMULATOR_UDID" "$IOS_EXPECTED_BUNDLE_ID" app)"
+  [[ "$release_app_container" == "$expected_app_prefix"* ]] || current_vm_fail "iOS Release 应用容器不属于指定 Simulator"
+  local release_process_command
+  release_process_command="$(ps -p "$release_process_id" -o command= | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+  [[ "$release_process_command" == "$release_app_container/WinLottery" ]] ||
+    current_vm_fail "iOS 内存压力专项结束后 Release 进程没有保持存活"
+  ios_restore_required=0
+}
+
 # 使用可调试测试包放置匿名标记，验证 Android 卸载清除数据并恢复 Release 包。
 verify_android_install_lifecycle() {
   local debug_apk="$1"
@@ -415,6 +534,11 @@ verify_current_mobile_vms
   current_vm_fail "WINLOTTERY_VERIFY_ABRUPT_TERMINATION 只允许 0 或 1"
 [[ "$VERIFY_CRASH_RECOVERY" == "0" || "$VERIFY_CRASH_RECOVERY" == "1" ]] ||
   current_vm_fail "WINLOTTERY_VERIFY_CRASH_RECOVERY 只允许 0 或 1"
+[[ "$VERIFY_MEMORY_PRESSURE" == "0" || "$VERIFY_MEMORY_PRESSURE" == "1" ]] ||
+  current_vm_fail "WINLOTTERY_VERIFY_MEMORY_PRESSURE 只允许 0 或 1"
+if [[ "$VERIFY_MEMORY_PRESSURE" == "1" ]]; then
+  xcrun --find lldb >/dev/null || current_vm_fail "缺少 iOS Simulator 调试器"
+fi
 
 for required_command in codesign file jarsigner plutil rg shasum strings unzip xcodebuild; do
   command -v "$required_command" >/dev/null || current_vm_fail "缺少命令 $required_command"
@@ -445,7 +569,7 @@ cd "$REPOSITORY_ROOT"
 export ANDROID_SERIAL="$CURRENT_ANDROID_SERIAL_ID"
 
 release_gradle_tasks=(spotlessCheck :androidApp:assembleRelease :androidApp:bundleRelease)
-if [[ "$VERIFY_INSTALL_LIFECYCLE" == "1" || "$VERIFY_PROCESS_RECOVERY" == "1" || "$VERIFY_ABRUPT_TERMINATION" == "1" || "$VERIFY_CRASH_RECOVERY" == "1" ]]; then
+if [[ "$VERIFY_INSTALL_LIFECYCLE" == "1" || "$VERIFY_PROCESS_RECOVERY" == "1" || "$VERIFY_ABRUPT_TERMINATION" == "1" || "$VERIFY_CRASH_RECOVERY" == "1" || "$VERIFY_MEMORY_PRESSURE" == "1" ]]; then
   release_gradle_tasks+=(:androidApp:assembleDebug)
 fi
 ./gradlew "${release_gradle_tasks[@]}" --rerun-tasks --console=plain
@@ -457,7 +581,7 @@ readonly aligned_android_apk="$release_check_directory/androidApp-release-aligne
 readonly signed_android_apk="$release_check_directory/androidApp-release-test-signed.apk"
 require_release_file "$unsigned_android_apk"
 require_release_file "$android_aab"
-if [[ "$VERIFY_INSTALL_LIFECYCLE" == "1" || "$VERIFY_PROCESS_RECOVERY" == "1" || "$VERIFY_ABRUPT_TERMINATION" == "1" || "$VERIFY_CRASH_RECOVERY" == "1" ]]; then
+if [[ "$VERIFY_INSTALL_LIFECYCLE" == "1" || "$VERIFY_PROCESS_RECOVERY" == "1" || "$VERIFY_ABRUPT_TERMINATION" == "1" || "$VERIFY_CRASH_RECOVERY" == "1" || "$VERIFY_MEMORY_PRESSURE" == "1" ]]; then
   require_release_file "$android_debug_apk"
 fi
 
@@ -474,7 +598,7 @@ fi
 if "$aapt_command" dump badging "$signed_android_apk" | rg -q '^application-debuggable'; then
   current_vm_fail "Android Release APK 清单仍允许调试"
 fi
-if [[ "$VERIFY_CRASH_RECOVERY" == "1" ]]; then
+if [[ "$VERIFY_CRASH_RECOVERY" == "1" || "$VERIFY_MEMORY_PRESSURE" == "1" ]]; then
   readonly android_dex_directory="$release_check_directory/android-release-dex"
   mkdir -p "$android_dex_directory"
   unzip -q "$signed_android_apk" 'classes*.dex' -d "$android_dex_directory"
@@ -483,6 +607,9 @@ if [[ "$VERIFY_CRASH_RECOVERY" == "1" ]]; then
   fi
   if rg -a -F "$ANDROID_DEBUG_CRASH_EXTRA" "$android_dex_directory" >/dev/null; then
     current_vm_fail "Android Release DEX 仍包含崩溃验收参数"
+  fi
+  if rg -a -F "$MEMORY_PRESSURE_MARKER" "$android_dex_directory" >/dev/null; then
+    current_vm_fail "Android Release DEX 仍包含内存压力验收标记"
   fi
 fi
 unzip -tq "$android_aab"
@@ -505,7 +632,7 @@ android_process_id="$(adb -s "$CURRENT_ANDROID_SERIAL_ID" shell pidof "$ANDROID_
 [[ -n "$android_process_id" ]] || current_vm_fail "Android Release 应用启动后没有存活进程"
 
 readonly ios_derived_data="$release_check_directory/ios-derived-data"
-if [[ "$VERIFY_CRASH_RECOVERY" == "1" ]]; then
+if [[ "$VERIFY_CRASH_RECOVERY" == "1" || "$VERIFY_MEMORY_PRESSURE" == "1" ]]; then
   xcodebuild \
     -project "$REPOSITORY_ROOT/iosApp/iosApp.xcodeproj" \
     -scheme iosApp \
@@ -537,12 +664,15 @@ ios_bundle_id="$(plutil -extract CFBundleIdentifier raw "$ios_info_plist")"
 [[ "$ios_bundle_id" == "$IOS_EXPECTED_BUNDLE_ID" ]] || current_vm_fail "iOS Bundle ID 不匹配"
 file "$ios_executable" | rg -q 'arm64' || current_vm_fail "iOS Release 二进制不是 arm64 Simulator 架构"
 codesign --verify --deep --strict "$ios_release_app"
-if [[ "$VERIFY_CRASH_RECOVERY" == "1" ]]; then
+if [[ "$VERIFY_CRASH_RECOVERY" == "1" || "$VERIFY_MEMORY_PRESSURE" == "1" ]]; then
   if strings "$ios_executable" | rg -F "$CONTROLLED_CRASH_MARKER" >/dev/null; then
     current_vm_fail "iOS Release 可执行文件仍包含受控崩溃标记"
   fi
   if strings "$ios_executable" | rg -F "$IOS_DEBUG_CRASH_ENVIRONMENT" >/dev/null; then
     current_vm_fail "iOS Release 可执行文件仍包含崩溃验收参数"
+  fi
+  if strings "$ios_executable" | rg -F "$MEMORY_PRESSURE_MARKER" >/dev/null; then
+    current_vm_fail "iOS Release 可执行文件仍包含内存压力验收标记"
   fi
 fi
 
@@ -574,6 +704,10 @@ if [[ "$VERIFY_CRASH_RECOVERY" == "1" ]]; then
   verify_android_crash_recovery "$android_debug_apk" "$signed_android_apk"
   verify_ios_crash_recovery "$ios_debug_app" "$ios_release_app"
 fi
+if [[ "$VERIFY_MEMORY_PRESSURE" == "1" ]]; then
+  verify_android_memory_pressure "$android_debug_apk" "$signed_android_apk"
+  verify_ios_memory_pressure "$ios_debug_app" "$ios_release_app"
+fi
 if [[ "$VERIFY_INSTALL_LIFECYCLE" == "1" ]]; then
   verify_android_install_lifecycle "$android_debug_apk" "$signed_android_apk"
   verify_ios_install_lifecycle "$ios_release_app"
@@ -598,6 +732,9 @@ if [[ "$VERIFY_ABRUPT_TERMINATION" == "1" ]]; then
 fi
 if [[ "$VERIFY_CRASH_RECOVERY" == "1" ]]; then
   print "双虚拟机 Debug 受控崩溃、遗留标记清扫和 Release 反向检查通过"
+fi
+if [[ "$VERIFY_MEMORY_PRESSURE" == "1" ]]; then
+  print "Android 内存收紧回调、iOS Debug 模拟内存警告和 Release 隔离检查通过"
 fi
 print "Android APK SHA-256：$(shasum -a 256 "$signed_android_apk" | awk '{print $1}')"
 print "Android AAB SHA-256：$(shasum -a 256 "$android_aab" | awk '{print $1}')"

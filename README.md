@@ -14,7 +14,7 @@
 | B3 移动图片采集与 OCR PoC | 进行中 | Android/iOS 拍照、系统选图、本地 OCR 和保守解析已贯通；分辨率、严重整体曝光、明显模糊、初步裁切、明显透视与明显倾斜闸门已接入；共享解析现把平台原始行置信度保守聚合到彩种、期号、投注行、倍数、追加、期数和金额区域，并完成当前 13 图的分平台匿名初步分布 | 真实裁切/透视、阴影与局部反光准确率，自动旋转和透视校正、OCR 双人真值、平台分别校准和批量准确率统计未完成 |
 | B4 移动票面解析与人工校正 | 进行中 | 已实现彩种/期号校正、号码球、倍数与期数步进、追加选择、金额推导、候选选择及 `ConfirmedTicket` 来源追踪；当前 OCR 引擎名和字段原始置信度只在校正流程内存中保留，Debug 包可输出不含票面内容的匿名分布样本；彩种与期数也可携带证据区域 | Android ML Kit 与 iOS Vision 尚未结合逐 token 真值分别校准，低置信视觉标记和足量真实票样验收未完成；复式、胆拖、补打及未知序列仍阻断 |
 | B5 移动核心端到端闭环 | 核心完成，待验收 | Android/iOS 已接入拍照/OCR、原图辅助录入与无图手动录入、精确期号官网查询、本地规则计算、逐注结果、双源证据及重试；当前 Android 36.1 与 iOS 26.5 模拟器已完成五注十期真实票图、逐期双证据、首个未发布期停止、断网保留既有证据及主动重查闭环 | Android/iPhone 完整物理真机矩阵、跨年度期次日历、发布窗口、授权及足量票样仍未完成；这些发布差距不在当前仅使用虚拟机的执行范围内冒充完成 |
-| B6 Android/iOS V1 发布 | 进行中 | 已固化当前双虚拟机身份守卫、Release 构建、非 Debug、覆盖安装和启动检查；Android APK 仅用临时测试签名安装，AAB 结构完整；iOS Simulator Release `.app` 可构建安装；双端真实模拟器沙箱已覆盖遗留票图初始化清扫、目录边界、受控进程终止、`SIGKILL`、Debug 受控崩溃恢复和卸载清除，Android Release 相机首次拒权可安全返回 | Android AAB 未配置生产签名，IPA 未生成；iOS 真机拒权、OOM 与低内存恢复、跨版本升级、盲测、12MP P95、物理真机矩阵、隐私材料、商店合规和数据授权未完成 |
+| B6 Android/iOS V1 发布 | 进行中 | 已固化当前双虚拟机身份守卫、Release 构建、非 Debug、覆盖安装和启动检查；Android APK 仅用临时测试签名安装，AAB 结构完整；iOS Simulator Release `.app` 可构建安装；双端真实模拟器沙箱已覆盖遗留票图初始化清扫、目录边界、受控进程终止、`SIGKILL`、Debug 受控崩溃恢复、低内存开发回调边界和卸载清除，Android Release 相机首次拒权可安全返回 | Android AAB 未配置生产签名，IPA 未生成；iOS 真机拒权、真实系统低内存回收与 OOM、跨版本升级、盲测、12MP P95、物理真机矩阵、隐私材料、商店合规和数据授权未完成 |
 | V1.1 至 V1.5 移动路线 | 已规划 | V1.1 本机存储、V1.2 随机号码、V1.3 历史走势与数学预测、V1.4 AI 分析、V1.5 传统文化娱乐推演的范围和闸门已形成文档基线 | 均在 V1 发布后按顺序单独立项；数据库依赖、数据授权、算法评测、AI 合规和敏感个人信息处理仍需逐版冻结 |
 | Windows/macOS 独立路线 | 延期 | 已完成桌面宿主、导图、无遥测 ONNX 工作进程、PP-OCRv5 来源锁和可复现转换 | 真实桌面 OCR、ZXing、Windows 实机、目标平台裁剪和正式分发均不属于移动 V1 至 V1.5 的默认范围 |
 
@@ -84,6 +84,8 @@ Android/iOS 确认票面后，单期票只查询用户确认的精确期号；�
 
 同日将双色球最新已发布期滚动到 `2026093` 后，使用该期公开开奖号码在 Android 16 与 iOS 26.5 模拟器完成双端真实交互验收。1 注、1 倍、2.00 元基本投注在两端均显示一等奖、红球命中 6 个、蓝球命中 1 个、税前奖金 `6,581,443.00 元`、奖金终态和两份中国福彩网证据；主动重查后两份证据获取时间均更新，奖级和金额保持一致。两端返回首页成功，Android 私有票图目录无临时图片，iOS 临时票图目录为空；截图和页面源只保存在本机临时目录，不纳入仓库。
 
+2026-08-20 只在锁定的 Android 36.1 与 iOS 26.5 虚拟机固化低内存开发检查。Android Debug 通过系统 `am send-trim-memory ... RUNNING_CRITICAL` 收到精确级别 15，回调前后 PID 不变；Release 同样保持运行且不包含 Debug 匿名标记。iOS Debug 由 LLDB 调用 Simulator 内 UIKit 的 `_performMemoryWarning`，应用注册的真实内存警告回调在自身 `tmp` 目录写出空标记，回调后原 PID 保持；Release 可执行文件不包含该标记并恢复运行。随后固定回归为 iOS Simulator 230/230、Android 数据层 66/66、识别层 59/59，失败、错误和跳过均为 0，140 个 Gradle 任务全部实际执行。该结果只证明 Android 内存收紧回调和 iOS Simulator Debug 模拟内存警告路径，不等同于物理真机系统压力、OOM、Jetsam、Release 低内存恢复或发布验收。
+
 > 当前开发验证版已具备真实开奖结果查询和中奖测算能力，但不能替代彩票验真或实体票兑奖，也不能解释为支持任何省份、销售终端或票面版式。B0、B2、移动 B3 均未通过发布验收闸门，禁止据此宣称达到公开发布标准。
 
 桌面端已完成 ONNX Runtime 底座、独立本地工作进程，以及 PP-OCRv5 三段官方 Paddle 模型的来源锁定、opset 17 转换和 Paddle/ONNX 合成张量逐元素对比。转换后的约 22.3 MB 模型二进制尚未纳入仓库或安装包，图片预处理、后处理和工作进程推理协议也未实现；这些成果作为独立桌面路线的基础保留，不再阻塞 Android/iOS V1。
@@ -134,6 +136,7 @@ Android/iOS 确认票面后，单期票只查询用户确认的精确期号；�
 - 当前双虚拟机进程恢复检查：执行 `tools/mobile/run-current-vm-process-recovery-checks.sh`；脚本受控终止并重启两端应用，验证启动清扫后恢复 Release，不代表崩溃、OOM 或低内存真机验收。
 - 当前双虚拟机异常终止检查：执行 `tools/mobile/run-current-vm-abrupt-termination-checks.sh`；脚本只向已核验归属的目标应用 PID 发送 `SIGKILL`，验证启动清扫并恢复 Release，不代表 OOM、低内存回收、未捕获异常或业务状态恢复验收。
 - 当前双虚拟机崩溃恢复检查：执行 `tools/mobile/run-current-vm-crash-recovery-checks.sh`；脚本只允许 Debug 变体触发 Android 主线程未捕获异常和 iOS `fatalError`，验证崩溃证据、启动清扫及 Release 反向禁用，不代表 native crash、ANR/watchdog、OOM、低内存或业务状态恢复验收。
+- 当前双虚拟机低内存开发检查：执行 `tools/mobile/run-current-vm-memory-pressure-checks.sh`；Android 使用系统内存收紧命令验证回调，iOS 只在 Debug Simulator 通过 LLDB 模拟 UIKit 内存警告，并检查 Release 标记隔离；不代表真实系统压力、OOM、Jetsam、物理真机或发布验收。
 - 格式检查：`./gradlew spotlessCheck`
 - iOS Simulator：用 Xcode 打开 `iosApp/iosApp.xcodeproj`，构建 `iosApp` Scheme
 - iOS 真机：参考 `iosApp/Configuration/Local.xcconfig.example` 创建不提交 Git 的 `Local.xcconfig`，填写自己的 `DEVELOPMENT_TEAM_ID` 后构建 `iosApp` Scheme

@@ -20,6 +20,12 @@ class MainActivity : ComponentActivity() {
             App(container)
         }
     }
+
+    /** 接收系统内存收紧通知，并仅向 Debug 验收记录匿名级别。 */
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        recordDebugTrimMemoryAcceptance(level)
+    }
 }
 
 /** Android Studio 中的共享首页预览。 */
