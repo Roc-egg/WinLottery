@@ -12,6 +12,7 @@ class MainActivity : ComponentActivity() {
     /** 创建 Activity 并启用边到边共享界面。 */
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        triggerDebugCrashAcceptance(intent)
         enableEdgeToEdge()
         val container = createAndroidRecognitionContainer(this)
 
