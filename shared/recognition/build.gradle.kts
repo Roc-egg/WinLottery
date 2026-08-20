@@ -21,6 +21,11 @@ kotlin {
             jvmTarget = JvmTarget.JVM_11
         }
         withHostTest {}
+        withDeviceTestBuilder {
+            sourceSetTreeName = "test"
+        }.configure {
+            instrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        }
     }
 
     jvm()
@@ -45,6 +50,12 @@ kotlin {
         commonTest.dependencies {
             implementation(libs.kotlin.test)
             implementation(libs.kotlinx.coroutinesTest)
+        }
+        named("androidDeviceTest") {
+            dependencies {
+                implementation(libs.androidx.testExt.junit)
+                implementation(libs.androidx.test.runner)
+            }
         }
         jvmMain.dependencies {
             implementation(libs.kotlinx.coroutinesSwing)

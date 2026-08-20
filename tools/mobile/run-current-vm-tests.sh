@@ -14,5 +14,6 @@ export ANDROID_SERIAL="$CURRENT_ANDROID_SERIAL_ID"
   spotlessCheck \
   iosSimulatorArm64Test \
   :shared:data:connectedAndroidDeviceTest \
+  :shared:recognition:connectedAndroidDeviceTest \
   --rerun-tasks \
   --console=plain
