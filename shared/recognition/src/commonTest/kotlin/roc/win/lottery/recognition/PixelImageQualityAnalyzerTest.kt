@@ -70,6 +70,25 @@ class PixelImageQualityAnalyzerTest {
             }
         }
 
+    /** 轻微梯形变化仍应放行，避免把普通手持角度当成不可读透视。 */
+    @Test
+    fun mildlyPerspectiveGridPasses() =
+        runTest {
+            val result = analyzer(perspectiveGrid(MILD_PERSPECTIVE_TOP_SCALE)).analyze(image())
+
+            assertIs<ImageQualityResult.Passed>(result)
+        }
+
+    /** 左右局部主轴明显汇聚时应提示正对票面重新拍摄。 */
+    @Test
+    fun clearlyPerspectiveGridIsRejected() =
+        runTest {
+            val result = analyzer(perspectiveGrid(CLEAR_PERSPECTIVE_TOP_SCALE)).analyze(image())
+
+            val poorImage = assertIs<ImageQualityResult.PoorImage>(result)
+            assertEquals(listOf("图片透视变形明显，请正对彩票并保持手机与票面平行"), poorImage.issues)
+        }
+
     /** 轻微倾斜仍应放行，避免要求用户进行没有必要的精确对齐。 */
     @Test
     fun slightlySkewedGridPasses() =
@@ -238,6 +257,36 @@ class PixelImageQualityAnalyzerTest {
         )
     }
 
+    /** 创建上窄下宽且保留安全背景边距的确定性梯形网格。 */
+    private fun perspectiveGrid(topScale: Double): LuminanceImageSample {
+        assertTrue(topScale in MINIMUM_PERSPECTIVE_SCALE..MAXIMUM_PERSPECTIVE_SCALE)
+        val centerX = (ORIENTED_SAMPLE_EDGE - 1) / 2.0
+        val centerY = (ORIENTED_SAMPLE_EDGE - 1) / 2.0
+        return LuminanceImageSample(
+            widthPixels = ORIENTED_SAMPLE_EDGE,
+            heightPixels = ORIENTED_SAMPLE_EDGE,
+            pixels =
+                ByteArray(ORIENTED_SAMPLE_EDGE * ORIENTED_SAMPLE_EDGE) { index ->
+                    val x = index % ORIENTED_SAMPLE_EDGE - centerX
+                    val y = index / ORIENTED_SAMPLE_EDGE - centerY
+                    val verticalProgress = (y + centerY) / (ORIENTED_SAMPLE_EDGE - 1)
+                    val horizontalScale = topScale + (MAXIMUM_PERSPECTIVE_SCALE - topScale) * verticalProgress
+                    val sourceX = x / horizontalScale
+                    val isInsideTicket =
+                        kotlin.math.abs(sourceX) <= centerX - GRID_SAFE_MARGIN &&
+                            kotlin.math.abs(y) <= centerY - GRID_SAFE_MARGIN
+                    val isGridLine =
+                        distanceToGridLine(sourceX) <= GRID_LINE_HALF_WIDTH ||
+                            distanceToGridLine(y) <= GRID_LINE_HALF_WIDTH
+                    when {
+                        !isInsideTicket -> GRID_BACKGROUND_LUMINANCE.toByte()
+                        isGridLine -> DARK_GRID_LUMINANCE.toByte()
+                        else -> BRIGHT_GRID_LUMINANCE.toByte()
+                    }
+                },
+        )
+    }
+
     /** 计算坐标到最近网格线的距离。 */
     private fun distanceToGridLine(coordinate: Double): Double {
         val offset = ((coordinate % GRID_CELL_SIZE) + GRID_CELL_SIZE) % GRID_CELL_SIZE
@@ -298,6 +347,18 @@ class PixelImageQualityAnalyzerTest {
 
         /** 完整票面印刷内容与画面边缘之间的安全背景宽度。 */
         const val GRID_SAFE_MARGIN = 20.0
+
+        /** 轻微梯形测试图的顶部横向缩放比例。 */
+        const val MILD_PERSPECTIVE_TOP_SCALE = 0.82
+
+        /** 明显梯形测试图的顶部横向缩放比例。 */
+        const val CLEAR_PERSPECTIVE_TOP_SCALE = 0.30
+
+        /** 合成透视缩放允许的最小值。 */
+        const val MINIMUM_PERSPECTIVE_SCALE = 0.3
+
+        /** 合成透视底边保持原始宽度。 */
+        const val MAXIMUM_PERSPECTIVE_SCALE = 1.0
 
         /** 票面安全边距外的中灰背景亮度。 */
         const val GRID_BACKGROUND_LUMINANCE = 128

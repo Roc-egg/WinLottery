@@ -46,7 +46,7 @@ B2 核心代码、离线契约测试、跨平台构建和每种彩票 20 个真�
 
 仅允许当前 Android/iOS 虚拟机时使用 `tools/mobile/run-current-vm-tests.sh`。脚本固定校验 `Medium_Phone_API_36.1` 的模拟器标志与 AVD 名称、iPhone 17 Pro 的 UDID 和 iOS 26.5 运行时，并通过 `ANDROID_SERIAL` 隔离 Android Gradle 设备发现；任一目标缺失或身份不符都会在运行测试前失败关闭。
 
-上一轮完整三目标结果：182 个 Gradle 任务执行成功，共运行 665 项测试，失败、错误和跳过均为 0；另有 Android 16 物理机 63 项历史设备测试通过。本轮按执行约束未复跑 JVM 与 Android Host，新增开奖窗口与多期恢复回归在当前 iOS Simulator 222 项全量和 Android 虚拟机 66 项数据层设备测试中通过。
+上一轮完整三目标结果：182 个 Gradle 任务执行成功，共运行 665 项测试，失败、错误和跳过均为 0；另有 Android 16 物理机 63 项历史设备测试通过。本轮按执行约束未复跑 JVM 与 Android Host，新增开奖窗口、多期恢复和透视质量回归在当前 iOS Simulator 225 项全量和 Android 虚拟机 66 项数据层设备测试中通过。
 
 | 平台 | 离线测试 | 结果 |
 |---|---:|---|

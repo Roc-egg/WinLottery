@@ -35,7 +35,7 @@ fun interface LuminanceImageDecoder {
 }
 
 /**
- * 使用固定尺寸亮度样本拒绝严重曝光异常、全局明显模糊、关键内容裁切和明显画面倾斜。
+ * 使用固定尺寸亮度样本拒绝严重曝光异常、全局明显模糊、关键内容裁切、明显透视和画面倾斜。
  *
  * @property decoder 只在设备本地运行的平台亮度解码器。
  * @property maximumLongEdgePixels 参与指标计算的最长边，固定尺寸可保持平台阈值一致。
@@ -47,6 +47,9 @@ fun interface LuminanceImageDecoder {
  * @property maximumAbsoluteSkewDegrees 允许通过的水平或垂直主轴最大偏角。
  * @property minimumSkewEdgePixelRatio 参与倾斜判断所需的最小强边缘像素比例。
  * @property minimumSkewCoherence 参与倾斜判断所需的最小主轴方向集中度。
+ * @property maximumPerspectiveAxisDifferenceDegrees 允许通过的左右局部主轴最大夹角。
+ * @property minimumPerspectiveEdgePixelRatio 参与透视判断时左右半区各自所需的最小近竖直强边缘比例。
+ * @property minimumPerspectiveCoherence 参与透视判断时左右半区各自所需的最小主轴集中度。
  */
 class PixelImageQualityAnalyzer(
     private val decoder: LuminanceImageDecoder,
@@ -59,6 +62,9 @@ class PixelImageQualityAnalyzer(
     private val maximumAbsoluteSkewDegrees: Double = DEFAULT_MAXIMUM_ABSOLUTE_SKEW_DEGREES,
     private val minimumSkewEdgePixelRatio: Double = DEFAULT_MINIMUM_SKEW_EDGE_PIXEL_RATIO,
     private val minimumSkewCoherence: Double = DEFAULT_MINIMUM_SKEW_COHERENCE,
+    private val maximumPerspectiveAxisDifferenceDegrees: Double = DEFAULT_MAXIMUM_PERSPECTIVE_AXIS_DIFFERENCE_DEGREES,
+    private val minimumPerspectiveEdgePixelRatio: Double = DEFAULT_MINIMUM_PERSPECTIVE_EDGE_PIXEL_RATIO,
+    private val minimumPerspectiveCoherence: Double = DEFAULT_MINIMUM_PERSPECTIVE_COHERENCE,
 ) : ImageQualityAnalyzer {
     init {
         require(maximumLongEdgePixels >= MINIMUM_ANALYZABLE_EDGE_PIXELS) {
@@ -82,9 +88,18 @@ class PixelImageQualityAnalyzer(
         require(minimumSkewCoherence in MINIMUM_RATIO..MAXIMUM_RATIO) {
             "倾斜方向集中度阈值必须位于 0 至 1"
         }
+        require(maximumPerspectiveAxisDifferenceDegrees in MINIMUM_AXIS_ANGLE_DEGREES..MAXIMUM_AXIS_ANGLE_DEGREES) {
+            "透视主轴夹角阈值必须位于 0 至 45 度"
+        }
+        require(minimumPerspectiveEdgePixelRatio in MINIMUM_RATIO..MAXIMUM_RATIO) {
+            "透视强边缘比例阈值必须位于 0 至 1"
+        }
+        require(minimumPerspectiveCoherence in MINIMUM_RATIO..MAXIMUM_RATIO) {
+            "透视方向集中度阈值必须位于 0 至 1"
+        }
     }
 
-    /** 解码匿名亮度样本，并按曝光、清晰度、裁切、倾斜的顺序返回可操作问题。 */
+    /** 解码匿名亮度样本，并按曝光、清晰度、裁切、透视、倾斜的顺序返回可操作问题。 */
     override suspend fun analyze(imageRef: ImageRef): ImageQualityResult {
         val sample =
             decoder.decode(imageRef, maximumLongEdgePixels)
@@ -117,6 +132,15 @@ class PixelImageQualityAnalyzer(
         if (metrics.hasLikelyCroppedContent) {
             return ImageQualityResult.PoorImage(
                 listOf("图片内容贴近边缘且可能被裁切，请完整拍下整张彩票"),
+            )
+        }
+        if (
+            metrics.minimumPerspectiveEdgePixelRatio >= minimumPerspectiveEdgePixelRatio &&
+            metrics.minimumPerspectiveCoherence >= minimumPerspectiveCoherence &&
+            metrics.perspectiveAxisDifferenceDegrees > maximumPerspectiveAxisDifferenceDegrees
+        ) {
+            return ImageQualityResult.PoorImage(
+                listOf("图片透视变形明显，请正对彩票并保持手机与票面平行"),
             )
         }
         if (
@@ -160,6 +184,7 @@ class PixelImageQualityAnalyzer(
         var strongEdgeWeight = 0.0
         var axisVectorX = 0.0
         var axisVectorY = 0.0
+        val perspectiveAxes = Array(PERSPECTIVE_HORIZONTAL_REGION_COUNT) { AxisAccumulator() }
         val cropBorderWidth =
             maxOf(MINIMUM_CROP_BORDER_WIDTH_PIXELS, (minOf(width, height) * CROP_BORDER_RATIO).roundToInt())
         val cropBorders = Array(CROP_BORDER_SIDE_COUNT) { CropBorderAccumulator() }
@@ -223,17 +248,32 @@ class PixelImageQualityAnalyzer(
                     strongEdgePixelCount += 1
                     strongEdgeWeight += edgeWeight
                     // 单位梯度向量的四次幂会合并相差 90 度的边缘，且无需逐像素调用三角函数。
-                    axisVectorX +=
+                    val axisContributionX =
                         (
                             gradientXSquared * gradientXSquared -
                                 FOURTH_ANGLE_MIXED_SQUARE_WEIGHT * gradientXSquared * gradientYSquared +
                                 gradientYSquared * gradientYSquared
                         ) / fourthPowerMagnitude * edgeWeight
-                    axisVectorY +=
+                    val axisContributionY =
                         FOURTH_ANGLE_CROSS_WEIGHT *
-                        gradientXDouble * gradientYDouble *
-                        (gradientXSquared - gradientYSquared) /
-                        fourthPowerMagnitude * edgeWeight
+                            gradientXDouble * gradientYDouble *
+                            (gradientXSquared - gradientYSquared) /
+                            fourthPowerMagnitude * edgeWeight
+                    axisVectorX += axisContributionX
+                    axisVectorY += axisContributionY
+                    if (abs(gradientX) >= abs(gradientY)) {
+                        val perspectiveRegion =
+                            if (x < width / 2) {
+                                PERSPECTIVE_LEFT_REGION
+                            } else {
+                                PERSPECTIVE_RIGHT_REGION
+                            }
+                        perspectiveAxes[perspectiveRegion].record(
+                            edgeWeight = edgeWeight,
+                            axisContributionX = axisContributionX,
+                            axisContributionY = axisContributionY,
+                        )
+                    }
                 }
             }
         }
@@ -256,6 +296,9 @@ class PixelImageQualityAnalyzer(
         val hasLikelyCroppedContent =
             axisCoherence >= DEFAULT_MINIMUM_CROP_AXIS_COHERENCE &&
                 cropBorders.any(CropBorderAccumulator::indicatesLikelyCrop)
+        val perspectiveRegionPixelCount = (width - 2).toDouble() * (height - 2) / PERSPECTIVE_HORIZONTAL_REGION_COUNT
+        val leftPerspectiveAxis = perspectiveAxes[PERSPECTIVE_LEFT_REGION].summarize(perspectiveRegionPixelCount)
+        val rightPerspectiveAxis = perspectiveAxes[PERSPECTIVE_RIGHT_REGION].summarize(perspectiveRegionPixelCount)
         return PixelImageMetrics(
             meanLuminance = luminanceSum / pixelCount,
             darkPixelRatio = darkPixelCount / pixelCount,
@@ -265,7 +308,76 @@ class PixelImageQualityAnalyzer(
             dominantAxisAngleDegrees = dominantAxisAngleDegrees,
             axisCoherence = axisCoherence,
             hasLikelyCroppedContent = hasLikelyCroppedContent,
+            minimumPerspectiveEdgePixelRatio =
+                minOf(leftPerspectiveAxis.strongEdgePixelRatio, rightPerspectiveAxis.strongEdgePixelRatio),
+            minimumPerspectiveCoherence = minOf(leftPerspectiveAxis.coherence, rightPerspectiveAxis.coherence),
+            perspectiveAxisDifferenceDegrees =
+                axisDifferenceDegrees(leftPerspectiveAxis.angleDegrees, rightPerspectiveAxis.angleDegrees),
         )
+    }
+
+    /** 计算两个按 90 度等价表示的局部主轴最小夹角。 */
+    private fun axisDifferenceDegrees(
+        first: Double,
+        second: Double,
+    ): Double {
+        val rawDifference = abs(first - second)
+        return minOf(rawDifference, AXIS_PERIOD_DEGREES - rawDifference)
+    }
+
+    /** 累积一个局部区域内的强边缘主轴。 */
+    private class AxisAccumulator {
+        /** 当前区域强边缘像素数量。 */
+        private var strongEdgePixelCount = 0L
+
+        /** 当前区域强边缘权重总和。 */
+        private var strongEdgeWeight = 0.0
+
+        /** 当前区域四倍角主轴横向分量。 */
+        private var axisVectorX = 0.0
+
+        /** 当前区域四倍角主轴纵向分量。 */
+        private var axisVectorY = 0.0
+
+        /** 记录一个已经归一化的强边缘主轴贡献。 */
+        fun record(
+            edgeWeight: Double,
+            axisContributionX: Double,
+            axisContributionY: Double,
+        ) {
+            strongEdgePixelCount += 1
+            strongEdgeWeight += edgeWeight
+            axisVectorX += axisContributionX
+            axisVectorY += axisContributionY
+        }
+
+        /** 将局部累积值转换为边缘比例、带符号主轴偏角和集中度。 */
+        fun summarize(regionPixelCount: Double): AxisSummary {
+            if (strongEdgeWeight == 0.0 || regionPixelCount <= 0.0) return AxisSummary.EMPTY
+            return AxisSummary(
+                strongEdgePixelRatio = strongEdgePixelCount / regionPixelCount,
+                angleDegrees =
+                    atan2(axisVectorY, axisVectorX) /
+                        AXIS_EQUIVALENCE_MULTIPLIER * RADIANS_TO_DEGREES,
+                coherence = sqrt(axisVectorX * axisVectorX + axisVectorY * axisVectorY) / strongEdgeWeight,
+            )
+        }
+    }
+
+    /** 一个局部区域的强边缘主轴摘要。 */
+    private data class AxisSummary(
+        /** 强边缘像素占当前区域的比例。 */
+        val strongEdgePixelRatio: Double,
+        /** 水平或垂直主轴的带符号偏角。 */
+        val angleDegrees: Double,
+        /** 主轴方向集中度，范围为 0 至 1。 */
+        val coherence: Double,
+    ) {
+        /** 局部区域没有足够强边缘时使用的空摘要。 */
+        companion object {
+            /** 所有指标均为零的空摘要。 */
+            val EMPTY = AxisSummary(0.0, 0.0, 0.0)
+        }
     }
 
     /**
@@ -362,6 +474,15 @@ class PixelImageQualityAnalyzer(
         /** 主轴方向不集中时不推断倾斜，避免复杂背景主导结果。 */
         const val DEFAULT_MINIMUM_SKEW_COHERENCE = 0.18
 
+        /** 只拒绝左右局部主轴夹角已经达到明显梯形变形的图片。 */
+        const val DEFAULT_MAXIMUM_PERSPECTIVE_AXIS_DIFFERENCE_DEGREES = 12.0
+
+        /** 左右半区各自至少 3% 像素属于近竖直强边缘时才推断透视。 */
+        const val DEFAULT_MINIMUM_PERSPECTIVE_EDGE_PIXEL_RATIO = 0.03
+
+        /** 左右局部方向都较集中时才推断透视，避免复杂背景误触发。 */
+        const val DEFAULT_MINIMUM_PERSPECTIVE_COHERENCE = 0.28
+
         /** 裁切判断同样要求稳定票面主轴，避免无序背景纹理触发。 */
         const val DEFAULT_MINIMUM_CROP_AXIS_COHERENCE = 0.18
 
@@ -431,6 +552,18 @@ class PixelImageQualityAnalyzer(
         /** 水平或垂直主轴的最大无歧义偏角。 */
         const val MAXIMUM_AXIS_ANGLE_DEGREES = 45.0
 
+        /** 水平和垂直主轴按 90 度周期等价。 */
+        const val AXIS_PERIOD_DEGREES = 90.0
+
+        /** 透视比较只拆分画面左、右两个区域。 */
+        const val PERSPECTIVE_HORIZONTAL_REGION_COUNT = 2
+
+        /** 左侧透视主轴区域索引。 */
+        const val PERSPECTIVE_LEFT_REGION = 0
+
+        /** 右侧透视主轴区域索引。 */
+        const val PERSPECTIVE_RIGHT_REGION = 1
+
         /** 认定暗像素的最大亮度。 */
         const val DARK_PIXEL_MAXIMUM = 30
 
@@ -474,6 +607,9 @@ class PixelImageQualityAnalyzer(
  * @property dominantAxisAngleDegrees 水平或垂直主轴的带符号偏角。
  * @property axisCoherence 主轴方向集中度，范围为 0 至 1。
  * @property hasLikelyCroppedContent 是否有连续关键印刷内容延伸到画面边缘。
+ * @property minimumPerspectiveEdgePixelRatio 左右半区较小的强边缘比例。
+ * @property minimumPerspectiveCoherence 左右半区较小的主轴集中度。
+ * @property perspectiveAxisDifferenceDegrees 左右半区按 90 度等价归一化后的主轴夹角。
  */
 private data class PixelImageMetrics(
     val meanLuminance: Double,
@@ -484,4 +620,7 @@ private data class PixelImageMetrics(
     val dominantAxisAngleDegrees: Double,
     val axisCoherence: Double,
     val hasLikelyCroppedContent: Boolean,
+    val minimumPerspectiveEdgePixelRatio: Double,
+    val minimumPerspectiveCoherence: Double,
+    val perspectiveAxisDifferenceDegrees: Double,
 )

@@ -152,7 +152,7 @@ V1 始终显示一次票面确认页，不启用完全自动放行。确认页�
 
 - `READY_FOR_REVIEW`：识别完成，等待确认。
 - `NEEDS_CORRECTION`：存在低置信度或不合法字段。
-- `POOR_IMAGE`：图片模糊、过曝、严重倾斜或裁切。
+- `POOR_IMAGE`：图片模糊、过曝、严重倾斜、明显透视或裁切。
 - `UNSUPPORTED_TICKET`：票型或版式不在支持清单。
 - `RECOGNITION_FAILED`：OCR 或解析失败。
 
