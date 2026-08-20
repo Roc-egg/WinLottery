@@ -12,11 +12,14 @@ readonly IOS_EXPECTED_BUNDLE_ID="roc.win.lottery.WinLottery"
 readonly IOS_DEBUG_CRASH_ENVIRONMENT="WINLOTTERY_DEBUG_CRASH_ON_LAUNCH"
 readonly CONTROLLED_CRASH_MARKER="WinLotteryControlledCrashAcceptance"
 readonly MEMORY_PRESSURE_MARKER="WinLotteryMemoryPressureAcceptance"
+readonly UPGRADE_BASE_REVISION="7df5e68"
 readonly VERIFY_INSTALL_LIFECYCLE="${WINLOTTERY_VERIFY_INSTALL_LIFECYCLE:-0}"
 readonly VERIFY_PROCESS_RECOVERY="${WINLOTTERY_VERIFY_PROCESS_RECOVERY:-0}"
 readonly VERIFY_ABRUPT_TERMINATION="${WINLOTTERY_VERIFY_ABRUPT_TERMINATION:-0}"
 readonly VERIFY_CRASH_RECOVERY="${WINLOTTERY_VERIFY_CRASH_RECOVERY:-0}"
 readonly VERIFY_MEMORY_PRESSURE="${WINLOTTERY_VERIFY_MEMORY_PRESSURE:-0}"
+readonly VERIFY_VERSION_UPGRADE="${WINLOTTERY_VERIFY_VERSION_UPGRADE:-0}"
+ios_upgrade_persistent_directories=()
 
 source "${0:A:h}/current-vm-guard.sh"
 
@@ -33,6 +36,11 @@ cleanup_release_check() {
       "$CURRENT_IOS_SIMULATOR_UDID" \
       "$IOS_EXPECTED_BUNDLE_ID" >/dev/null 2>&1 || true
   fi
+  local persistent_directory
+  for persistent_directory in "${ios_upgrade_persistent_directories[@]}"; do
+    rm -f -- "$persistent_directory/persistent-marker"
+    rmdir "$persistent_directory" 2>/dev/null || true
+  done
   if [[ -n "${release_check_directory:-}" && -d "$release_check_directory" ]]; then
     rm -rf -- "$release_check_directory"
   fi
@@ -41,6 +49,31 @@ cleanup_release_check() {
 # 要求文件存在且非空，避免后续命令误用不存在的构建产物。
 require_release_file() {
   [[ -s "$1" ]] || current_vm_fail "缺少构建产物 $1"
+}
+
+# 使用同一本机测试证书签名 Release APK，只供锁定 Android 虚拟机安装。
+sign_android_release_apk() {
+  local unsigned_apk="$1"
+  local aligned_apk="$2"
+  local signed_apk="$3"
+
+  "$zipalign_command" -f 4 "$unsigned_apk" "$aligned_apk"
+  "$apksigner_command" sign \
+    --ks "$android_test_keystore" \
+    --ks-key-alias androiddebugkey \
+    --ks-pass pass:android \
+    --key-pass pass:android \
+    --out "$signed_apk" \
+    "$aligned_apk"
+  "$apksigner_command" verify --verbose "$signed_apk"
+}
+
+# 从 APK 清单读取纯数字构建号，供升级方向检查使用。
+read_android_version_code() {
+  local apk="$1"
+  "$aapt_command" dump badging "$apk" |
+    sed -n "s/^package: .*versionCode='\([^']*\)'.*/\1/p" |
+    head -n 1
 }
 
 # 强制停止 Android 应用后重新启动，验证两类遗留临时图片都会在初始化时清扫。
@@ -453,6 +486,141 @@ verify_ios_memory_pressure() {
   ios_restore_required=0
 }
 
+# 执行 Android Release 构建号升级，验证持久标记保留、临时图片清扫和 Release 恢复。
+verify_android_version_upgrade() {
+  local base_debug_apk="$1"
+  local base_release_apk="$2"
+  local current_debug_apk="$3"
+  local current_release_apk="$4"
+  local persistent_marker="files/upgrade-acceptance/persistent-marker"
+  local ticket_marker="cache/ticket-images/upgrade-marker.jpg"
+  local camera_marker="cache/camera-captures/upgrade-marker.jpg"
+  local base_version_code current_version_code
+  base_version_code="$(read_android_version_code "$base_release_apk")"
+  current_version_code="$(read_android_version_code "$current_release_apk")"
+  print -r -- "$base_version_code" | rg -q '^[0-9]+$' || current_vm_fail "Android 基线构建号不是纯数字"
+  print -r -- "$current_version_code" | rg -q '^[0-9]+$' || current_vm_fail "Android 当前构建号不是纯数字"
+  (( current_version_code > base_version_code )) || current_vm_fail "Android 当前构建号没有高于升级基线"
+
+  android_restore_required=1
+  adb -s "$CURRENT_ANDROID_SERIAL_ID" uninstall "$ANDROID_APPLICATION_ID" >/dev/null 2>&1 || true
+  adb -s "$CURRENT_ANDROID_SERIAL_ID" install "$base_debug_apk"
+  adb -s "$CURRENT_ANDROID_SERIAL_ID" shell am start -W -n "$ANDROID_APPLICATION_ID/$ANDROID_ACTIVITY"
+  local debug_package_flags
+  debug_package_flags="$(adb -s "$CURRENT_ANDROID_SERIAL_ID" shell dumpsys package "$ANDROID_APPLICATION_ID" | rg 'pkgFlags=' | head -n 1)"
+  [[ "$debug_package_flags" == *DEBUGGABLE* ]] || current_vm_fail "Android 升级基线测试包不可调试"
+  adb -s "$CURRENT_ANDROID_SERIAL_ID" shell run-as "$ANDROID_APPLICATION_ID" \
+    mkdir -p files/upgrade-acceptance cache/ticket-images cache/camera-captures
+  adb -s "$CURRENT_ANDROID_SERIAL_ID" shell run-as "$ANDROID_APPLICATION_ID" \
+    touch "$persistent_marker" "$ticket_marker" "$camera_marker"
+
+  adb -s "$CURRENT_ANDROID_SERIAL_ID" install -r "$base_release_apk"
+  local base_package_flags
+  base_package_flags="$(adb -s "$CURRENT_ANDROID_SERIAL_ID" shell dumpsys package "$ANDROID_APPLICATION_ID" | rg 'pkgFlags=' | head -n 1)"
+  [[ "$base_package_flags" != *DEBUGGABLE* ]] || current_vm_fail "Android 升级前没有切换到 Release 基线包"
+  local installed_base_version
+  installed_base_version="$(adb -s "$CURRENT_ANDROID_SERIAL_ID" shell dumpsys package "$ANDROID_APPLICATION_ID" | sed -n 's/^[[:space:]]*versionCode=\([0-9]*\).*/\1/p' | head -n 1)"
+  [[ "$installed_base_version" == "$base_version_code" ]] || current_vm_fail "Android 安装的基线构建号不匹配"
+
+  adb -s "$CURRENT_ANDROID_SERIAL_ID" install -r "$current_release_apk"
+  local current_package_flags
+  current_package_flags="$(adb -s "$CURRENT_ANDROID_SERIAL_ID" shell dumpsys package "$ANDROID_APPLICATION_ID" | rg 'pkgFlags=' | head -n 1)"
+  [[ "$current_package_flags" != *DEBUGGABLE* ]] || current_vm_fail "Android 升级后没有保持 Release 包"
+  local installed_current_version
+  installed_current_version="$(adb -s "$CURRENT_ANDROID_SERIAL_ID" shell dumpsys package "$ANDROID_APPLICATION_ID" | sed -n 's/^[[:space:]]*versionCode=\([0-9]*\).*/\1/p' | head -n 1)"
+  [[ "$installed_current_version" == "$current_version_code" ]] || current_vm_fail "Android 升级后的构建号不匹配"
+  adb -s "$CURRENT_ANDROID_SERIAL_ID" shell am start -W -n "$ANDROID_APPLICATION_ID/$ANDROID_ACTIVITY"
+  sleep 1
+
+  adb -s "$CURRENT_ANDROID_SERIAL_ID" install -r -d "$current_debug_apk"
+  adb -s "$CURRENT_ANDROID_SERIAL_ID" shell run-as "$ANDROID_APPLICATION_ID" test -f "$persistent_marker" ||
+    current_vm_fail "Android 构建号升级后匿名持久标记丢失"
+  if adb -s "$CURRENT_ANDROID_SERIAL_ID" shell run-as "$ANDROID_APPLICATION_ID" test -e "$ticket_marker" ||
+    adb -s "$CURRENT_ANDROID_SERIAL_ID" shell run-as "$ANDROID_APPLICATION_ID" test -e "$camera_marker"; then
+    current_vm_fail "Android 构建号升级并启动后仍存在临时图片标记"
+  fi
+  adb -s "$CURRENT_ANDROID_SERIAL_ID" shell run-as "$ANDROID_APPLICATION_ID" rm -f "$persistent_marker"
+  adb -s "$CURRENT_ANDROID_SERIAL_ID" install -r -d "$current_release_apk"
+  adb -s "$CURRENT_ANDROID_SERIAL_ID" shell am force-stop "$ANDROID_APPLICATION_ID"
+  adb -s "$CURRENT_ANDROID_SERIAL_ID" shell am start -W -n "$ANDROID_APPLICATION_ID/$ANDROID_ACTIVITY"
+  current_package_flags="$(adb -s "$CURRENT_ANDROID_SERIAL_ID" shell dumpsys package "$ANDROID_APPLICATION_ID" | rg 'pkgFlags=' | head -n 1)"
+  [[ "$current_package_flags" != *DEBUGGABLE* ]] || current_vm_fail "Android 升级专项结束后没有恢复 Release 包"
+  android_process_id="$(adb -s "$CURRENT_ANDROID_SERIAL_ID" shell pidof "$ANDROID_APPLICATION_ID" | tr -d '\r')"
+  print -r -- "$android_process_id" | rg -q '^[0-9]+$' || current_vm_fail "Android 升级专项结束后 Release 进程未存活"
+  android_restore_required=0
+}
+
+# 执行 iOS Release 构建号升级，验证匿名数据保留、临时票图清扫和 Release 恢复。
+verify_ios_version_upgrade() {
+  local base_release_app="$1"
+  local current_release_app="$2"
+  local base_info_plist="$base_release_app/Info.plist"
+  local current_info_plist="$current_release_app/Info.plist"
+  local base_bundle_version current_bundle_version
+  base_bundle_version="$(plutil -extract CFBundleVersion raw "$base_info_plist")"
+  current_bundle_version="$(plutil -extract CFBundleVersion raw "$current_info_plist")"
+  print -r -- "$base_bundle_version" | rg -q '^[0-9]+$' || current_vm_fail "iOS 基线构建号不是纯数字"
+  print -r -- "$current_bundle_version" | rg -q '^[0-9]+$' || current_vm_fail "iOS 当前构建号不是纯数字"
+  (( current_bundle_version > base_bundle_version )) || current_vm_fail "iOS 当前构建号没有高于升级基线"
+  local expected_data_prefix="$HOME/Library/Developer/CoreSimulator/Devices/$CURRENT_IOS_SIMULATOR_UDID/data/Containers/Data/Application/"
+  local expected_app_prefix="$HOME/Library/Developer/CoreSimulator/Devices/$CURRENT_IOS_SIMULATOR_UDID/data/Containers/Bundle/Application/"
+
+  ios_restore_required=1
+  xcrun simctl terminate "$CURRENT_IOS_SIMULATOR_UDID" "$IOS_EXPECTED_BUNDLE_ID" >/dev/null 2>&1 || true
+  xcrun simctl uninstall "$CURRENT_IOS_SIMULATOR_UDID" "$IOS_EXPECTED_BUNDLE_ID" >/dev/null 2>&1 || true
+  xcrun simctl install "$CURRENT_IOS_SIMULATOR_UDID" "$base_release_app"
+  local data_container_before app_container_before
+  data_container_before="$(xcrun simctl get_app_container "$CURRENT_IOS_SIMULATOR_UDID" "$IOS_EXPECTED_BUNDLE_ID" data)"
+  app_container_before="$(xcrun simctl get_app_container "$CURRENT_IOS_SIMULATOR_UDID" "$IOS_EXPECTED_BUNDLE_ID" app)"
+  [[ "$data_container_before" == "$expected_data_prefix"* ]] || current_vm_fail "iOS 升级前数据容器不属于指定 Simulator"
+  [[ "$app_container_before" == "$expected_app_prefix"* ]] || current_vm_fail "iOS 升级前应用容器不属于指定 Simulator"
+  local installed_base_version
+  installed_base_version="$(plutil -extract CFBundleVersion raw "$app_container_before/Info.plist")"
+  [[ "$installed_base_version" == "$base_bundle_version" ]] || current_vm_fail "iOS 安装的基线构建号不匹配"
+  local persistent_directory="$data_container_before/Library/Application Support/WinLotteryUpgradeAcceptance"
+  local persistent_marker="$persistent_directory/persistent-marker"
+  local ticket_directory="$data_container_before/tmp/WinLotteryTicketImages"
+  local ticket_marker="$ticket_directory/upgrade-marker.jpg"
+  ios_upgrade_persistent_directories+=("$persistent_directory")
+  mkdir -p "$persistent_directory" "$ticket_directory"
+  touch "$persistent_marker" "$ticket_marker"
+
+  xcrun simctl install "$CURRENT_IOS_SIMULATOR_UDID" "$current_release_app"
+  local data_container_after app_container_after
+  data_container_after="$(xcrun simctl get_app_container "$CURRENT_IOS_SIMULATOR_UDID" "$IOS_EXPECTED_BUNDLE_ID" data)"
+  app_container_after="$(xcrun simctl get_app_container "$CURRENT_IOS_SIMULATOR_UDID" "$IOS_EXPECTED_BUNDLE_ID" app)"
+  [[ "$data_container_after" == "$expected_data_prefix"* ]] || current_vm_fail "iOS 升级后数据容器不属于指定 Simulator"
+  [[ "$app_container_after" == "$expected_app_prefix"* ]] || current_vm_fail "iOS 升级后应用容器不属于指定 Simulator"
+  persistent_directory="$data_container_after/Library/Application Support/WinLotteryUpgradeAcceptance"
+  persistent_marker="$persistent_directory/persistent-marker"
+  ticket_directory="$data_container_after/tmp/WinLotteryTicketImages"
+  ticket_marker="$ticket_directory/upgrade-marker.jpg"
+  if [[ "$data_container_after" != "$data_container_before" ]]; then
+    ios_upgrade_persistent_directories+=("$persistent_directory")
+  fi
+  local installed_current_version
+  installed_current_version="$(plutil -extract CFBundleVersion raw "$app_container_after/Info.plist")"
+  [[ "$installed_current_version" == "$current_bundle_version" ]] || current_vm_fail "iOS 升级后的构建号不匹配"
+  ios_launch_result="$({
+    xcrun simctl launch --terminate-running-process \
+      "$CURRENT_IOS_SIMULATOR_UDID" \
+      "$IOS_EXPECTED_BUNDLE_ID"
+  })"
+  [[ "$ios_launch_result" == "$IOS_EXPECTED_BUNDLE_ID: "* ]] || current_vm_fail "iOS 升级后 Release 启动结果异常"
+  sleep 1
+  [[ -f "$persistent_marker" ]] || current_vm_fail "iOS 构建号升级后匿名持久标记丢失"
+  [[ ! -e "$ticket_marker" ]] || current_vm_fail "iOS 构建号升级并启动后仍存在临时票图标记"
+  rm -f -- "$persistent_marker"
+  rmdir "$persistent_directory" 2>/dev/null || true
+  local release_process_id="${ios_launch_result##*: }"
+  print -r -- "$release_process_id" | rg -q '^[0-9]+$' || current_vm_fail "iOS 升级后 Release 进程 PID 不是纯数字"
+  local release_process_command
+  release_process_command="$(ps -p "$release_process_id" -o command= | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+  [[ "$release_process_command" == "$app_container_after/WinLottery" ]] ||
+    current_vm_fail "iOS 升级专项结束后 Release 进程没有保持存活"
+  ios_restore_required=0
+}
+
 # 使用可调试测试包放置匿名标记，验证 Android 卸载清除数据并恢复 Release 包。
 verify_android_install_lifecycle() {
   local debug_apk="$1"
@@ -536,6 +704,8 @@ verify_current_mobile_vms
   current_vm_fail "WINLOTTERY_VERIFY_CRASH_RECOVERY 只允许 0 或 1"
 [[ "$VERIFY_MEMORY_PRESSURE" == "0" || "$VERIFY_MEMORY_PRESSURE" == "1" ]] ||
   current_vm_fail "WINLOTTERY_VERIFY_MEMORY_PRESSURE 只允许 0 或 1"
+[[ "$VERIFY_VERSION_UPGRADE" == "0" || "$VERIFY_VERSION_UPGRADE" == "1" ]] ||
+  current_vm_fail "WINLOTTERY_VERIFY_VERSION_UPGRADE 只允许 0 或 1"
 if [[ "$VERIFY_MEMORY_PRESSURE" == "1" ]]; then
   xcrun --find lldb >/dev/null || current_vm_fail "缺少 iOS Simulator 调试器"
 fi
@@ -543,6 +713,15 @@ fi
 for required_command in codesign file jarsigner plutil rg shasum strings unzip xcodebuild; do
   command -v "$required_command" >/dev/null || current_vm_fail "缺少命令 $required_command"
 done
+if [[ "$VERIFY_VERSION_UPGRADE" == "1" ]]; then
+  for required_command in git tar; do
+    command -v "$required_command" >/dev/null || current_vm_fail "缺少命令 $required_command"
+  done
+  git -C "$REPOSITORY_ROOT" cat-file -e "${UPGRADE_BASE_REVISION}^{commit}" 2>/dev/null ||
+    current_vm_fail "找不到升级基线提交 $UPGRADE_BASE_REVISION"
+  git -C "$REPOSITORY_ROOT" merge-base --is-ancestor "$UPGRADE_BASE_REVISION" HEAD ||
+    current_vm_fail "升级基线不是当前提交的祖先"
+fi
 
 readonly android_sdk_root="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
 [[ -n "$android_sdk_root" ]] || current_vm_fail "未配置 Android SDK 路径"
@@ -568,8 +747,46 @@ trap cleanup_release_check EXIT
 cd "$REPOSITORY_ROOT"
 export ANDROID_SERIAL="$CURRENT_ANDROID_SERIAL_ID"
 
+if [[ "$VERIFY_VERSION_UPGRADE" == "1" ]]; then
+  upgrade_base_source="$release_check_directory/upgrade-base-source"
+  mkdir -p "$upgrade_base_source"
+  git archive "$UPGRADE_BASE_REVISION" | tar -x -C "$upgrade_base_source"
+  (
+    cd "$upgrade_base_source"
+    ANDROID_HOME="$android_sdk_root" ./gradlew \
+      spotlessCheck \
+      :androidApp:assembleDebug \
+      :androidApp:assembleRelease \
+      --rerun-tasks \
+      --console=plain
+  )
+  upgrade_base_debug_apk="$upgrade_base_source/androidApp/build/outputs/apk/debug/androidApp-debug.apk"
+  upgrade_base_unsigned_apk="$upgrade_base_source/androidApp/build/outputs/apk/release/androidApp-release-unsigned.apk"
+  upgrade_base_aligned_apk="$release_check_directory/upgrade-base-release-aligned.apk"
+  upgrade_base_signed_apk="$release_check_directory/upgrade-base-release-test-signed.apk"
+  require_release_file "$upgrade_base_debug_apk"
+  require_release_file "$upgrade_base_unsigned_apk"
+  sign_android_release_apk \
+    "$upgrade_base_unsigned_apk" \
+    "$upgrade_base_aligned_apk" \
+    "$upgrade_base_signed_apk"
+
+  upgrade_base_ios_derived_data="$release_check_directory/upgrade-base-ios-derived-data"
+  xcodebuild \
+    -project "$upgrade_base_source/iosApp/iosApp.xcodeproj" \
+    -scheme iosApp \
+    -configuration Release \
+    -sdk iphonesimulator \
+    -destination "platform=iOS Simulator,id=$CURRENT_IOS_SIMULATOR_UDID" \
+    -derivedDataPath "$upgrade_base_ios_derived_data" \
+    build
+  upgrade_base_ios_release_app="$upgrade_base_ios_derived_data/Build/Products/Release-iphonesimulator/WinLottery.app"
+  require_release_file "$upgrade_base_ios_release_app/Info.plist"
+  require_release_file "$upgrade_base_ios_release_app/WinLottery"
+fi
+
 release_gradle_tasks=(spotlessCheck :androidApp:assembleRelease :androidApp:bundleRelease)
-if [[ "$VERIFY_INSTALL_LIFECYCLE" == "1" || "$VERIFY_PROCESS_RECOVERY" == "1" || "$VERIFY_ABRUPT_TERMINATION" == "1" || "$VERIFY_CRASH_RECOVERY" == "1" || "$VERIFY_MEMORY_PRESSURE" == "1" ]]; then
+if [[ "$VERIFY_INSTALL_LIFECYCLE" == "1" || "$VERIFY_PROCESS_RECOVERY" == "1" || "$VERIFY_ABRUPT_TERMINATION" == "1" || "$VERIFY_CRASH_RECOVERY" == "1" || "$VERIFY_MEMORY_PRESSURE" == "1" || "$VERIFY_VERSION_UPGRADE" == "1" ]]; then
   release_gradle_tasks+=(:androidApp:assembleDebug)
 fi
 ./gradlew "${release_gradle_tasks[@]}" --rerun-tasks --console=plain
@@ -581,19 +798,11 @@ readonly aligned_android_apk="$release_check_directory/androidApp-release-aligne
 readonly signed_android_apk="$release_check_directory/androidApp-release-test-signed.apk"
 require_release_file "$unsigned_android_apk"
 require_release_file "$android_aab"
-if [[ "$VERIFY_INSTALL_LIFECYCLE" == "1" || "$VERIFY_PROCESS_RECOVERY" == "1" || "$VERIFY_ABRUPT_TERMINATION" == "1" || "$VERIFY_CRASH_RECOVERY" == "1" || "$VERIFY_MEMORY_PRESSURE" == "1" ]]; then
+if [[ "$VERIFY_INSTALL_LIFECYCLE" == "1" || "$VERIFY_PROCESS_RECOVERY" == "1" || "$VERIFY_ABRUPT_TERMINATION" == "1" || "$VERIFY_CRASH_RECOVERY" == "1" || "$VERIFY_MEMORY_PRESSURE" == "1" || "$VERIFY_VERSION_UPGRADE" == "1" ]]; then
   require_release_file "$android_debug_apk"
 fi
 
-"$zipalign_command" -f 4 "$unsigned_android_apk" "$aligned_android_apk"
-"$apksigner_command" sign \
-  --ks "$android_test_keystore" \
-  --ks-key-alias androiddebugkey \
-  --ks-pass pass:android \
-  --key-pass pass:android \
-  --out "$signed_android_apk" \
-  "$aligned_android_apk"
-"$apksigner_command" verify --verbose "$signed_android_apk"
+sign_android_release_apk "$unsigned_android_apk" "$aligned_android_apk" "$signed_android_apk"
 
 if "$aapt_command" dump badging "$signed_android_apk" | rg -q '^application-debuggable'; then
   current_vm_fail "Android Release APK 清单仍允许调试"
@@ -708,6 +917,14 @@ if [[ "$VERIFY_MEMORY_PRESSURE" == "1" ]]; then
   verify_android_memory_pressure "$android_debug_apk" "$signed_android_apk"
   verify_ios_memory_pressure "$ios_debug_app" "$ios_release_app"
 fi
+if [[ "$VERIFY_VERSION_UPGRADE" == "1" ]]; then
+  verify_android_version_upgrade \
+    "$upgrade_base_debug_apk" \
+    "$upgrade_base_signed_apk" \
+    "$android_debug_apk" \
+    "$signed_android_apk"
+  verify_ios_version_upgrade "$upgrade_base_ios_release_app" "$ios_release_app"
+fi
 if [[ "$VERIFY_INSTALL_LIFECYCLE" == "1" ]]; then
   verify_android_install_lifecycle "$android_debug_apk" "$signed_android_apk"
   verify_ios_install_lifecycle "$ios_release_app"
@@ -735,6 +952,9 @@ if [[ "$VERIFY_CRASH_RECOVERY" == "1" ]]; then
 fi
 if [[ "$VERIFY_MEMORY_PRESSURE" == "1" ]]; then
   print "Android 内存收紧回调、iOS Debug 模拟内存警告和 Release 隔离检查通过"
+fi
+if [[ "$VERIFY_VERSION_UPGRADE" == "1" ]]; then
+  print "双虚拟机构建号 1 到 2 的 Release 覆盖升级、匿名数据保留和临时票图清扫检查通过"
 fi
 print "Android APK SHA-256：$(shasum -a 256 "$signed_android_apk" | awk '{print $1}')"
 print "Android AAB SHA-256：$(shasum -a 256 "$android_aab" | awk '{print $1}')"

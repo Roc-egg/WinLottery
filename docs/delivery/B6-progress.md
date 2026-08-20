@@ -4,7 +4,7 @@
 
 ## 状态结论
 
-B6 已开始，但远未通过 V1 发布验收。当前已固化 Android/iOS Release 配置在指定双虚拟机上的可重复构建、非 Debug 属性、覆盖安装、启动、初始化清扫、Android 相机首次拒权、受控进程终止、`SIGKILL`、Debug 受控崩溃恢复、低内存开发回调边界和卸载清除检查，不能替代物理真机矩阵、正式生产签名、跨版本升级、OOM 与真实系统低内存恢复、商店上传、真实票样盲测、性能、隐私材料或数据授权验收。
+B6 已开始，但远未通过 V1 发布验收。当前已固化 Android/iOS Release 配置在指定双虚拟机上的可重复构建、非 Debug 属性、覆盖安装、启动、初始化清扫、Android 相机首次拒权、受控进程终止、`SIGKILL`、Debug 受控崩溃恢复、低内存开发回调边界、卸载清除和构建号 1 → 2 开发签名升级检查，不能替代物理真机矩阵、正式生产签名、数据库迁移、OOM 与真实系统低内存恢复、商店上传、真实票样盲测、性能、隐私材料或数据授权验收。
 
 当前执行目标严格锁定为 Android `Medium_Phone_API_36.1`（`emulator-5554`）和 iPhone 17 Pro / iOS 26.5 Simulator（`E6D04C31-9EB8-4696-990F-DA54D0112E13`）。共享守卫会核对 Android 模拟器标志与 AVD 名称，以及 iOS Simulator 的 UDID、名称、启动状态和运行时；任一目标不匹配时立即失败，不回退到其他 ADB 或 Apple 设备。
 
@@ -31,6 +31,9 @@ B6 已开始，但远未通过 V1 发布验收。当前已固化 Android/iOS Rel
 - 崩溃专项会先用 Debug 包在真实私有临时目录放置空标记，再核对 Android crash buffer 的目标包名与固定异常标记、iOS `simctl --console` 的固定 fatal error 标记以及进程退出；无参数重启后验证标记清扫。Android Release 全部 DEX 与 iOS Release 可执行文件还必须不含崩溃参数和固定标记，最终安装 Release、传入相同参数并验证进程继续存活；失败退出钩子会尽力恢复 Release。
 - 新增 `tools/mobile/run-current-vm-memory-pressure-checks.sh`。Android 主宿主将 `onTrimMemory` 转发给按构建变体装配的验收函数，Debug 只记录匿名级别，Release 实现始终无操作且 DEX 不得包含固定标记；专项使用系统 `am send-trim-memory` 发送 `RUNNING_CRITICAL` 并核对精确级别 15、原 PID 存活和 Release 反向隔离。
 - iOS Debug 只在 `#if DEBUG` 内注册 `UIApplication.didReceiveMemoryWarningNotification` 观察者，收到回调后在应用数据容器 `tmp` 写空标记。专项用 LLDB 附加指定 Simulator 的已核验应用 PID 并调用 UIKit `_performMemoryWarning`，随后核对标记、原进程命令路径和 PID；Release 可执行文件必须不含标记并恢复运行。该调试语义不制造真实系统压力，不覆盖 OOM、Jetsam、物理真机或 Release 低内存恢复。
+- Android `versionCode` 与 iOS `CURRENT_PROJECT_VERSION` 已从 1 提升到 2，两端展示版本同步从 `1.0` 提升到 `1.0.1`。
+- 新增 `tools/mobile/run-current-vm-upgrade-checks.sh`，从提交 `7df5e68` 的干净归档重新构建双端构建号 1 Release 基线，再完整构建当前构建号 2，并只在锁定双虚拟机执行 Release 1 → Release 2 覆盖升级。
+- Android 先用同 applicationId、同一本机测试证书的基线 Debug 包在私有目录放置匿名持久标记、临时票图和 CameraX 成片标记，再切换到非 Debug Release 1 并实际升级到 Release 2；当前 Debug 包只用于升级后读取私有标记。iOS 在基线 Release 数据容器放置匿名标记后直接覆盖安装当前 Release；容器 UUID 允许由 Simulator 更新，但升级后容器必须仍属于指定 Simulator，且数据必须真实保留。两端最终删除验收标记并恢复构建号 2 Release。
 
 ## 本轮验证记录
 
@@ -39,7 +42,7 @@ B6 已开始，但远未通过 V1 发布验收。当前已固化 Android/iOS Rel
 - 临时验收签名 Android Release APK 为 59,317,806 字节，SHA-256 为 `2f1c074dcae92410cf5c1ae00606fb4123bd9809866321749f9326bc55b5e28e`；覆盖安装、冷启动和进程存活检查通过。
 - Android Release AAB 为 34,272,214 字节，SHA-256 为 `ae57d147e9e5123c02070d54cca01d2b2afcde072b649d7d4a61418da6ce9391`；ZIP 结构完整，但没有签名，不能作为可上架 AAB。
 - iOS `Release-iphonesimulator` 应用为 40,668 KiB；arm64、签名完整性、非调试附加、覆盖安装和启动检查通过。
-- 八个移动 Shell 脚本均通过 Zsh 语法检查，本增量通过 `git diff --check`。
+- 九个移动 Shell 脚本均通过 Zsh 语法检查，本增量通过 `git diff --check`。
 - 临时图片清扫增量复跑后，iOS Simulator 为 230/230；Android 数据层为 66/66、识别层为 59/59，合计 125 项 Android 设备测试；失败、错误和跳过均为 0，140 个 Gradle 任务全部实际执行。
 - 上述识别层 59 项包含 2 项新增 Android 平台文件测试；iOS 的 230 项包含 2 项新增平台文件测试。用例验证的是应用初始化时实际调用的文件清扫机制，不等同于完整的进程强杀、版本升级或卸载验收。
 - Android 权限专项先清空当前模拟器应用数据，从冷启动首页进入拍照并在系统原生权限框选择“不允许”；随后页面显示“无法读取图片”和“未获得相机权限，无法拍摄彩票”，主进程保持存活，返回首页入口可用。1080×2400 页面没有裁切或重叠，拒权发生在创建成片前。
@@ -57,6 +60,10 @@ B6 已开始，但远未通过 V1 发布验收。当前已固化 Android/iOS Rel
 - 低内存开发专项重新执行 Android Debug、Release APK 与 AAB 构建，180 个 Gradle 任务全部实际执行成功；iOS Debug 和 `Release-iphonesimulator` 两套应用均完整构建成功。Android Debug 收到精确 `RUNNING_CRITICAL=15` 且原 PID 保持，Release 收到相同系统命令后也保持运行且没有输出 Debug 标记。
 - iOS LLDB 成功附加指定 Debug Simulator 进程并调用 `_performMemoryWarning`，应用真实通知回调在其数据容器 `tmp` 创建固定空标记，原 PID 与应用容器命令路径保持；标记随后删除，Release 二进制不含该标记且最终进程存活。临时验收签名 APK 为 59,317,806 字节，SHA-256 为 `af660ef9e93d72071ac97458d9bc95bd52dc5bcdb64f79078bcfbb503e601717`；未签名 AAB 为 34,273,214 字节，SHA-256 为 `fd778279b3d7e77045853eccd8362f72671c7f9ca74abe7d272396ef80591649`；iOS Release Simulator `.app` 为 40,668 KiB，临时 DerivedData 已删除。
 - 低内存开发增量完成后复跑固定双虚拟机回归：iOS Simulator 230/230，Android 数据层 66/66、识别层 59/59，失败、错误和跳过均为 0；140 个 Gradle 任务全部实际执行成功。
+- 构建号升级专项从固定基线完整执行 Android Debug/Release 的 171 个 Gradle 任务并全部成功，当前源码的 Debug、Release APK 与 Release AAB 重新执行 180 个任务并全部成功；基线和当前 iOS `Release-iphonesimulator` 也均完整构建成功。
+- Android 实际执行构建号 1 Release → 构建号 2 Release 覆盖升级，升级后持久标记保留，启动时票图与 CameraX 临时标记均被清扫；iOS 实际执行相同方向的 Release 覆盖升级，升级后持久标记保留且临时票图被清扫。两端最终版本均为 `1.0.1 (2)`、非 Debug Release 且进程存活。
+- 本次临时验收签名 APK 为 59,317,806 字节，SHA-256 为 `2f8deefb6d26c76ceb995307f6799207208257fc0e66ad91d50bef2801a13696`；未签名 AAB 为 34,273,216 字节，SHA-256 为 `1a4d42e36db4c7a6355d1f0c1950f0d9c739ea1a5ac2979ed3833376b2cb2c36`；iOS Release Simulator `.app` 为 40,668 KiB，临时验收签名产物和 DerivedData 已删除。
+- 构建号升级增量完成后复跑固定双虚拟机回归：iOS Simulator 230/230，Android 数据层 66/66、识别层 59/59，失败、错误和跳过均为 0；140 个 Gradle 任务全部实际执行成功。最终 Android 构建号 2 包不含 `DEBUGGABLE` 且进程存活；iOS 为 `1.0.1 (2)`，进程命令路径属于指定 Simulator，匿名升级标记已删除。
 
 ## 未完成范围
 
@@ -65,13 +72,13 @@ B6 已开始，但远未通过 V1 发布验收。当前已固化 Android/iOS Rel
 - Android/iPhone 物理真机矩阵未执行；Simulator 结果不能代替相机、内存、系统权限、安装升级和真实性能验收。
 - 12MP 固定输入、重复采样入口及可信 P95 统计尚未建立；当前没有用单次模拟器耗时冒充产品性能指标。
 - 每种彩票 150 至 200 张不同物理票、每张至少 3 种拍摄条件的盲测规模未达到，逐 token 双人真值和平台分别校准也未完成。
-- 旋转、真实低内存恢复和网络抖动仍未形成完整发布矩阵；进程专项覆盖受控 `force-stop` / `terminate`、已核验 PID 的 `SIGKILL`、Android Debug 主线程异常和 iOS Debug `fatalError` 后的临时文件清扫，低内存开发专项只覆盖 Android 系统内存收紧回调与 iOS Debug 模拟 UIKit 内存警告。当前仍不覆盖 native crash、ANR/watchdog、OOM、Jetsam、真实低内存系统回收、崩溃上报隐私或业务状态持久化。同版本测试产物的覆盖安装及双虚拟机卸载清除已完成，跨版本升级迁移、物理真机卸载和系统备份恢复边界未完成。权限专项只完成 Android 当前模拟器首次相机拒权，iPhone 真机拒权和系统设置恢复仍未完成。
+- 旋转、真实低内存恢复和网络抖动仍未形成完整发布矩阵；进程专项覆盖受控 `force-stop` / `terminate`、已核验 PID 的 `SIGKILL`、Android Debug 主线程异常和 iOS Debug `fatalError` 后的临时文件清扫，低内存开发专项只覆盖 Android 系统内存收紧回调与 iOS Debug 模拟 UIKit 内存警告。当前仍不覆盖 native crash、ANR/watchdog、OOM、Jetsam、真实低内存系统回收、崩溃上报隐私或业务状态持久化。同版本覆盖安装、双虚拟机卸载清除及构建号 1 → 2 开发签名升级已完成；生产签名升级、数据库迁移、物理真机卸载和系统备份恢复边界未完成。权限专项只完成 Android 当前模拟器首次相机拒权，iPhone 真机拒权和系统设置恢复仍未完成。
 - B2 第二人独立真值复核、连续 6 个开奖窗口采样和官方数据商用授权未完成。
 - 隐私政策、免责声明、应用商店隐私清单、截图文案、年龄与彩票相关政策核对尚未完成。
 
 ## 下一步
 
-1. 在当前双虚拟机继续补齐跨版本升级专项，并继续由精确设备守卫阻止误用其他设备；真实低内存恢复、iOS 相机拒权和物理真机卸载保留到真机矩阵。
-2. 建立固定 12MP 输入和重复采样工具，先形成模拟器开发基线；最终 P95 仍必须在目标物理真机矩阵重新验收。
+1. 建立固定 12MP 输入和重复采样工具，先在当前双虚拟机形成开发基线；最终 P95 仍必须在目标物理真机矩阵重新验收。
+2. 在当前双虚拟机继续补齐旋转与网络抖动等开发检查；真实低内存恢复、iOS 相机拒权、生产签名升级和物理真机卸载保留到真机矩阵。
 3. 准备 Android 生产签名和 iOS 分发配置，但不得把本机调试证书或 Simulator 签名记为发布签名。
 4. 与 B0/B2/B3 并行补齐真实票样盲测、双人真值、开奖窗口、数据授权和隐私合规材料后，再执行完整发布闸门。
