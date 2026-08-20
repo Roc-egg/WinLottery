@@ -44,7 +44,7 @@ B2 核心代码、离线契约测试、跨平台构建和每种彩票 20 个真�
 ./gradlew spotlessCheck jvmTest testAndroidHostTest iosSimulatorArm64Test --rerun-tasks
 ```
 
-最新结果：182 个 Gradle 任务执行成功，共运行 665 项测试，失败、错误和跳过均为 0；另有 Android 16 物理机 63 项历史设备测试通过。
+上一轮完整三目标结果：182 个 Gradle 任务执行成功，共运行 665 项测试，失败、错误和跳过均为 0；另有 Android 16 物理机 63 项历史设备测试通过。本轮按执行约束未复跑 JVM 与 Android Host，新增开奖窗口回归在当前 iOS Simulator 220 项全量和 Android 虚拟机 66 项数据层设备测试中通过。
 
 | 平台 | 离线测试 | 结果 |
 |---|---:|---|
