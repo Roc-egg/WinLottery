@@ -13,12 +13,8 @@ import io.ktor.utils.io.readRemaining
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.TimeZone
-import kotlinx.datetime.atTime
-import kotlinx.datetime.plus
-import kotlinx.datetime.toInstant
 import kotlinx.datetime.toLocalDateTime
 import kotlinx.io.IOException
 import kotlinx.io.readByteArray
@@ -39,7 +35,7 @@ import kotlin.time.Instant
  * 原始响应只在单次调用内存中解析；该对象只保存当前进程的规范化哈希和修订状态，不持久化任何响应。
  *
  * @property httpClient 使用当前平台网络引擎的 Ktor 客户端。
- * @property clock 为发布窗口和证据时间提供可测试时钟。
+ * @property clock 为证据时间和开奖日期合理性提供可测试时钟。
  * @property ruleVersionSelector 根据期号选择规则版本。
  * @property superLottoPdfTextExtractor 当前移动平台的官方 PDF 文本层提取能力。
  */
@@ -152,7 +148,7 @@ class OfficialDrawRepository(
                     return unavailable(DrawStatus.SOURCE_UNAVAILABLE, fetched.message)
                 }
             }
-        val selectedSupporting =
+        val supporting =
             when (
                 val parsed =
                     parseSupporting(
@@ -163,10 +159,7 @@ class OfficialDrawRepository(
                     )
             ) {
                 is SourceParseResult.Success -> {
-                    SelectedSupportingSnapshot(
-                        snapshot = parsed.value,
-                        isLatestAggregate = lotteryType == LotteryType.SUPER_LOTTO,
-                    )
+                    parsed.value
                 }
 
                 SourceParseResult.NotPublished -> {
@@ -175,10 +168,7 @@ class OfficialDrawRepository(
                     }
                     when (val pdf = loadSuperLottoPdfSupporting(main, issue.value)) {
                         is SuperLottoPdfSupportingResult.Success -> {
-                            SelectedSupportingSnapshot(
-                                snapshot = pdf.snapshot,
-                                isLatestAggregate = false,
-                            )
+                            pdf.snapshot
                         }
 
                         is SuperLottoPdfSupportingResult.Unavailable -> {
@@ -200,7 +190,6 @@ class OfficialDrawRepository(
                     return unavailable(DrawStatus.CONFLICT, parsed.message)
                 }
             }
-        val supporting = selectedSupporting.snapshot
 
         val snapshotConsistency = compareSnapshots(main, supporting)
         if (snapshotConsistency == SnapshotConsistency.CONFLICT) {
@@ -210,59 +199,19 @@ class OfficialDrawRepository(
         if (snapshotConsistency == SnapshotConsistency.INCOMPLETE) {
             return unavailable(DrawStatus.PUBLISHING, "主、辅助官网数据面的奖级金额尚未同步完整")
         }
-        val history = isPastHistoricalCutoff(main.drawDate, fetchedAtMillis)
-        var additionalPdfSupporting: SupportingDrawSnapshot? = null
-        if (
-            !history &&
-            lotteryType == LotteryType.SUPER_LOTTO &&
-            selectedSupporting.isLatestAggregate
-        ) {
-            when (val pdf = loadSuperLottoPdfSupporting(main, issue.value)) {
-                is SuperLottoPdfSupportingResult.Success -> {
-                    when (compareSnapshots(main, pdf.snapshot)) {
-                        SnapshotConsistency.CONSISTENT -> {
-                            additionalPdfSupporting = pdf.snapshot
-                        }
-
-                        SnapshotConsistency.INCOMPLETE -> {}
-
-                        SnapshotConsistency.CONFLICT -> {
-                            markConflict(key)
-                            return unavailable(DrawStatus.CONFLICT, "最新聚合数据与同期开奖公告内容不一致")
-                        }
-                    }
-                }
-
-                is SuperLottoPdfSupportingResult.Unavailable -> {
-                    if (pdf.status == DrawStatus.CONFLICT) {
-                        markConflict(key)
-                        return unavailable(pdf.status, pdf.message)
-                    }
-                }
-            }
-        }
-        val stableDecision =
-            observeConsistentSupporting(
+        val supportingDecision =
+            observeSupporting(
                 key = key,
                 canonicalSupportingContent = supporting.evidence.canonicalContent,
-                fetchedAtMillis = fetchedAtMillis,
-                bypassRefreshDelay = history || additionalPdfSupporting != null,
             )
         val revision =
-            when (stableDecision) {
+            when (supportingDecision) {
                 SupportingObservationDecision.Conflict -> {
                     return unavailable(DrawStatus.CONFLICT, "辅助官网证据在主动刷新后发生变化")
                 }
 
-                is SupportingObservationDecision.Publishing -> {
-                    return unavailable(
-                        DrawStatus.PUBLISHING,
-                        "开奖发布窗口内已取得一次候选结果，请至少 60 秒后主动刷新复核",
-                    )
-                }
-
-                is SupportingObservationDecision.Ready -> {
-                    stableDecision.revision
+                is SupportingObservationDecision.Accepted -> {
+                    supportingDecision.revision
                 }
             }
         val status = if (main.payoutFieldsComplete) DrawStatus.FINAL_PAYOUT else DrawStatus.FINAL_NUMBERS
@@ -279,11 +228,7 @@ class OfficialDrawRepository(
                 policy = requireNotNull(main.policy),
                 prizeTiers = main.prizeTiers,
                 evidence = main.evidence.toSourceEvidence(fetchedAtMillis),
-                supportingEvidence =
-                    buildList {
-                        add(supporting.evidence.toSourceEvidence(fetchedAtMillis))
-                        additionalPdfSupporting?.let { add(it.evidence.toSourceEvidence(fetchedAtMillis)) }
-                    },
+                supportingEvidence = listOf(supporting.evidence.toSourceEvidence(fetchedAtMillis)),
             ),
         )
     }
@@ -550,7 +495,6 @@ class OfficialDrawRepository(
                             mainFingerprint = fingerprint,
                             supportingHash = null,
                             revision = previous.revision + 1,
-                            firstConsistentAtMillis = null,
                         )
                     observations[key] = progressed
                     return@withLock MainObservationDecision.Accepted(progressed.revision)
@@ -570,12 +514,10 @@ class OfficialDrawRepository(
             MainObservationDecision.Accepted(observation.revision)
         }
 
-    /** 记录交叉一致的辅助证据并执行 60 秒主动刷新稳定性判断。 */
-    private suspend fun observeConsistentSupporting(
+    /** 记录已经与主数据面交叉一致的官方辅助证据。 */
+    private suspend fun observeSupporting(
         key: DrawKey,
         canonicalSupportingContent: String,
-        fetchedAtMillis: Long,
-        bypassRefreshDelay: Boolean,
     ): SupportingObservationDecision =
         observationMutex.withLock {
             val previous = requireNotNull(observations[key])
@@ -585,18 +527,9 @@ class OfficialDrawRepository(
                 observations[key] = previous.copy(revision = previous.revision + 1, conflicted = true)
                 return@withLock SupportingObservationDecision.Conflict
             }
-            val firstConsistentAt = previous.firstConsistentAtMillis ?: fetchedAtMillis
-            val updated =
-                previous.copy(
-                    supportingHash = hash,
-                    firstConsistentAtMillis = firstConsistentAt,
-                )
+            val updated = previous.copy(supportingHash = hash)
             observations[key] = updated
-            if (bypassRefreshDelay || fetchedAtMillis - firstConsistentAt >= MINIMUM_REFRESH_INTERVAL_MILLIS) {
-                SupportingObservationDecision.Ready(updated.revision)
-            } else {
-                SupportingObservationDecision.Publishing(updated.revision)
-            }
+            SupportingObservationDecision.Accepted(updated.revision)
         }
 
     /** 主记录从已存在变为明确无记录时标记冲突。 */
@@ -675,8 +608,6 @@ class OfficialDrawRepository(
         val supportingHash: String? = null,
         /** 同一期内容修订号。 */
         val revision: Int = 1,
-        /** 首次取得主、辅助一致候选的 Unix 毫秒值。 */
-        val firstConsistentAtMillis: Long? = null,
         /** 是否已检测到不可自动恢复的内容冲突。 */
         val conflicted: Boolean = false,
     )
@@ -797,16 +728,10 @@ class OfficialDrawRepository(
         data object Conflict : MainObservationDecision
     }
 
-    /** 辅助证据稳定性观察结果。 */
+    /** 辅助证据观察结果。 */
     private sealed interface SupportingObservationDecision {
-        /** 发布窗口内仍需要用户稍后主动刷新。 */
-        data class Publishing(
-            /** 当前修订号。 */
-            val revision: Int,
-        ) : SupportingObservationDecision
-
-        /** 已满足历史期或 60 秒稳定性条件。 */
-        data class Ready(
+        /** 已记录与主数据面一致的辅助证据。 */
+        data class Accepted(
             /** 当前修订号。 */
             val revision: Int,
         ) : SupportingObservationDecision
@@ -886,14 +811,6 @@ class OfficialDrawRepository(
         ) : SuperLottoPdfSupportingResult
     }
 
-    /** 本次主辅助证据选择结果。 */
-    private data class SelectedSupportingSnapshot(
-        /** 已通过适配器校验的辅助开奖快照。 */
-        val snapshot: SupportingDrawSnapshot,
-        /** 该快照是否来自大乐透最新开奖聚合接口。 */
-        val isLatestAggregate: Boolean,
-    )
-
     /** 官网端点集合。 */
     private data class DrawEndpoints(
         /** 精确单期主查询地址。 */
@@ -957,7 +874,7 @@ class OfficialDrawRepository(
         }
     }
 
-    /** 官网地址、发布窗口和格式常量。 */
+    /** 官网地址和格式常量。 */
     private companion object {
         /** 大乐透精确历史期主接口。 */
         const val SUPER_LOTTO_MAIN_URL =
@@ -975,9 +892,6 @@ class OfficialDrawRepository(
         const val DOUBLE_COLOR_BALL_SUPPORTING_URL =
             "https://www.cwl.gov.cn/cwl_admin/front/cwlkj/search/kjxx/findKjxx/forIssue"
 
-        /** 用户触发刷新之间的最低稳定性间隔。 */
-        const val MINIMUM_REFRESH_INTERVAL_MILLIS = 60_000L
-
         /** 大乐透期号长度。 */
         const val SUPER_LOTTO_ISSUE_LENGTH = 5
 
@@ -992,24 +906,6 @@ class OfficialDrawRepository(
     }
 }
 
-/**
- * 判断目标期开奖是否已超过次日北京时间 09:00。
- *
- * 超过该时间的历史期可以在同一次用户操作中完成双数据面核对，不要求 60 秒刷新等待。
- */
-internal fun isPastHistoricalCutoff(
-    drawDate: String,
-    fetchedAtMillis: Long,
-): Boolean {
-    val date = LocalDate.parse(drawDate)
-    val cutoff =
-        date
-            .plus(1, DateTimeUnit.DAY)
-            .atTime(CUTOFF_HOUR, CUTOFF_MINUTE)
-            .toInstant(CHINA_TIME_ZONE)
-    return Instant.fromEpochMilliseconds(fetchedAtMillis) >= cutoff
-}
-
 /** 判断开奖日期是否不晚于本次查询时的北京时间日期。 */
 internal fun isDrawDateReasonable(
     drawDate: String,
@@ -1022,9 +918,3 @@ internal fun isDrawDateReasonable(
 
 /** 北京时区用于开奖发布窗口判断。 */
 private val CHINA_TIME_ZONE = TimeZone.of("Asia/Shanghai")
-
-/** 历史期免等待核对的北京时间小时。 */
-private const val CUTOFF_HOUR = 9
-
-/** 历史期免等待核对的北京时间分钟。 */
-private const val CUTOFF_MINUTE = 0

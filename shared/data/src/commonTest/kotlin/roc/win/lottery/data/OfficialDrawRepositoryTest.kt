@@ -25,7 +25,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlin.time.Clock
-import kotlin.time.Duration
 import kotlin.time.Instant
 
 /** 官网仓库请求范围、状态映射、稳定性、修订和冲突测试。 */
@@ -73,33 +72,25 @@ class OfficialDrawRepositoryTest {
             assertEquals(DrawStatus.FINAL_NUMBERS, assertIs<DrawQueryResult.Success>(result).drawResult.status)
         }
 
-    /** 发布窗口首次一致结果只能进入候选，60 秒后再次主动调用才可放行。 */
+    /** 双色球两个官方数据面明确发布且一致时应在首次查询形成终态。 */
     @Test
-    fun publishingWindowRequiresSecondUserRefreshAfterSixtySeconds() =
+    fun publishedDoubleColorBallSourcesReturnImmediately() =
         runTest {
-            val clock = MutableTestClock("2026-08-09T13:00:00Z")
             val repository =
                 ssqRepository(
                     DrawContractFixtures.doubleColorBallMain(),
                     DrawContractFixtures.doubleColorBallSupporting(),
-                    clock,
+                    MutableTestClock("2026-08-09T13:00:00Z"),
                 )
 
-            val first = repository.getDraw(LotteryType.DOUBLE_COLOR_BALL, Issue("2026091"))
-            assertEquals(DrawStatus.PUBLISHING, assertIs<DrawQueryResult.Unavailable>(first).status)
+            val result = repository.getDraw(LotteryType.DOUBLE_COLOR_BALL, Issue("2026091"))
 
-            clock.advance(Duration.parse("59s"))
-            val tooEarly = repository.getDraw(LotteryType.DOUBLE_COLOR_BALL, Issue("2026091"))
-            assertEquals(DrawStatus.PUBLISHING, assertIs<DrawQueryResult.Unavailable>(tooEarly).status)
-
-            clock.advance(Duration.parse("1s"))
-            val stable = repository.getDraw(LotteryType.DOUBLE_COLOR_BALL, Issue("2026091"))
-            assertEquals(DrawStatus.FINAL_PAYOUT, assertIs<DrawQueryResult.Success>(stable).drawResult.status)
+            assertEquals(DrawStatus.FINAL_PAYOUT, assertIs<DrawQueryResult.Success>(result).drawResult.status)
         }
 
-    /** 大乐透发布窗口内取得同期开奖 PDF 且三方一致时可在首次查询形成终态。 */
+    /** 大乐透最新双 JSON 已明确发布时不应额外请求同期开奖 PDF。 */
     @Test
-    fun publishingSuperLottoWithConsistentPdfReturnsFinalResultImmediately() =
+    fun latestSuperLottoDoesNotRequestRedundantPdf() =
         runTest {
             val requests = mutableListOf<String>()
             val repository =
@@ -133,10 +124,6 @@ class OfficialDrawRepositoryTest {
                             )
                         }
 
-                        DLT_PDF_PATH -> {
-                            pdfResponse(SuperLottoAnnouncementTestFixtures.validPdfEnvelope())
-                        }
-
                         else -> {
                             error("收到未预期请求：${request.url}")
                         }
@@ -147,14 +134,13 @@ class OfficialDrawRepositoryTest {
             val draw = assertIs<DrawQueryResult.Success>(result).drawResult
 
             assertEquals(DrawStatus.FINAL_PAYOUT, draw.status)
-            assertEquals(2, draw.supportingEvidence.size)
-            assertEquals(3, requests.size)
-            assertEquals(DLT_PDF_PATH, requests.last())
+            assertEquals(1, draw.supportingEvidence.size)
+            assertEquals(2, requests.size)
         }
 
-    /** 大乐透发布窗口内缺少可解析 PDF 时仍必须保留 60 秒主动复核闸门。 */
+    /** 大乐透两个已审核发布 JSON 一致时无需 PDF 提取器即可首次形成终态。 */
     @Test
-    fun publishingSuperLottoWithoutPdfStillRequiresRefresh() =
+    fun latestSuperLottoPublishedSourcesReturnImmediatelyWithoutPdfExtractor() =
         runTest {
             val repository =
                 repository(clock = MutableTestClock("2026-08-12T15:00:00Z")) { request ->
@@ -167,7 +153,7 @@ class OfficialDrawRepositoryTest {
 
             val result = repository.getDraw(LotteryType.SUPER_LOTTO, Issue("26091"))
 
-            assertEquals(DrawStatus.PUBLISHING, assertIs<DrawQueryResult.Unavailable>(result).status)
+            assertEquals(DrawStatus.FINAL_NUMBERS, assertIs<DrawQueryResult.Success>(result).drawResult.status)
         }
 
     /** 主、辅助号码不一致必须进入冲突，绝不能输出开奖或未中奖结论。 */
@@ -602,16 +588,6 @@ class OfficialDrawRepositoryTest {
             assertEquals(0, requestCount)
         }
 
-    /** 北京时间次日九点是历史期免 60 秒等待的严格边界。 */
-    @Test
-    fun historicalCutoffUsesChinaTime() {
-        val before = Instant.parse("2026-08-10T00:59:59Z").toEpochMilliseconds()
-        val atCutoff = Instant.parse("2026-08-10T01:00:00Z").toEpochMilliseconds()
-
-        assertEquals(false, isPastHistoricalCutoff("2026-08-09", before))
-        assertEquals(true, isPastHistoricalCutoff("2026-08-09", atCutoff))
-    }
-
     /** 创建固定双色球主、辅助响应的仓库。 */
     private fun ssqRepository(
         main: String,
@@ -672,21 +648,16 @@ class OfficialDrawRepositoryTest {
     /** 创建人工确认字段。 */
     private fun <T> confirmed(value: T): ConfirmedValue<T> = ConfirmedValue(value, TicketFieldOrigin.USER)
 
-    /** 可由测试显式推进的时钟。 */
+    /** 固定测试时钟。 */
     private class MutableTestClock(
         /** 当前测试时间。 */
-        private var current: Instant,
+        private val current: Instant,
     ) : Clock {
         /** 使用 ISO 时间创建测试时钟。 */
         constructor(isoInstant: String) : this(Instant.parse(isoInstant))
 
         /** 返回当前测试时间。 */
         override fun now(): Instant = current
-
-        /** 将测试时钟向前推进指定时长。 */
-        fun advance(duration: Duration) {
-            current += duration
-        }
     }
 
     /** 官网请求路径常量。 */

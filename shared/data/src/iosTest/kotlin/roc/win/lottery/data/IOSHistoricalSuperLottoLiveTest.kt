@@ -18,9 +18,9 @@ import kotlin.time.Duration.Companion.minutes
 
 /** iOS 显式启用的大乐透官网联网与 PDFKit 文本层验收。 */
 class IOSHistoricalSuperLottoLiveTest {
-    /** 使用 Darwin 系统网络栈验证主 JSON、聚合回退、官方 PDF 和双证据闭环。 */
+    /** 使用 Darwin 系统网络栈验证目标期的官方双证据闭环。 */
     @Test
-    fun explicitlyEnabledHistoricalIssueUsesOfficialNetwork() =
+    fun explicitlyEnabledIssueUsesOfficialNetwork() =
         runTest(timeout = LIVE_TEST_TIMEOUT) {
             val environment = NSProcessInfo.processInfo.environment
             if (environment[LIVE_DRAW_ENABLE_ENVIRONMENT_VARIABLE] as? String != ENABLED_VALUE) return@runTest
@@ -39,7 +39,7 @@ class IOSHistoricalSuperLottoLiveTest {
                 val draw =
                     assertIs<DrawQueryResult.Success>(
                         result,
-                        "iOS Darwin 网络栈未能形成大乐透历史期双证据：$result",
+                        "iOS Darwin 网络栈未能形成大乐透目标期双证据：$result",
                     ).drawResult
 
                 assertTrue(draw.status in VERIFIED_STATUSES)
@@ -79,7 +79,7 @@ class IOSHistoricalSuperLottoLiveTest {
 
     /** 真实验收参数。 */
     private companion object {
-        /** 显式启用 iOS 官网历史期开奖闭环的环境变量。 */
+        /** 显式启用 iOS 官网开奖闭环的环境变量。 */
         const val LIVE_DRAW_ENABLE_ENVIRONMENT_VARIABLE = "WINLOTTERY_IOS_LIVE_DRAW"
 
         /** 联网验收必须保持为空的本地代理端口环境变量。 */

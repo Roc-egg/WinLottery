@@ -679,7 +679,7 @@ private fun DrawStatus.recoveryHint(): String =
     when (this) {
         DrawStatus.NOT_PUBLISHED -> "请核对期号，并在官方开奖发布后重新查询。"
 
-        DrawStatus.PUBLISHING -> "请等待官方数据同步完整；发布窗口内至少间隔 60 秒再主动查询。"
+        DrawStatus.PUBLISHING -> "请等待官方数据同步完整后再主动查询。"
 
         DrawStatus.NETWORK_UNAVAILABLE -> "请检查设备网络后重新查询，票面确认结果仍保留在当前流程中。"
 
