@@ -7,7 +7,7 @@ import platform.CoreGraphics.CGRectGetMaxX
 import platform.CoreGraphics.CGRectGetMaxY
 import platform.CoreGraphics.CGRectGetMinX
 import platform.CoreGraphics.CGRectGetMinY
-import platform.Foundation.NSURL
+import platform.UIKit.UIImage
 import platform.Vision.VNImageRequestHandler
 import platform.Vision.VNRecognizeTextRequest
 import platform.Vision.VNRecognizedText
@@ -20,14 +20,16 @@ class VisionTicketRecognizer : TicketRecognizer {
     /** 对私有 JPEG 执行 Vision OCR，并转换为共享归一化坐标模型。 */
     override suspend fun recognize(imageRef: ImageRef): RecognitionResult =
         withContext(Dispatchers.Default) {
-            val imageUrl = NSURL.fileURLWithPath(imageRef.localPath)
+            val image =
+                UIImage.imageWithContentsOfFile(imageRef.localPath)?.CGImage
+                    ?: return@withContext RecognitionResult.Failure("无法读取本地图片，请重新导入")
             val request =
                 VNRecognizeTextRequest(completionHandler = null).apply {
                     recognitionLevel = VNRequestTextRecognitionLevelAccurate
                     recognitionLanguages = listOf("zh-Hans", "en-US")
                     usesLanguageCorrection = false
                 }
-            val handler = VNImageRequestHandler(uRL = imageUrl, options = emptyMap<Any?, Any>())
+            val handler = VNImageRequestHandler(cGImage = image, options = emptyMap<Any?, Any>())
             if (!handler.performRequests(listOf(request), error = null)) {
                 return@withContext RecognitionResult.Failure("本地文字识别未能完成，请重新导入图片")
             }

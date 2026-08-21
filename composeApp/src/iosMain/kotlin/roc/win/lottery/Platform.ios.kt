@@ -48,33 +48,36 @@ fun createIOSRecognitionContainer(presenterProvider: () -> UIViewController?): A
         OfficialDrawRepository(
             superLottoPdfTextExtractor = IOSSuperLottoPdfTextExtractor(),
         )
-    return AppContainer(
-        platform = IOSPlatform(),
-        imageAcquirer = IOSPhotoPickerImageAcquirer(presenterProvider, appPaths),
-        imageQualityAnalyzer =
-            ImageQualityAnalyzerChain(
-                listOf(
-                    ImageDimensionQualityAnalyzer(),
-                    PixelImageQualityAnalyzer(IOSLuminanceImageDecoder()),
+    val container =
+        AppContainer(
+            platform = IOSPlatform(),
+            imageAcquirer = IOSPhotoPickerImageAcquirer(presenterProvider, appPaths),
+            imageQualityAnalyzer =
+                ImageQualityAnalyzerChain(
+                    listOf(
+                        ImageDimensionQualityAnalyzer(),
+                        PixelImageQualityAnalyzer(IOSLuminanceImageDecoder()),
+                    ),
                 ),
-            ),
-        ticketRecognizer = VisionTicketRecognizer(),
-        ticketParser = ConservativeTicketParser(),
-        drawRepository =
-            officialDrawRepository.withOneShotConflictInjection(
-                rawIssue =
-                    NSProcessInfo.processInfo.environment[DEBUG_CONFLICT_ISSUE_ENVIRONMENT] as? String,
-                isDebugEnabled = isDebugBinary,
-            ),
-        prizeCalculator = LotteryPrizeCalculator(),
-        appPaths = appPaths,
-        ticketValidator = TicketValidator(),
-        isDemo = true,
-        usesRealImageAcquisition = true,
-        usesRealRecognition = true,
-        usesRealDrawData = true,
-        ocrConfidenceDiagnostics = createIOSOcrConfidenceDiagnostics(),
-    )
+            ticketRecognizer = VisionTicketRecognizer(),
+            ticketParser = ConservativeTicketParser(),
+            drawRepository =
+                officialDrawRepository.withOneShotConflictInjection(
+                    rawIssue =
+                        NSProcessInfo.processInfo.environment[DEBUG_CONFLICT_ISSUE_ENVIRONMENT] as? String,
+                    isDebugEnabled = isDebugBinary,
+                ),
+            prizeCalculator = LotteryPrizeCalculator(),
+            appPaths = appPaths,
+            ticketValidator = TicketValidator(),
+            isDemo = true,
+            usesRealImageAcquisition = true,
+            usesRealRecognition = true,
+            usesRealDrawData = true,
+            ocrConfidenceDiagnostics = createIOSOcrConfidenceDiagnostics(),
+        )
+    launchIOSMobileAnalysisPerformanceIfRequested(container, isDebugBinary)
+    return container
 }
 
 /** 只为 Kotlin/Native Debug 二进制创建匿名置信度日志，Release 保持完全禁用。 */
