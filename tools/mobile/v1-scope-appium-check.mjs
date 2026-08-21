@@ -56,6 +56,16 @@ const REQUIRED_REVIEW_TEXTS = [
   "已核对，继续",
 ];
 
+/** 双色球手动录入必须能够访问且不会混入大乐透属性的稳定文案。 */
+const REQUIRED_DOUBLE_COLOR_BALL_TEXTS = [
+  "红球（已选 0/6）",
+  "蓝球（已选 0/1）",
+  "投注倍数",
+  "投注期数",
+  "票面金额",
+  "已核对，继续",
+];
+
 /** 发起 WebDriver 请求并统一解析错误。 */
 async function webdriverRequest(path, method = "GET", body) {
   const response = await fetch(`${appiumBaseUrl}${path}`, {
@@ -307,15 +317,20 @@ async function waitForEditableValue(sessionId, fieldName, platformName, expected
 
 /** 在完整可见的 Compose 输入框中写入文本，并等待状态更新。 */
 async function enterEditableValue(sessionId, fieldName, platformName, value) {
-  const { elementId } = await findVisibleEditableElement(sessionId, fieldName, platformName);
-  await webdriverRequest(`/session/${sessionId}/element/${elementId}/click`, "POST", {});
-  await waitForPageUpdate();
-  const activeElement = await webdriverRequest(`/session/${sessionId}/element/active`);
-  const activeElementId = readElementId(activeElement, `${fieldName}焦点输入节点`);
-  await webdriverRequest(`/session/${sessionId}/element/${activeElementId}/value`, "POST", {
-    text: value,
-    value: [...value],
-  });
+  const { elementId, elementRect } = await findVisibleEditableElement(sessionId, fieldName, platformName);
+  if (platformName === "Android") {
+    await tapElementCenter(sessionId, elementRect, platformName);
+    await webdriverRequest(`/session/${sessionId}/execute/sync`, "POST", {
+      script: "mobile: type",
+      args: [{ text: value }],
+    });
+  } else {
+    await webdriverRequest(`/session/${sessionId}/element/${elementId}/click`, "POST", {});
+    await webdriverRequest(`/session/${sessionId}/element/${elementId}/value`, "POST", {
+      text: value,
+      value: [...value],
+    });
+  }
   await waitForPageUpdate();
 }
 
@@ -449,6 +464,30 @@ async function waitForAccessibilityElementSelected(sessionId, accessibilityName,
   throw new Error(`控件未进入选中状态：${accessibilityName}；selected=${selectedValue}`);
 }
 
+/** 遍历双色球手动录入页并确认没有混入大乐透追加属性。 */
+async function verifyDoubleColorBallEditor(sessionId, platformName) {
+  await clickScrollableAccessibilityElement(sessionId, "双色球", platformName);
+  await waitForAccessibilityElementSelected(sessionId, "双色球", platformName);
+  const observedTexts = new Set();
+  let scrollCount = 0;
+  for (; scrollCount <= 8; scrollCount += 1) {
+    const source = await webdriverRequest(`/session/${sessionId}/source`);
+    if (source.includes("追加投注")) {
+      throw new Error(`${platformName} 双色球手动录入意外显示大乐透追加属性`);
+    }
+    for (const text of REQUIRED_DOUBLE_COLOR_BALL_TEXTS) {
+      if (source.includes(text)) observedTexts.add(text);
+    }
+    if (observedTexts.size === REQUIRED_DOUBLE_COLOR_BALL_TEXTS.length) break;
+    await scrollUp(sessionId);
+  }
+  const missingTexts = REQUIRED_DOUBLE_COLOR_BALL_TEXTS.filter((text) => !observedTexts.has(text));
+  if (missingTexts.length > 0) {
+    throw new Error(`${platformName} 最大字号双色球手动录入缺少可访问文案：${missingTexts.join("、")}`);
+  }
+  return scrollCount;
+}
+
 /** 截取指定文案附近的页面源，避免失败日志输出整份辅助功能树。 */
 function sourceContext(source, anchorText) {
   const anchorIndex = source.indexOf(anchorText);
@@ -513,8 +552,15 @@ async function verifyManualReviewAccessibility(sessionId, platformName) {
   ) {
     throw new Error(`${platformName} 返回首页后再次手动录入仍保留旧状态`);
   }
+  scrollCount += await verifyDoubleColorBallEditor(sessionId, platformName);
   await clickAccessibilityElement(sessionId, "返回");
-  process.stdout.write(`${platformName} 最大字号手动录入通过，累计滚动 ${scrollCount} 次\n`);
+  scrollCount += await clickScrollableAccessibilityElement(sessionId, "手动录入彩票", platformName);
+  source = await webdriverRequest(`/session/${sessionId}/source`);
+  if (source.includes("投注号码")) {
+    throw new Error(`${platformName} 返回首页后再次手动录入仍保留双色球状态`);
+  }
+  await clickAccessibilityElement(sessionId, "返回");
+  process.stdout.write(`${platformName} 最大字号双彩种手动录入通过，累计滚动 ${scrollCount} 次\n`);
 }
 
 /** 删除会话，失败时不覆盖原始验收错误。 */
