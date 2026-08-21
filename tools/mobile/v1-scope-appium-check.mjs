@@ -30,6 +30,12 @@ const REQUIRED_SCOPE_TEXTS = [
 /** 已废弃且不得再次出现的范围描述。 */
 const OBSOLETE_SCOPE_TEXT = "不支持复式、胆拖、多期";
 
+/** 手动录入输入框使用的本地合成值，不会进入开奖查询。 */
+const REVIEW_INPUT_VALUES = {
+  issue: "26999",
+  paidAmount: "4.00",
+};
+
 /** 最大字号手动录入流程必须能够访问的稳定文案。 */
 const REQUIRED_REVIEW_TEXTS = [
   "手动录入彩票",
@@ -145,13 +151,14 @@ async function scrollAccessibilityElementIntoView(sessionId, accessibilityName) 
     try {
       const element = await findAccessibilityElement(sessionId, accessibilityName);
       const elementId = readElementId(element, accessibilityName);
-      const [elementRect, windowRect] = await Promise.all([
+      const [elementRect, windowRect, displayed] = await Promise.all([
         webdriverRequest(`/session/${sessionId}/element/${elementId}/rect`),
         webdriverRequest(`/session/${sessionId}/window/rect`),
+        webdriverRequest(`/session/${sessionId}/element/${elementId}/displayed`),
       ]);
       lastElementRect = elementRect;
       lastWindowRect = windowRect;
-      if (isRectInsideWindow(elementRect, windowRect)) {
+      if (displayed && isRectInsideWindow(elementRect, windowRect)) {
         return { elementId, elementRect, scrollCount };
       }
     } catch (error) {
@@ -234,12 +241,124 @@ async function clickScrollableAccessibilityElement(sessionId, accessibilityName,
   return visibleElement.scrollCount;
 }
 
+/** 查找指定字段当前暴露的 Compose 文本输入节点。 */
+async function findEditableElements(sessionId, fieldName, platformName) {
+  const iosEditablePredicate =
+    fieldName === "票面金额"
+      ? 'starts-with(@name, "合计金额")'
+      : `@name=${JSON.stringify(fieldName)}`;
+  return platformName === "Android"
+    ? webdriverRequest(`/session/${sessionId}/elements`, "POST", {
+        using: "class name",
+        value: "android.widget.EditText",
+      })
+    : [
+        await webdriverRequest(`/session/${sessionId}/element`, "POST", {
+          using: "xpath",
+          value: `//XCUIElementTypeTextView[${iosEditablePredicate}]`,
+        }),
+      ];
+}
+
+/** 查找当前窗口中完整可见的 Compose 文本输入节点。 */
+async function findVisibleEditableElement(sessionId, fieldName, platformName) {
+  const windowRect = await webdriverRequest(`/session/${sessionId}/window/rect`);
+  const elements = await findEditableElements(sessionId, fieldName, platformName);
+  for (const element of elements) {
+    const elementId = readElementId(element, fieldName);
+    const [elementRect, displayed] = await Promise.all([
+      webdriverRequest(`/session/${sessionId}/element/${elementId}/rect`),
+      webdriverRequest(`/session/${sessionId}/element/${elementId}/displayed`),
+    ]);
+    if (displayed && isRectInsideWindow(elementRect, windowRect)) return { elementId, elementRect };
+  }
+  throw new Error(`${platformName} 当前窗口缺少完整可见的${fieldName}输入框`);
+}
+
+/** 等待指定输入节点暴露目标文本值。 */
+async function waitForEditableElementValue(sessionId, elementId, fieldName, platformName, expectedValue) {
+  let actualValue;
+  let currentElementId = elementId;
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    try {
+      actualValue = await webdriverRequest(
+        `/session/${sessionId}/element/${currentElementId}/attribute/${platformName === "Android" ? "text" : "value"}`,
+      );
+    } catch (error) {
+      if (error.webdriverError !== "stale element reference") throw error;
+      const currentElements = await findEditableElements(sessionId, fieldName, platformName);
+      if (currentElements.length !== 1) {
+        throw new Error(`${platformName} ${fieldName}重组后输入节点数量异常：${currentElements.length}`);
+      }
+      currentElementId = readElementId(currentElements[0], fieldName);
+      continue;
+    }
+    if (actualValue === expectedValue) return;
+    await new Promise((resolve) => setTimeout(resolve, 300));
+  }
+  throw new Error(`${platformName} ${fieldName}输入值不正确：${actualValue}`);
+}
+
+/** 等待当前窗口中的可见输入节点暴露目标文本值。 */
+async function waitForEditableValue(sessionId, fieldName, platformName, expectedValue) {
+  const { elementId } = await findVisibleEditableElement(sessionId, fieldName, platformName);
+  await waitForEditableElementValue(sessionId, elementId, fieldName, platformName, expectedValue);
+}
+
+/** 在完整可见的 Compose 输入框中写入文本，并等待状态更新。 */
+async function enterEditableValue(sessionId, fieldName, platformName, value) {
+  const { elementId } = await findVisibleEditableElement(sessionId, fieldName, platformName);
+  await webdriverRequest(`/session/${sessionId}/element/${elementId}/click`, "POST", {});
+  await waitForPageUpdate();
+  const activeElement = await webdriverRequest(`/session/${sessionId}/element/active`);
+  const activeElementId = readElementId(activeElement, `${fieldName}焦点输入节点`);
+  await webdriverRequest(`/session/${sessionId}/element/${activeElementId}/value`, "POST", {
+    text: value,
+    value: [...value],
+  });
+  await waitForPageUpdate();
+}
+
+/** 等待系统输入法退出当前应用窗口。 */
+async function waitForKeyboardHidden(sessionId, platformName) {
+  let keyboardShown = true;
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    keyboardShown = await webdriverRequest(`/session/${sessionId}/appium/device/is_keyboard_shown`);
+    if (!keyboardShown) return;
+    await new Promise((resolve) => setTimeout(resolve, 300));
+  }
+  throw new Error(`${platformName} 完成输入后系统键盘仍未隐藏`);
+}
+
+/** 完成金额输入：Android 使用 IME 动作，iOS 使用应用内完成按钮。 */
+async function completePaidAmountInput(sessionId, platformName) {
+  if (platformName === "Android") {
+    await webdriverRequest(`/session/${sessionId}/execute/sync`, "POST", {
+      script: "mobile: performEditorAction",
+      args: [{ action: "done" }],
+    });
+    await waitForPageUpdate();
+  } else {
+    await clickScrollableAccessibilityElement(sessionId, "完成金额输入", platformName);
+    try {
+      await waitForKeyboardHidden(sessionId, platformName);
+      return;
+    } catch {
+      await clickAccessibilityElement(sessionId, "完成金额输入");
+    }
+  }
+  await waitForKeyboardHidden(sessionId, platformName);
+}
+
 /** 在当前页面执行一次真实向上滑动。 */
 async function scrollUp(sessionId) {
-  const rect = await webdriverRequest(`/session/${sessionId}/window/rect`);
+  const [rect, keyboardShown] = await Promise.all([
+    webdriverRequest(`/session/${sessionId}/window/rect`),
+    webdriverRequest(`/session/${sessionId}/appium/device/is_keyboard_shown`),
+  ]);
   const x = Math.round(rect.width / 2);
-  const startY = Math.round(rect.height * 0.78);
-  const endY = Math.round(rect.height * 0.24);
+  const startY = Math.round(rect.height * (keyboardShown ? 0.55 : 0.78));
+  const endY = Math.round(rect.height * (keyboardShown ? 0.16 : 0.24));
   await webdriverRequest(`/session/${sessionId}/actions`, "POST", {
     actions: [
       {
@@ -303,25 +422,6 @@ async function waitForSourceText(sessionId, expectedText) {
   return source;
 }
 
-/** 有限重试点按滚动控件，直到页面状态文案确认交互已经生效。 */
-async function clickScrollableAccessibilityElementUntilText(
-  sessionId,
-  accessibilityName,
-  platformName,
-  expectedText,
-) {
-  let source = "";
-  let scrollCount = 0;
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    scrollCount += await clickScrollableAccessibilityElement(sessionId, accessibilityName, platformName);
-    source = await waitForSourceText(sessionId, expectedText);
-    if (source.includes(expectedText)) {
-      return { source, scrollCount, retryCount: attempt };
-    }
-  }
-  return { source, scrollCount, retryCount: 1 };
-}
-
 /** 查找 Android 文案元素对应的可选择父控件。 */
 async function findAndroidSelectableElement(sessionId, accessibilityName) {
   const nameLiteral = JSON.stringify(accessibilityName);
@@ -369,19 +469,17 @@ async function verifyManualReviewAccessibility(sessionId, platformName) {
 
   await clickScrollableAccessibilityElement(sessionId, "超级大乐透", platformName);
   await observeReviewTexts(sessionId, observedTexts);
+  await enterEditableValue(sessionId, "开奖期号", platformName, REVIEW_INPUT_VALUES.issue);
+  scrollCount += await clickScrollableAccessibilityElement(sessionId, "完成期号输入", platformName);
+  await waitForKeyboardHidden(sessionId, platformName);
+  await waitForEditableValue(sessionId, "开奖期号", platformName, REVIEW_INPUT_VALUES.issue);
   scrollCount += await clickScrollableAccessibilityElement(sessionId, "确认 1 倍", platformName);
   await observeReviewTexts(sessionId, observedTexts);
   scrollCount += await clickScrollableAccessibilityElement(sessionId, "基本", platformName);
   await waitForAccessibilityElementSelected(sessionId, "基本", platformName);
   await observeReviewTexts(sessionId, observedTexts);
-  const periodChange = await clickScrollableAccessibilityElementUntilText(
-    sessionId,
-    "增加投注期数",
-    platformName,
-    "2 期",
-  );
-  scrollCount += periodChange.scrollCount;
-  source = periodChange.source;
+  scrollCount += await clickScrollableAccessibilityElement(sessionId, "增加投注期数", platformName);
+  source = await waitForSourceText(sessionId, "2 期");
   for (const text of REQUIRED_REVIEW_TEXTS) {
     if (source.includes(text)) observedTexts.add(text);
   }
@@ -391,9 +489,11 @@ async function verifyManualReviewAccessibility(sessionId, platformName) {
         `页面上下文=${sourceContext(source, "投注期数")}`,
     );
   }
-  if (periodChange.retryCount > 0) {
-    process.stdout.write(`${platformName} 增加投注期数补偿点按 ${periodChange.retryCount} 次后生效\n`);
-  }
+  scrollCount += (await scrollAccessibilityElementIntoView(sessionId, "完成金额输入")).scrollCount;
+  await enterEditableValue(sessionId, "票面金额", platformName, REVIEW_INPUT_VALUES.paidAmount);
+  await completePaidAmountInput(sessionId, platformName);
+  scrollCount += (await scrollAccessibilityElementIntoView(sessionId, "完成金额输入")).scrollCount;
+  await waitForEditableValue(sessionId, "票面金额", platformName, REVIEW_INPUT_VALUES.paidAmount);
   scrollCount += (await scrollAccessibilityElementIntoView(sessionId, "已核对，继续")).scrollCount;
   await observeReviewTexts(sessionId, observedTexts);
 
@@ -405,7 +505,12 @@ async function verifyManualReviewAccessibility(sessionId, platformName) {
   await clickAccessibilityElement(sessionId, "返回");
   scrollCount += await clickScrollableAccessibilityElement(sessionId, "手动录入彩票", platformName);
   source = await webdriverRequest(`/session/${sessionId}/source`);
-  if (source.includes("投注号码") || source.includes("2 期")) {
+  if (
+    source.includes("投注号码") ||
+    source.includes("2 期") ||
+    source.includes(REVIEW_INPUT_VALUES.issue) ||
+    source.includes(REVIEW_INPUT_VALUES.paidAmount)
+  ) {
     throw new Error(`${platformName} 返回首页后再次手动录入仍保留旧状态`);
   }
   await clickAccessibilityElement(sessionId, "返回");
