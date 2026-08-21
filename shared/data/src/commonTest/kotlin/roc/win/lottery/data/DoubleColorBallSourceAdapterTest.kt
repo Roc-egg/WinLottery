@@ -57,10 +57,10 @@ class DoubleColorBallSourceAdapterTest {
         )
     }
 
-    /** 新核验的两个已发布期应按普通状态解析，不得继续停留在发布中。 */
+    /** 已知和未来普通期的完整空活动字段都应形成普通状态。 */
     @Test
-    fun newlyConfirmedStandardIssuesAreNormalized() {
-        listOf("2026094", "2026095").forEach { issue ->
+    fun explicitEmptyPolicyFieldsAreNormalizedAsStandard() {
+        listOf("2026094", "2026095", "2026096", "2026999").forEach { issue ->
             val raw = DrawContractFixtures.doubleColorBallMain(issue = issue)
 
             val snapshot =
@@ -72,12 +72,16 @@ class DoubleColorBallSourceAdapterTest {
         }
     }
 
-    /** 超过已固化政策证据末期时不能把空字段猜成普通状态。 */
+    /** 缺少政策证据字段时不能把字段缺失猜成普通状态。 */
     @Test
-    fun futurePolicyWithoutEvidenceIsPublishing() {
-        val raw = DrawContractFixtures.doubleColorBallMain(issue = "2026096")
+    fun missingPolicyEvidenceFieldsAreSourceUnavailable() {
+        val raw =
+            DrawContractFixtures.doubleColorBallMain(
+                issue = "2026096",
+                includePolicyEvidenceFields = false,
+            )
 
-        assertIs<SourceParseResult.Publishing>(
+        assertIs<SourceParseResult.SourceUnavailable>(
             DoubleColorBallSourceAdapter.parseMain(raw, "2026096", MAIN_URL),
         )
     }

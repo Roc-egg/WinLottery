@@ -15,9 +15,9 @@ import kotlin.time.Duration.Companion.minutes
 
 /** iOS 显式启用的双色球最新已发布期官网联网验收。 */
 class IOSDoubleColorBallLiveTest {
-    /** 使用 Darwin 系统网络栈验证新核验两期的主、详情 JSON 和双证据闭环。 */
+    /** 使用 Darwin 系统网络栈验证目标期的主、详情 JSON 和双证据闭环。 */
     @Test
-    fun explicitlyEnabledLatestIssuesUseOfficialNetwork() =
+    fun explicitlyEnabledLatestIssueUsesOfficialNetwork() =
         runTest(timeout = LIVE_TEST_TIMEOUT) {
             val environment = NSProcessInfo.processInfo.environment
             if (environment[ENABLE_ENVIRONMENT_VARIABLE] as? String != ENABLED_VALUE) return@runTest
@@ -27,16 +27,19 @@ class IOSDoubleColorBallLiveTest {
             val client = createPlatformHttpClient()
             try {
                 val repository = OfficialDrawRepository(httpClient = client)
-                TARGET_ISSUES.forEach { issue ->
-                    val draw =
-                        assertIs<DrawQueryResult.Success>(
-                            repository.getDraw(LotteryType.DOUBLE_COLOR_BALL, Issue(issue)),
-                            "iOS Darwin 网络栈未能形成双色球 $issue 双证据",
-                        ).drawResult
-                    assertEquals(issue, draw.issue.value)
-                    assertTrue(draw.status in VERIFIED_STATUSES)
-                    assertEquals(1, draw.supportingEvidence.size)
-                }
+                val targetIssue =
+                    (environment[TARGET_ISSUE_ENVIRONMENT_VARIABLE] as? String)
+                        ?.takeIf { it.isNotBlank() }
+                        ?: DEFAULT_TARGET_ISSUE
+                val result = repository.getDraw(LotteryType.DOUBLE_COLOR_BALL, Issue(targetIssue))
+                val draw =
+                    assertIs<DrawQueryResult.Success>(
+                        result,
+                        "iOS Darwin 网络栈未能形成双色球 $targetIssue 双证据：$result",
+                    ).drawResult
+                assertEquals(targetIssue, draw.issue.value)
+                assertTrue(draw.status in VERIFIED_STATUSES)
+                assertEquals(1, draw.supportingEvidence.size)
             } finally {
                 client.close()
             }
@@ -44,8 +47,11 @@ class IOSDoubleColorBallLiveTest {
 
     /** 真实验收参数。 */
     private companion object {
-        /** 显式启用 iOS 双色球双期联网闭环的环境变量。 */
+        /** 显式启用 iOS 双色球联网闭环的环境变量。 */
         const val ENABLE_ENVIRONMENT_VARIABLE = "WINLOTTERY_IOS_LIVE_SSQ"
+
+        /** 可选的双色球目标期号环境变量。 */
+        const val TARGET_ISSUE_ENVIRONMENT_VARIABLE = "WINLOTTERY_IOS_SSQ_ISSUE"
 
         /** 联网验收必须保持为空的本地代理端口环境变量。 */
         const val ACCEPTANCE_PROXY_PORT_ENVIRONMENT_VARIABLE = "WINLOTTERY_IOS_ACCEPTANCE_PROXY_PORT"
@@ -53,13 +59,13 @@ class IOSDoubleColorBallLiveTest {
         /** 验收变量启用值。 */
         const val ENABLED_VALUE = "1"
 
-        /** 本轮逐期核验并放行的双色球期号。 */
-        val TARGET_ISSUES = listOf("2026094", "2026095")
+        /** 未传入目标期号时使用的最新已发布期。 */
+        const val DEFAULT_TARGET_ISSUE = "2026096"
 
         /** 可以通过 smoke 的统一开奖状态。 */
         val VERIFIED_STATUSES = setOf(DrawStatus.FINAL_NUMBERS, DrawStatus.FINAL_PAYOUT)
 
-        /** 双期真实验收最大时长。 */
+        /** 真实验收最大时长。 */
         val LIVE_TEST_TIMEOUT = 1.minutes
     }
 }

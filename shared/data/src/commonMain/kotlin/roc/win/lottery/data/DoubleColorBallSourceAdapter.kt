@@ -123,6 +123,9 @@ internal object DoubleColorBallSourceAdapter {
                 is PrizeTierParseResult.Success -> parsed.tiers
                 is PrizeTierParseResult.Failure -> return SourceParseResult.SourceUnavailable(parsed.message)
             }
+        if (POLICY_EVIDENCE_FIELDS.any { record.text(it) == null }) {
+            return SourceParseResult.SourceUnavailable("双色球主响应缺少特别规定或派奖状态字段")
+        }
         if (PROMOTION_FIELDS.any { !record.text(it).isNullOrEmpty() }) {
             return SourceParseResult.Publishing("双色球当期存在 V1 尚未验证的派奖活动")
         }
@@ -272,15 +275,16 @@ internal object DoubleColorBallSourceAdapter {
         return PrizeTierParseResult.Success(REQUIRED_BASIC_TIER_CODES.map(tiers::getValue))
     }
 
-    /** 按已核验期号边界选择特别规定状态。 */
+    /** 根据当期完整官方字段和已确认特别规定范围选择政策状态。 */
     private fun parsePolicy(
         record: JsonObject,
         issue: String,
     ): PolicyParseResult {
-        val fortuneCountRaw = record.text("fyjCount")
-        val fortuneMoneyRaw = record.text("fyjMoney")
-        val prizeSpecialInfo = record.text("prizeSpecialInfo")
-        if (!prizeSpecialInfo.isNullOrEmpty() && !isKnownFirstPrizeCapInfo(prizeSpecialInfo)) {
+        val fortuneCountRaw = requireNotNull(record.text("fyjCount"))
+        val fortuneMoneyRaw = requireNotNull(record.text("fyjMoney"))
+        val specialRuleInfo = requireNotNull(record.text("specialRuleInfo"))
+        val prizeSpecialInfo = requireNotNull(record.text("prizeSpecialInfo"))
+        if (prizeSpecialInfo.isNotEmpty() && !isKnownFirstPrizeCapInfo(prizeSpecialInfo)) {
             return PolicyParseResult.Unknown("双色球当期奖项说明尚未完成规则建模")
         }
         return when {
@@ -308,20 +312,12 @@ internal object DoubleColorBallSourceAdapter {
                 )
             }
 
-            issue in FIRST_CONFIRMED_STANDARD_ISSUE..LAST_CONFIRMED_STANDARD_ISSUE -> {
-                if (
-                    !fortuneCountRaw.isNullOrEmpty() ||
-                    !fortuneMoneyRaw.isNullOrEmpty() ||
-                    !record.text("specialRuleInfo").isNullOrEmpty()
-                ) {
-                    PolicyParseResult.Unknown("双色球普通期次出现未识别的福运奖字段")
-                } else {
-                    PolicyParseResult.Known(DrawPolicy.STANDARD, emptyList())
-                }
+            fortuneCountRaw.isEmpty() && fortuneMoneyRaw.isEmpty() && specialRuleInfo.isEmpty() -> {
+                PolicyParseResult.Known(DrawPolicy.STANDARD, emptyList())
             }
 
             else -> {
-                PolicyParseResult.Unknown("双色球当期特别规定状态尚无固化官方证据")
+                PolicyParseResult.Unknown("双色球当期出现尚未完成规则建模的特别规定字段")
             }
         }
     }
@@ -394,6 +390,10 @@ internal object DoubleColorBallSourceAdapter {
     /** 非空即代表存在尚未建模活动金额的字段。 */
     private val PROMOTION_FIELDS = setOf("addmoney", "addmoney2", "z2add", "m2add", "msg")
 
+    /** 必须由主接口显式提供的特别规定和派奖状态字段。 */
+    private val POLICY_EVIDENCE_FIELDS =
+        PROMOTION_FIELDS + setOf("fyjCount", "fyjMoney", "specialRuleInfo", "prizeSpecialInfo")
+
     /** 福彩网绝对地址前缀。 */
     private const val CHINA_WELFARE_LOTTERY_BASE_URL = "https://www.cwl.gov.cn"
 
@@ -417,12 +417,6 @@ internal object DoubleColorBallSourceAdapter {
 
     /** 已确认特别规定末期。 */
     private const val FORTUNE_LAST_ISSUE = "2026075"
-
-    /** 本轮特别规定退出后的首个普通期号。 */
-    private const val FIRST_CONFIRMED_STANDARD_ISSUE = "2026076"
-
-    /** 截至核查日已由主详情接口和活动字段共同确认的普通末期。 */
-    private const val LAST_CONFIRMED_STANDARD_ISSUE = "2026095"
 
     /** 已核实的一等奖总额封顶说明必须同时包含的稳定语义片段。 */
     private val FIRST_PRIZE_CAP_INFO_FRAGMENTS =
