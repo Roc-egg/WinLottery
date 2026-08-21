@@ -873,12 +873,12 @@ fun AboutScreen(onBack: () -> Unit) {
         Text("V1 支持范围", style = MaterialTheme.typography.titleLarge)
         Spacer(Modifier.height(12.dp))
         Text(
-            "单张、单期、电脑打印的超级大乐透或双色球彩票；支持单式、多注单式、倍数及大乐透追加。",
+            V1_SUPPORTED_TICKET_SCOPE_TEXT,
             style = MaterialTheme.typography.bodyLarge,
         )
         Spacer(Modifier.height(12.dp))
         Text(
-            "不支持复式、胆拖、多期、手写票、电子截图或未知票面版式。",
+            V1_UNSUPPORTED_TICKET_SCOPE_TEXT,
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -1035,3 +1035,11 @@ private const val MIN_MULTIPLIER = 1
 
 /** V1 最大投注倍数。 */
 private const val MAX_MULTIPLIER = 99
+
+/** 关于页展示的 V1 已支持票面范围。 */
+internal const val V1_SUPPORTED_TICKET_SCOPE_TEXT =
+    "单张电脑打印的超级大乐透或双色球彩票；支持 1 至 20 期受控连续投注、单式、多注单式、倍数及大乐透追加。"
+
+/** 关于页展示的 V1 未支持票面范围。 */
+internal const val V1_UNSUPPORTED_TICKET_SCOPE_TEXT =
+    "不支持复式、胆拖、补打票、超过 20 期、跨年度未知期次、手写票、电子截图或未知票面版式。"
