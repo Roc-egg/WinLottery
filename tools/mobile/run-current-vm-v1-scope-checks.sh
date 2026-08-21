@@ -89,9 +89,9 @@ if ! node \
   "$CURRENT_IOS_SIMULATOR_NAME" \
   "$IOS_PLATFORM_VERSION" \
   "$IOS_APPLICATION_ID"; then
-  print -u2 "V1 范围页面验收失败，Appium 日志末尾如下："
+  print -u2 "V1 最大字号页面验收失败，Appium 日志末尾如下："
   tail -n 120 "$APPIUM_LOG" >&2 || true
   exit 1
 fi
 
-print "双虚拟机最大字号 V1 支持范围检查通过，退出时恢复原字号"
+print "双虚拟机最大字号 V1 范围与手动录入检查通过，退出时恢复原字号"
