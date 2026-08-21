@@ -51,7 +51,7 @@ fun HomeScreen(
     onAbout: () -> Unit,
 ) {
     AppShell(
-        title = "中奖测算",
+        title = "给我中",
         actionIcon = LotteryIcons.Info,
         actionDescription = "关于与隐私",
         onAction = onAbout,

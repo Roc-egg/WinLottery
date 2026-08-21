@@ -1,6 +1,6 @@
-# 彩票中奖测算工具
+# 给我中
 
-基于 Kotlin Multiplatform 和 Compose Multiplatform 的跨平台项目。V1 至 V1.5 的产品路线以 Android 和 iOS 为当前目标平台；Windows、macOS 保留已完成的工程与 OCR 底座，使用独立路线图另行排期。
+纸质彩票识别与中奖测算工具，基于 Kotlin Multiplatform 和 Compose Multiplatform 构建。V1 至 V1.5 的产品路线以 Android 和 iOS 为当前目标平台；Windows、macOS 保留已完成的工程与 OCR 底座，使用独立路线图另行排期。
 
 ## 开发推进进度
 

@@ -40,7 +40,7 @@ private fun startDesktopApplication() =
         Window(
             onCloseRequest = ::exitApplication,
             state = rememberWindowState(width = 1080.dp, height = 780.dp),
-            title = "彩票中奖测算",
+            title = "给我中",
         ) {
             val container = remember(window) { createDesktopImportContainer { window } }
             App(container)
