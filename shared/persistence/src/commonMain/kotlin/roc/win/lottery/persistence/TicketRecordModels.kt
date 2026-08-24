@@ -80,6 +80,27 @@ interface TicketRecordStore {
     /** 删除全部记录并返回删除数量。 */
     suspend fun clear(): Int
 
+    /** 把当前全部合法记录编码为可跨平台导入的逻辑包。 */
+    suspend fun exportPackage(): TicketRecordExport
+
+    /**
+     * 完整校验一个逻辑导入包并返回与本机记录的冲突摘要，全程不写数据库。
+     *
+     * @param content 系统文件选择器读取的原始文件字节。
+     */
+    suspend fun inspectImport(content: ByteArray): TicketRecordImportPreview
+
+    /**
+     * 再次完整校验导入包，并在单个事务中按冲突策略写入记录。
+     *
+     * @param content 系统文件选择器读取的原始文件字节。
+     * @param conflictPolicy 同一 UUID 内容不同时的处理策略。
+     */
+    suspend fun importPackage(
+        content: ByteArray,
+        conflictPolicy: TicketRecordImportConflictPolicy = TicketRecordImportConflictPolicy.REJECT_ALL,
+    ): TicketRecordImportResult
+
     /** 关闭底层数据库并释放连接。 */
     fun close()
 }

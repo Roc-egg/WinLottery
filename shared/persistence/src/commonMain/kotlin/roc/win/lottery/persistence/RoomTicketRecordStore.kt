@@ -1,5 +1,6 @@
 package roc.win.lottery.persistence
 
+import androidx.room3.withWriteTransaction
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import roc.win.lottery.domain.BetLine
@@ -26,6 +27,9 @@ internal class RoomTicketRecordStore(
 ) : TicketRecordStore {
     /** Room 数据访问接口。 */
     private val dao = database.ticketRecordDao()
+
+    /** 逻辑导入导出的严格规范化编解码器。 */
+    private val transferCodec = TicketRecordTransferCodec(ticketValidator)
 
     /** 按创建时间倒序观察并校验全部记录。 */
     override val records: Flow<List<StoredTicketRecord>> =
@@ -75,6 +79,47 @@ internal class RoomTicketRecordStore(
 
     /** 删除全部记录。 */
     override suspend fun clear(): Int = dao.clear()
+
+    /** 导出当前全部合法记录的规范化逻辑包。 */
+    override suspend fun exportPackage(): TicketRecordExport {
+        val exportedAtEpochMillis = clock.now().toEpochMilliseconds()
+        require(exportedAtEpochMillis >= 0L) { "导出时间不能早于 Unix 纪元" }
+        val records = dao.findAll().map(::mapFromDatabase)
+        return transferCodec.encode(records, exportedAtEpochMillis)
+    }
+
+    /** 校验导入包并返回当前数据库下的重复和冲突摘要。 */
+    override suspend fun inspectImport(content: ByteArray): TicketRecordImportPreview {
+        val decodedPackage = transferCodec.decode(content)
+        val localRecords = dao.findAll().map(::mapFromDatabase)
+        return classifyImport(decodedPackage, localRecords).preview
+    }
+
+    /** 在写事务中重新分类导入记录，并按用户明确选择的策略处理冲突。 */
+    override suspend fun importPackage(
+        content: ByteArray,
+        conflictPolicy: TicketRecordImportConflictPolicy,
+    ): TicketRecordImportResult {
+        val decodedPackage = transferCodec.decode(content)
+        return database.withWriteTransaction {
+            val localRecords = dao.findAll().map(::mapFromDatabase)
+            val classification = classifyImport(decodedPackage, localRecords)
+            if (
+                classification.preview.conflicts.isNotEmpty() &&
+                conflictPolicy == TicketRecordImportConflictPolicy.REJECT_ALL
+            ) {
+                return@withWriteTransaction TicketRecordImportResult.Conflicts(classification.preview)
+            }
+            classification.recordsToInsert.forEach { record ->
+                dao.insert(record.toDatabaseRows())
+            }
+            TicketRecordImportResult.Completed(
+                importedCount = classification.recordsToInsert.size,
+                duplicateCount = classification.preview.duplicateCount,
+                skippedConflictCount = classification.preview.conflicts.size,
+            )
+        }
+    }
 
     /** 关闭底层 Room 数据库。 */
     override fun close() {
@@ -217,4 +262,56 @@ internal class RoomTicketRecordStore(
             }
         return "$lotteryName ${issue.value.value}"
     }
+
+    /** 按 UUID 比较导入记录与当前数据库，并保留真正需要插入的记录。 */
+    private fun classifyImport(
+        decodedPackage: DecodedTicketRecordPackage,
+        localRecords: List<StoredTicketRecord>,
+    ): TicketRecordImportClassification {
+        val localRecordsById = localRecords.associateBy(StoredTicketRecord::id)
+        val recordsToInsert = mutableListOf<StoredTicketRecord>()
+        val conflicts = mutableListOf<TicketRecordImportConflict>()
+        var duplicateCount = 0
+        decodedPackage.records.forEach { importedRecord ->
+            val localRecord = localRecordsById[importedRecord.id]
+            when {
+                localRecord == null -> {
+                    recordsToInsert += importedRecord
+                }
+
+                localRecord == importedRecord -> {
+                    duplicateCount += 1
+                }
+
+                else -> {
+                    conflicts +=
+                        TicketRecordImportConflict(
+                            id = importedRecord.id,
+                            localDisplayName = localRecord.displayName,
+                            importedDisplayName = importedRecord.displayName,
+                        )
+                }
+            }
+        }
+        return TicketRecordImportClassification(
+            preview =
+                TicketRecordImportPreview(
+                    exportedAtEpochMillis = decodedPackage.exportedAtEpochMillis,
+                    recordCount = decodedPackage.records.size,
+                    importableCount = recordsToInsert.size,
+                    duplicateCount = duplicateCount,
+                    conflicts = conflicts,
+                    payloadSha256 = decodedPackage.payloadSha256,
+                ),
+            recordsToInsert = recordsToInsert,
+        )
+    }
+
+    /** 同时保存面向 UI 的预检摘要和事务内待插入记录。 */
+    private data class TicketRecordImportClassification(
+        /** 当前数据库快照对应的预检摘要。 */
+        val preview: TicketRecordImportPreview,
+        /** 排除完全重复与 UUID 冲突后可以插入的记录。 */
+        val recordsToInsert: List<StoredTicketRecord>,
+    )
 }

@@ -27,6 +27,10 @@ import roc.win.lottery.domain.TicketValidator
 import roc.win.lottery.persistence.CURRENT_TICKET_RECORD_DATA_VERSION
 import roc.win.lottery.persistence.StoredTicketRecord
 import roc.win.lottery.persistence.TicketAcquisitionSource
+import roc.win.lottery.persistence.TicketRecordExport
+import roc.win.lottery.persistence.TicketRecordImportConflictPolicy
+import roc.win.lottery.persistence.TicketRecordImportPreview
+import roc.win.lottery.persistence.TicketRecordImportResult
 import roc.win.lottery.persistence.TicketRecordStore
 import roc.win.lottery.recognition.AppPaths
 import roc.win.lottery.recognition.ConservativeTicketParser
@@ -1554,6 +1558,18 @@ class LotteryAppControllerTest {
             mutableRecords.value = emptyList()
             return count
         }
+
+        /** 旧控制器测试不应触发尚未配置的逻辑导出。 */
+        override suspend fun exportPackage(): TicketRecordExport = error("当前测试未配置逻辑导出")
+
+        /** 旧控制器测试不应触发尚未配置的逻辑导入预检。 */
+        override suspend fun inspectImport(content: ByteArray): TicketRecordImportPreview = error("当前测试未配置逻辑导入预检")
+
+        /** 旧控制器测试不应触发尚未配置的逻辑导入事务。 */
+        override suspend fun importPackage(
+            content: ByteArray,
+            conflictPolicy: TicketRecordImportConflictPolicy,
+        ): TicketRecordImportResult = error("当前测试未配置逻辑导入事务")
 
         /** 结束暂停中的保存调用。 */
         fun releaseSave() {

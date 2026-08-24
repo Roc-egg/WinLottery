@@ -15,6 +15,11 @@ internal interface TicketRecordDao {
     @Query("SELECT * FROM ticket_records ORDER BY created_at_epoch_millis DESC, id DESC")
     fun observeAll(): Flow<List<TicketRecordWithLines>>
 
+    /** 返回当前全部主记录与投注行的一致性快照。 */
+    @Transaction
+    @Query("SELECT * FROM ticket_records ORDER BY created_at_epoch_millis DESC, id DESC")
+    suspend fun findAll(): List<TicketRecordWithLines>
+
     /** 返回指定 UUID 的主记录与投注行。 */
     @Transaction
     @Query("SELECT * FROM ticket_records WHERE id = :id LIMIT 1")

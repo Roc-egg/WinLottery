@@ -35,6 +35,7 @@ kotlin {
             implementation(libs.androidx.sqlite.bundled)
             implementation(libs.kotlinx.coroutinesCore)
             implementation(libs.kotlinx.serializationJson)
+            implementation(libs.okio)
             implementation(libs.room3.runtime)
         }
         commonTest.dependencies {
