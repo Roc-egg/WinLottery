@@ -2,11 +2,14 @@ import UIKit
 import SwiftUI
 import Shared
 
+/// iOS 应用生命周期内唯一的 ONNX Runtime 执行器。
+private let sharedOnnxRuntime = AppleOnnxRuntime()
+
 /// 把共享 Compose 控制器桥接到 SwiftUI。
 struct ComposeView: UIViewControllerRepresentable {
     /// 创建共享 Compose 控制器。
     func makeUIViewController(context: Self.Context) -> UIViewController {
-        MainViewControllerKt.MainViewController()
+        MainViewControllerKt.MainViewController(onnxRuntime: sharedOnnxRuntime)
     }
 
     /// 共享界面自行持有状态，SwiftUI 无需同步额外属性。

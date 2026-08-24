@@ -40,7 +40,7 @@ private var mobileAnalysisPerformanceStarted = false
 /**
  * 只在 Debug 应用收到显式样本数时启动匿名 12MP 图片分析采样。
  *
- * @param container 应用实际装配的质量检查、Vision OCR 和保守解析依赖。
+ * @param container 应用实际装配的质量检查、PP-OCRv5 和保守解析依赖。
  * @param isDebugBinary 当前 Kotlin/Native 二进制是否为 Debug 构建。
  */
 internal fun launchIOSMobileAnalysisPerformanceIfRequested(

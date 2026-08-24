@@ -18,7 +18,7 @@ import kotlin.time.Duration.Companion.minutes
 /** 在锁定 Android 虚拟机测试进程中执行匿名 12MP 图片分析采样。 */
 @RunWith(AndroidJUnit4::class)
 class MobileAnalysisPerformanceDeviceTest {
-    /** 生成固定合成 JPEG，并执行质量检查、ML Kit OCR 和共享解析。 */
+    /** 生成固定合成 JPEG，并执行质量检查、PP-OCRv5 OCR 和共享解析。 */
     @Test
     fun fixedTwelveMegapixelImageProducesAnonymousBaseline() =
         runTest(timeout = TEST_TIMEOUT) {
@@ -52,7 +52,7 @@ class MobileAnalysisPerformanceDeviceTest {
                                     PixelImageQualityAnalyzer(AndroidLuminanceImageDecoder()),
                                 ),
                             ),
-                        ticketRecognizer = MlKitChineseTicketRecognizer(context),
+                        ticketRecognizer = AndroidPpOcrTicketRecognizer(context),
                         warmupCount = warmupCount,
                         sampleCount = sampleCount,
                     )

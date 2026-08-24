@@ -110,6 +110,80 @@ class ConservativeTicketParserTest {
         assertNull(review.fieldRegions.single { it.field == TicketFieldReference.PaidAmount }.rawConfidence)
     }
 
+    /** 轴对齐范围互相覆盖的完整斜排行必须保持独立，不能再吸附周围号码碎片。 */
+    @Test
+    fun overlappingCompleteRowsRemainIndependentFromFragments() {
+        val result =
+            parser.parse(
+                OcrDocument(
+                    imageId = TEST_IMAGE_ID,
+                    engineName = TEST_ENGINE_NAME,
+                    lines =
+                        listOf(
+                            line("超级大乐透", left = 0.10f, top = 0.02f),
+                            line("第26999期", left = 0.10f, top = 0.10f),
+                            line("单式票 1倍 合计4元", left = 0.10f, top = 0.18f, width = 0.50f),
+                            line(
+                                "A①0107142235+0311",
+                                left = 0.0f,
+                                top = 0.28f,
+                                width = 0.82f,
+                                height = 0.12f,
+                            ),
+                            line("99", left = 0.32f, top = 0.30f),
+                            line(
+                                "③0208152334+0410",
+                                left = 0.0f,
+                                top = 0.34f,
+                                width = 0.82f,
+                                height = 0.12f,
+                            ),
+                            line("88", left = 0.45f, top = 0.36f),
+                        ),
+                ),
+            )
+
+        val draft = assertIs<TicketParseResult.ReadyForReview>(result).draft
+        assertEquals(2, draft.betLines.size)
+        assertEquals(listOf(1, 7, 14, 22, 35), draft.betLines.first().primaryNumbers)
+        assertEquals(listOf(2, 8, 15, 23, 34), draft.betLines.last().primaryNumbers)
+    }
+
+    /** CTC 吞掉号码间空格时，应按两位恢复主次区数字并继续执行严格校验。 */
+    @Test
+    fun compactEvenDigitRunsAreRecoveredAsTwoDigitNumbers() {
+        val result =
+            parser.parse(
+                document(
+                    "超级大乐透",
+                    "第26999期",
+                    "单式票 1倍 合计2元",
+                    "① 0107142235+0311",
+                ),
+            )
+
+        val draft = assertIs<TicketParseResult.ReadyForReview>(result).draft
+        assertEquals(listOf(1, 7, 14, 22, 35), draft.betLines.single().primaryNumbers)
+        assertEquals(listOf(3, 11), draft.betLines.single().secondaryNumbers)
+    }
+
+    /** 超过单注号码上限的连续流水号不得按两位拆分为投注号码。 */
+    @Test
+    fun oversizedDigitRunIsNotRecoveredAsBetNumbers() {
+        val result =
+            parser.parse(
+                document(
+                    "超级大乐透",
+                    "第26999期",
+                    "单式票 1倍 合计2元",
+                    "① 0107142235999999+0311",
+                ),
+            )
+
+        val correction = assertIs<TicketParseResult.NeedsCorrection>(result)
+        assertNull(correction.draft)
+    }
+
     /** 标题和摘要单位受损且加号漏识别时，应依据发行机构、坐标间隔和金额关系保留多期草稿。 */
     @Test
     fun damagedSportsLotteryOcrWithMissingPlusKeepsMultiPeriodDraft() {
@@ -259,7 +333,7 @@ class ConservativeTicketParserTest {
                             line("合计100元", left = 0.637f, top = 0.320f, width = 0.117f, height = 0.027f),
                             line(") 03 11 24 31 34", left = 0.224f, top = 0.342f, width = 0.312f, height = 0.034f),
                             line("02 10", left = 0.650f, top = 0.350f, width = 0.097f, height = 0.029f),
-                            line("长中国体育彩票", left = 0.800f, top = 0.366f, width = 0.034f, height = 0.196f),
+                            line("中", left = 0.800f, top = 0.366f, width = 0.034f, height = 0.196f),
                             line("2 05 13 18 29 35", left = 0.197f, top = 0.378f, width = 0.339f, height = 0.032f),
                             line("04 09", left = 0.639f, top = 0.386f, width = 0.097f, height = 0.023f),
                             line("06 12 19 27 33", left = 0.259f, top = 0.411f, width = 0.277f, height = 0.033f),
@@ -289,6 +363,53 @@ class ConservativeTicketParserTest {
         assertEquals(10_000L, draft.paidAmountFen)
     }
 
+    /** 单个偏高号码框覆盖较大纵向范围时，也不得把相邻两注合并成一行。 */
+    @Test
+    fun tallNumberFragmentDoesNotMergeAdjacentBetRows() {
+        val result =
+            parser.parse(
+                OcrDocument(
+                    imageId = TEST_IMAGE_ID,
+                    engineName = TEST_ENGINE_NAME,
+                    lines =
+                        listOf(
+                            line("超级大乐透", left = 0.20f, top = 0.05f),
+                            line("第26999期", left = 0.20f, top = 0.12f),
+                            line("单式票 1倍 合计4元", left = 0.15f, top = 0.20f, width = 0.65f),
+                            line("01 07 14 22 35", left = 0.12f, top = 0.295f, width = 0.40f, height = 0.055f),
+                            line("03 11", left = 0.65f, top = 0.31f, width = 0.12f, height = 0.025f),
+                            line("02 08 15 23 34", left = 0.12f, top = 0.34f, width = 0.40f, height = 0.03f),
+                            line("04 10", left = 0.65f, top = 0.342f, width = 0.12f, height = 0.026f),
+                        ),
+                ),
+            )
+
+        val draft = assertIs<TicketParseResult.ReadyForReview>(result).draft
+        assertEquals(2, draft.betLines.size)
+    }
+
+    /** 投注摘要紧贴首注时仍应按中心位置分成两行，避免摘要数字污染号码结构。 */
+    @Test
+    fun summaryDoesNotMergeIntoCloselySpacedFirstBetRow() {
+        val result =
+            parser.parse(
+                OcrDocument(
+                    imageId = TEST_IMAGE_ID,
+                    engineName = TEST_ENGINE_NAME,
+                    lines =
+                        listOf(
+                            line("超级大乐透", left = 0.20f, top = 0.05f),
+                            line("第26999期", left = 0.20f, top = 0.12f),
+                            line("单式票 1倍 合计2元", left = 0.15f, top = 0.338f, width = 0.65f, height = 0.047f),
+                            line("01 07 14 22 35", left = 0.12f, top = 0.365f, width = 0.40f, height = 0.035f),
+                            line("03 11", left = 0.65f, top = 0.369f, width = 0.12f, height = 0.027f),
+                        ),
+                ),
+            )
+
+        assertIs<TicketParseResult.ReadyForReview>(result)
+    }
+
     /** 加号缺失且没有明显主次区间隔时不得仅凭七个号码猜测票型。 */
     @Test
     fun missingPlusWithoutPositionGapRequiresCorrection() {
@@ -300,6 +421,64 @@ class ConservativeTicketParserTest {
                     "第26999期",
                     "单式票 1倍 合计2元",
                     "① 01 07 14 22 35 03 11",
+                ),
+            )
+
+        assertIs<TicketParseResult.NeedsCorrection>(result)
+    }
+
+    /** 加号漏识别时，同位置同值的重复数字框不应破坏唯一合法号码结构。 */
+    @Test
+    fun overlappingEqualNumberFragmentsAreDeduplicated() {
+        val result =
+            parser.parse(
+                OcrDocument(
+                    imageId = TEST_IMAGE_ID,
+                    engineName = TEST_ENGINE_NAME,
+                    lines =
+                        listOf(
+                            line("超级大乐透", left = 0.20f, top = 0.05f),
+                            line("第26999期", left = 0.20f, top = 0.12f),
+                            line("单式票 1倍 合计2元", left = 0.15f, top = 0.20f, width = 0.65f),
+                            line("01", left = 0.10f, top = 0.30f, width = 0.035f),
+                            line("07", left = 0.16f, top = 0.30f, width = 0.035f),
+                            line("14", left = 0.22f, top = 0.30f, width = 0.035f),
+                            line("14", left = 0.221f, top = 0.30f, width = 0.035f),
+                            line("22", left = 0.28f, top = 0.30f, width = 0.035f),
+                            line("35", left = 0.34f, top = 0.30f, width = 0.035f),
+                            line("03", left = 0.52f, top = 0.30f, width = 0.035f),
+                            line("11", left = 0.58f, top = 0.30f, width = 0.035f),
+                        ),
+                ),
+            )
+
+        val draft = assertIs<TicketParseResult.ReadyForReview>(result).draft
+        assertEquals(listOf(1, 7, 14, 22, 35), draft.betLines.single().primaryNumbers)
+        assertEquals(listOf(3, 11), draft.betLines.single().secondaryNumbers)
+    }
+
+    /** 同一位置出现不同号码时必须保留冲突并要求人工核对。 */
+    @Test
+    fun overlappingConflictingNumberFragmentsRequireCorrection() {
+        val result =
+            parser.parse(
+                OcrDocument(
+                    imageId = TEST_IMAGE_ID,
+                    engineName = TEST_ENGINE_NAME,
+                    lines =
+                        listOf(
+                            line("超级大乐透", left = 0.20f, top = 0.05f),
+                            line("第26999期", left = 0.20f, top = 0.12f),
+                            line("单式票 1倍 合计2元", left = 0.15f, top = 0.20f, width = 0.65f),
+                            line("01", left = 0.10f, top = 0.30f, width = 0.035f),
+                            line("07", left = 0.16f, top = 0.30f, width = 0.035f),
+                            line("14", left = 0.22f, top = 0.30f, width = 0.035f),
+                            line("15", left = 0.221f, top = 0.30f, width = 0.035f),
+                            line("22", left = 0.28f, top = 0.30f, width = 0.035f),
+                            line("35", left = 0.34f, top = 0.30f, width = 0.035f),
+                            line("03", left = 0.52f, top = 0.30f, width = 0.035f),
+                            line("11", left = 0.58f, top = 0.30f, width = 0.035f),
+                        ),
                 ),
             )
 
@@ -332,6 +511,31 @@ class ConservativeTicketParserTest {
         assertEquals(listOf(1, 6, 11, 18, 25, 33), draft.betLines.first().primaryNumbers)
         assertEquals(listOf(2), draft.betLines.first().secondaryNumbers)
         assertFalse(draft.betLines.first().isAdditional ?: true)
+        assertEquals(1, draft.multiplier)
+        assertEquals(1_000L, draft.paidAmountFen)
+    }
+
+    /** 双色球期号与日期粘连、个别行倍数损坏时，应由标签、多行一致倍数和金额共同恢复。 */
+    @Test
+    fun damagedDoubleColorBallFieldsAreRecoveredFromIndependentEvidence() {
+        val result =
+            parser.parse(
+                document(
+                    "中国福利彩票",
+                    "玩法：双色球-单式",
+                    "A. 09 10 15 19 23 28 + 15 x1",
+                    "B. 09 10 14 16 27 28 + 04 x1",
+                    "C. 05 08 14 20 26 30 + 15 X！",
+                    "D. 03 05 19 24 31 32 + 13 x1",
+                    "E. 12 13 14 20 25 30 + 09 x1",
+                    "开奖期：202609226-08-11",
+                    "合计：10元",
+                ),
+            )
+
+        val draft = assertIs<TicketParseResult.ReadyForReview>(result).draft
+        assertEquals("2026092", draft.issue)
+        assertEquals(5, draft.betLines.size)
         assertEquals(1, draft.multiplier)
         assertEquals(1_000L, draft.paidAmountFen)
     }
@@ -473,7 +677,7 @@ class ConservativeTicketParserTest {
         assertTrue(correction.message.contains("结构"))
     }
 
-    /** 精确标题存在但号码行不完整时，只保留安全非号码证据且不得伪造默认单期期数区域。 */
+    /** 精确标题下部分号码行不完整时，应保留完整行并要求人工补充残缺行。 */
     @Test
     fun incompleteBetRowsKeepSafeNonBetEvidenceWithoutPeriodRegion() {
         val result =
@@ -495,11 +699,13 @@ class ConservativeTicketParserTest {
 
         val correction = assertIs<TicketParseResult.NeedsCorrection>(result)
         assertTrue(correction.message.contains("投注号码不完整"))
-        assertNull(correction.draft)
+        assertEquals(1, assertNotNull(correction.draft).betLines.size)
         assertEquals(
             listOf(
                 TicketFieldReference.LotteryType,
                 TicketFieldReference.Issue,
+                TicketFieldReference.BetLine(0),
+                TicketFieldReference.Multiplier,
                 TicketFieldReference.PaidAmount,
             ),
             correction.fieldRegions.map { it.field },
@@ -508,7 +714,9 @@ class ConservativeTicketParserTest {
         assertEquals(NormalizedBounds(0.15f, 0.05f, 0.51f, 0.08f), lotteryTypeRegion.bounds)
         assertEquals(0.91f, lotteryTypeRegion.rawConfidence)
         assertEquals(0.88f, correction.fieldRegions[1].rawConfidence)
-        assertEquals(0.77f, correction.fieldRegions[2].rawConfidence)
+        assertEquals(TEST_CONFIDENCE, correction.fieldRegions[2].rawConfidence)
+        assertEquals(TEST_CONFIDENCE, correction.fieldRegions[3].rawConfidence)
+        assertEquals(0.77f, correction.fieldRegions[4].rawConfidence)
     }
 
     /** 明确出现多期投注且字段完整时应直接进入人工确认。 */
@@ -551,21 +759,26 @@ class ConservativeTicketParserTest {
         assertNull(draft.multiplier)
     }
 
-    /** 补打票即使没有明确期数也必须优先阻断。 */
+    /** 字段完整且金额闭环成立的补打票应进入确认，不能仅凭补打关键词阻断。 */
     @Test
-    fun reprintedTicketIsUnsupported() {
+    fun completeReprintedTicketIsReadyForReview() {
         val result =
             parser.parse(
                 document(
                     "超级大乐透",
                     "第26999期",
-                    "单式票 1倍 合计10元",
+                    "单式票 1期1倍 合计2元",
+                    "① 01 07 14 22 35 + 03 11",
                     "本彩票是多期投注兑奖后的补打票",
                 ),
             )
 
-        val unsupported = assertIs<TicketParseResult.Unsupported>(result)
-        assertTrue(unsupported.message.contains("补打票"))
+        val draft = assertIs<TicketParseResult.ReadyForReview>(result).draft
+        assertEquals("26999", draft.issue)
+        assertEquals(1, draft.betLines.size)
+        assertEquals(1, draft.multiplier)
+        assertEquals(1, draft.periodCount)
+        assertEquals(200L, draft.paidAmountFen)
     }
 
     /** 号码中的字母 O 不得被静默替换为数字零。 */

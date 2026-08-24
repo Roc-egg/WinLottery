@@ -182,8 +182,8 @@ class AndroidPhotoPickerImageAcquirer(
 
     /** Android 导图处理常量。 */
     private companion object {
-        /** OCR PoC 保留的最长图片边。 */
-        const val MAX_IMAGE_EDGE_PIXELS = 4096
+        /** 与共享 OCR 解码上限一致的最长图片边，避免重复保留更大的中间副本。 */
+        const val MAX_IMAGE_EDGE_PIXELS = 2048
 
         /** 私有副本 JPEG 编码质量。 */
         const val JPEG_QUALITY = 95

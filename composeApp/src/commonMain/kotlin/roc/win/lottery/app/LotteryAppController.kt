@@ -14,6 +14,7 @@ import roc.win.lottery.recognition.ImageAcquisitionResult
 import roc.win.lottery.recognition.ImageAcquisitionSource
 import roc.win.lottery.recognition.ImageQualityResult
 import roc.win.lottery.recognition.ImageRef
+import roc.win.lottery.recognition.ProgressiveTicketRecognizer
 import roc.win.lottery.recognition.RecognitionResult
 import roc.win.lottery.recognition.TicketFieldCandidate
 import roc.win.lottery.recognition.TicketFieldRegion
@@ -444,7 +445,30 @@ class LotteryAppController(
             it.copy(screen = AppScreen.Analysis("本地识别", "正在读取票面文字，不会上传图片", 0.52f))
         }
 
-        when (val recognition = container.ticketRecognizer.recognize(acquisition.imageRef)) {
+        val recognizer = container.ticketRecognizer
+        val recognition =
+            if (recognizer is ProgressiveTicketRecognizer) {
+                recognizer.recognize(acquisition.imageRef) { progress ->
+                    if (generation == flowGeneration) {
+                        mutableUiState.update { state ->
+                            state.copy(
+                                screen =
+                                    AppScreen.Analysis(
+                                        title = "本地识别",
+                                        detail = progress.message,
+                                        progress =
+                                            OCR_ANALYSIS_START_PROGRESS +
+                                                progress.fraction * OCR_ANALYSIS_PROGRESS_SPAN,
+                                    ),
+                            )
+                        }
+                    }
+                }
+            } else {
+                recognizer.recognize(acquisition.imageRef)
+            }
+
+        when (recognition) {
             is RecognitionResult.Failure -> {
                 showError("识别失败", recognition.message, generation)
             }
@@ -581,6 +605,12 @@ class LotteryAppController(
 
     /** 多期查询和重试使用的状态集合。 */
     private companion object {
+        /** OCR 内部阶段映射到应用分析页时的起始进度。 */
+        const val OCR_ANALYSIS_START_PROGRESS = 0.52f
+
+        /** OCR 内部阶段在应用分析页中占用的进度区间。 */
+        const val OCR_ANALYSIS_PROGRESS_SPAN = 0.28f
+
         /** 遇到这些状态后继续请求更晚期次没有可靠收益。 */
         val STOP_REMAINING_PERIOD_STATUSES =
             setOf(

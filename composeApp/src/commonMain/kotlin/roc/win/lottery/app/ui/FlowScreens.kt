@@ -230,7 +230,10 @@ fun ReviewScreen(
         val selectedLotteryType = editor.lotteryType.value
         if (selectedLotteryType != null) {
             Spacer(Modifier.height(24.dp))
-            Text("投注号码", style = MaterialTheme.typography.titleLarge)
+            Text(
+                "投注号码（共 ${editor.betLines.size} 注）",
+                style = MaterialTheme.typography.titleLarge,
+            )
             Spacer(Modifier.height(12.dp))
             editor.betLines.forEachIndexed { index, line ->
                 val removeAction: (() -> Unit)? =
@@ -241,6 +244,7 @@ fun ReviewScreen(
                     }
                 TicketLineEditor(
                     lineIndex = index,
+                    lineCount = editor.betLines.size,
                     line = line,
                     lotteryType = selectedLotteryType,
                     problems = evaluation.problems,
@@ -420,6 +424,7 @@ private fun CandidateChoiceRow(
  * 显示一行单式投注的号码球编辑器。
  *
  * @param lineIndex 投注行下标。
+ * @param lineCount 当前票面的投注总注数。
  * @param line 当前行编辑状态。
  * @param lotteryType 当前玩法。
  * @param problems 当前领域问题。
@@ -430,6 +435,7 @@ private fun CandidateChoiceRow(
 @Composable
 private fun TicketLineEditor(
     lineIndex: Int,
+    lineCount: Int,
     line: TicketLineReviewState,
     lotteryType: LotteryType,
     problems: List<TicketValidationProblem>,
@@ -450,7 +456,10 @@ private fun TicketLineEditor(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text("第 ${lineIndex + 1} 注", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "第 ${lineIndex + 1} 注 / 共 $lineCount 注",
+                    style = MaterialTheme.typography.titleMedium,
+                )
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         line.displayOrigin().displayName(),
@@ -1038,8 +1047,8 @@ private const val MAX_MULTIPLIER = 99
 
 /** 关于页展示的 V1 已支持票面范围。 */
 internal const val V1_SUPPORTED_TICKET_SCOPE_TEXT =
-    "单张电脑打印的超级大乐透或双色球彩票；支持 1 至 20 期受控连续投注、单式、多注单式、倍数及大乐透追加。"
+    "单张电脑打印的超级大乐透或双色球彩票；支持 1 至 20 期受控连续投注、补打票、单式、多注单式、倍数及大乐透追加。"
 
 /** 关于页展示的 V1 未支持票面范围。 */
 internal const val V1_UNSUPPORTED_TICKET_SCOPE_TEXT =
-    "不支持复式、胆拖、补打票、超过 20 期、跨年度未知期次、手写票、电子截图或未知票面版式。"
+    "不支持复式、胆拖、超过 20 期、跨年度未知期次、手写票、电子截图或未知票面版式。"

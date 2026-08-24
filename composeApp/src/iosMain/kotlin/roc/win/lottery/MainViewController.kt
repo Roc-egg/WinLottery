@@ -2,12 +2,13 @@ package roc.win.lottery
 
 import androidx.compose.ui.window.ComposeUIViewController
 import platform.UIKit.UIViewController
+import roc.win.lottery.recognition.IOSOnnxRuntime
 
 /** 创建已装配 iOS 本地识别 PoC、供 SwiftUI 宿主嵌入的共享 Compose 控制器。 */
 @Suppress("FunctionName")
-fun MainViewController(): UIViewController {
+fun MainViewController(onnxRuntime: IOSOnnxRuntime): UIViewController {
     var viewController: UIViewController? = null
-    val container = createIOSRecognitionContainer { viewController }
+    val container = createIOSRecognitionContainer(onnxRuntime) { viewController }
     viewController = ComposeUIViewController { App(container) }
     return requireNotNull(viewController)
 }

@@ -24,9 +24,9 @@
 ## ADR-004：OCR 全部本地执行
 
 - 状态：已采用。
-- 决策：Android 使用 ML Kit bundled 模型，iOS 使用 Vision，Desktop 使用 PP-OCR ONNX；不调用云 OCR。
+- 决策：Android/iOS 使用同一套 PP-OCRv5 mobile 三段 ONNX、字符字典和共享预后处理；Android 使用 ONNX Runtime Android，iOS 使用 ONNX Runtime Swift；Desktop 保留独立 ONNX 工作进程路线；不调用云 OCR。
 - 原因：保护票据隐私、避免客户端密钥和网络依赖。
-- 影响：安装包体积增加，四端 OCR 准确率需分别校准；Desktop 的 ONNX Runtime 只允许在父进程预先禁用遥测后启动的独立本地工作进程中加载。
+- 影响：移动端模型行为与字符类别一致，但图片解码、运行时版本、硬件和系统差异仍需分别验收；安装包体积明显增加。Desktop 的 ONNX Runtime 只允许在父进程预先禁用遥测后启动的独立本地工作进程中加载。
 
 ## ADR-005：所有票面关键字段必须人工确认
 

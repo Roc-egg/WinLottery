@@ -6,7 +6,23 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		10A001000000000000000001 /* detection.onnx in Resources */ = {isa = PBXBuildFile; fileRef = 10A002000000000000000001 /* detection.onnx */; };
+		10A001000000000000000002 /* orientation.onnx in Resources */ = {isa = PBXBuildFile; fileRef = 10A002000000000000000002 /* orientation.onnx */; };
+		10A001000000000000000003 /* recognition.onnx in Resources */ = {isa = PBXBuildFile; fileRef = 10A002000000000000000003 /* recognition.onnx */; };
+		10A001000000000000000004 /* characters.txt in Resources */ = {isa = PBXBuildFile; fileRef = 10A002000000000000000004 /* characters.txt */; };
+		10A001000000000000000005 /* onnxruntime in Frameworks */ = {isa = PBXBuildFile; productRef = 10A005000000000000000001 /* onnxruntime */; };
+		10A001000000000000000006 /* recognition_latin.onnx in Resources */ = {isa = PBXBuildFile; fileRef = 10A002000000000000000006 /* recognition_latin.onnx */; };
+		10A001000000000000000007 /* characters_latin.txt in Resources */ = {isa = PBXBuildFile; fileRef = 10A002000000000000000007 /* characters_latin.txt */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
+		10A002000000000000000001 /* detection.onnx */ = {isa = PBXFileReference; lastKnownFileType = file; name = detection.onnx; path = ../shared/recognition/src/commonMain/resources/roc/win/lottery/recognition/models/ppocrv5/detection.onnx; sourceTree = SOURCE_ROOT; };
+		10A002000000000000000002 /* orientation.onnx */ = {isa = PBXFileReference; lastKnownFileType = file; name = orientation.onnx; path = ../shared/recognition/src/commonMain/resources/roc/win/lottery/recognition/models/ppocrv5/orientation.onnx; sourceTree = SOURCE_ROOT; };
+		10A002000000000000000003 /* recognition.onnx */ = {isa = PBXFileReference; lastKnownFileType = file; name = recognition.onnx; path = ../shared/recognition/src/commonMain/resources/roc/win/lottery/recognition/models/ppocrv5/recognition.onnx; sourceTree = SOURCE_ROOT; };
+		10A002000000000000000004 /* characters.txt */ = {isa = PBXFileReference; lastKnownFileType = text; name = characters.txt; path = ../shared/recognition/src/commonMain/resources/roc/win/lottery/recognition/models/ppocrv5/characters.txt; sourceTree = SOURCE_ROOT; };
+		10A002000000000000000006 /* recognition_latin.onnx */ = {isa = PBXFileReference; lastKnownFileType = file; name = recognition_latin.onnx; path = ../shared/recognition/src/commonMain/resources/roc/win/lottery/recognition/models/ppocrv5/recognition_latin.onnx; sourceTree = SOURCE_ROOT; };
+		10A002000000000000000007 /* characters_latin.txt */ = {isa = PBXFileReference; lastKnownFileType = text; name = characters_latin.txt; path = ../shared/recognition/src/commonMain/resources/roc/win/lottery/recognition/models/ppocrv5/characters_latin.txt; sourceTree = SOURCE_ROOT; };
 		8E833E9EDB03E9D561F5A379 /* WinLottery.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = WinLottery.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -41,6 +57,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				10A001000000000000000005 /* onnxruntime in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -50,10 +67,24 @@
 		0C8FFF70561336D56D5602D1 = {
 			isa = PBXGroup;
 			children = (
+				10A003000000000000000001 /* PP-OCRv5 Models */,
 				F57BF22E691A9820DDBE6163 /* Configuration */,
 				55D701A21F6E138F4FC6650C /* iosApp */,
 				49BEDD4B1E75712ED6EE5823 /* Products */,
 			);
+			sourceTree = "<group>";
+		};
+		10A003000000000000000001 /* PP-OCRv5 Models */ = {
+			isa = PBXGroup;
+			children = (
+				10A002000000000000000001 /* detection.onnx */,
+				10A002000000000000000002 /* orientation.onnx */,
+				10A002000000000000000003 /* recognition.onnx */,
+				10A002000000000000000004 /* characters.txt */,
+				10A002000000000000000006 /* recognition_latin.onnx */,
+				10A002000000000000000007 /* characters_latin.txt */,
+			);
+			name = "PP-OCRv5 Models";
 			sourceTree = "<group>";
 		};
 		49BEDD4B1E75712ED6EE5823 /* Products */ = {
@@ -85,6 +116,7 @@
 			);
 			name = iosApp;
 			packageProductDependencies = (
+				10A005000000000000000001 /* onnxruntime */,
 			);
 			productName = iosApp;
 			productReference = 8E833E9EDB03E9D561F5A379 /* WinLottery.app */;
@@ -118,6 +150,9 @@
 			productRefGroup = 49BEDD4B1E75712ED6EE5823 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
+			packageReferences = (
+				10A004000000000000000001 /* XCRemoteSwiftPackageReference "onnxruntime-swift-package-manager" */,
+			);
 			targets = (
 				FF009BCFDC195B51F4FC4506 /* iosApp */,
 			);
@@ -129,6 +164,12 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				10A001000000000000000001 /* detection.onnx in Resources */,
+				10A001000000000000000002 /* orientation.onnx in Resources */,
+				10A001000000000000000003 /* recognition.onnx in Resources */,
+				10A001000000000000000004 /* characters.txt in Resources */,
+				10A001000000000000000006 /* recognition_latin.onnx in Resources */,
+				10A001000000000000000007 /* characters_latin.txt in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -347,6 +388,25 @@
 			name = Release;
 		};
 /* End XCBuildConfiguration section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		10A004000000000000000001 /* XCRemoteSwiftPackageReference "onnxruntime-swift-package-manager" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/microsoft/onnxruntime-swift-package-manager";
+			requirement = {
+				kind = exactVersion;
+				version = 1.24.2;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		10A005000000000000000001 /* onnxruntime */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 10A004000000000000000001 /* XCRemoteSwiftPackageReference "onnxruntime-swift-package-manager" */;
+			productName = onnxruntime;
+		};
+/* End XCSwiftPackageProductDependency section */
 
 /* Begin XCConfigurationList section */
 		8C188E665B5587F345E6F8E0 /* Build configuration list for PBXProject "iosApp" */ = {

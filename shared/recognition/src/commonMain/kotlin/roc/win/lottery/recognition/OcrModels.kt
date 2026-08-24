@@ -148,6 +148,37 @@ fun interface TicketRecognizer {
     suspend fun recognize(imageRef: ImageRef): RecognitionResult
 }
 
+/** 本地 OCR 内部阶段的可展示进度。 */
+data class RecognitionProgress(
+    /** 当前 OCR 完成比例，范围为 `0.0..1.0`。 */
+    val fraction: Float,
+    /** 不包含票面隐私内容的阶段说明。 */
+    val message: String,
+) {
+    init {
+        require(fraction in 0f..1f) { "OCR 进度必须位于 0.0..1.0" }
+        require(message.isNotBlank()) { "OCR 进度说明不能为空" }
+    }
+}
+
+/** 能够在识别期间持续报告内部阶段进度的本地 OCR。 */
+interface ProgressiveTicketRecognizer : TicketRecognizer {
+    /** 未提供进度监听时仍执行同一套本地识别。 */
+    override suspend fun recognize(imageRef: ImageRef): RecognitionResult = recognize(imageRef) { }
+
+    /**
+     * 对私有临时图片执行本地 OCR，并报告不包含票面内容的阶段进度。
+     *
+     * @param imageRef 已完成方向归一化的临时图片引用。
+     * @param onProgress 单调递增的 OCR 阶段进度监听器。
+     * @return 标准 OCR 文档或明确失败状态。
+     */
+    suspend fun recognize(
+        imageRef: ImageRef,
+        onProgress: (RecognitionProgress) -> Unit,
+    ): RecognitionResult
+}
+
 /** OCR 文档到票面草稿的解析结果。 */
 sealed interface TicketParseResult {
     /**

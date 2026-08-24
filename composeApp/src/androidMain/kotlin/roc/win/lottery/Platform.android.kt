@@ -15,10 +15,10 @@ import roc.win.lottery.domain.TicketValidator
 import roc.win.lottery.recognition.AndroidAppPaths
 import roc.win.lottery.recognition.AndroidLuminanceImageDecoder
 import roc.win.lottery.recognition.AndroidPhotoPickerImageAcquirer
+import roc.win.lottery.recognition.AndroidPpOcrTicketRecognizer
 import roc.win.lottery.recognition.ConservativeTicketParser
 import roc.win.lottery.recognition.ImageDimensionQualityAnalyzer
 import roc.win.lottery.recognition.ImageQualityAnalyzerChain
-import roc.win.lottery.recognition.MlKitChineseTicketRecognizer
 import roc.win.lottery.recognition.PixelImageQualityAnalyzer
 
 /** Android 平台能力。 */
@@ -57,7 +57,7 @@ fun createAndroidRecognitionContainer(activity: ComponentActivity): AppContainer
                     PixelImageQualityAnalyzer(AndroidLuminanceImageDecoder()),
                 ),
             ),
-        ticketRecognizer = MlKitChineseTicketRecognizer(activity.applicationContext),
+        ticketRecognizer = AndroidPpOcrTicketRecognizer(activity.applicationContext),
         ticketParser = ConservativeTicketParser(),
         drawRepository =
             officialDrawRepository.withOneShotConflictInjection(

@@ -15,11 +15,13 @@ import roc.win.lottery.domain.TicketValidator
 import roc.win.lottery.recognition.ConservativeTicketParser
 import roc.win.lottery.recognition.IOSAppPaths
 import roc.win.lottery.recognition.IOSLuminanceImageDecoder
+import roc.win.lottery.recognition.IOSOnnxRuntime
 import roc.win.lottery.recognition.IOSPhotoPickerImageAcquirer
+import roc.win.lottery.recognition.IOSPpOcrTicketRecognizer
 import roc.win.lottery.recognition.ImageDimensionQualityAnalyzer
 import roc.win.lottery.recognition.ImageQualityAnalyzerChain
 import roc.win.lottery.recognition.PixelImageQualityAnalyzer
-import roc.win.lottery.recognition.VisionTicketRecognizer
+import roc.win.lottery.recognition.launchIOSOcrAcceptanceIfRequested
 import kotlin.experimental.ExperimentalNativeApi
 import kotlin.native.Platform as NativePlatform
 
@@ -38,10 +40,14 @@ actual fun getPlatform(): Platform = IOSPlatform()
 /**
  * 创建已接入 iOS 图片采集、本地 OCR 和真实开奖查询的移动容器。
  *
+ * @param onnxRuntime 由 Swift 宿主提供的官方 ONNX Runtime 执行器。
  * @param presenterProvider 返回当前可展示系统图片选择器的宿主控制器。
  * @return 使用真实本地识别、保守解析器、官网开奖仓库和本地规则引擎的应用容器。
  */
-fun createIOSRecognitionContainer(presenterProvider: () -> UIViewController?): AppContainer {
+fun createIOSRecognitionContainer(
+    onnxRuntime: IOSOnnxRuntime,
+    presenterProvider: () -> UIViewController?,
+): AppContainer {
     val appPaths = IOSAppPaths()
     val isDebugBinary = isIOSDebugBinary()
     val officialDrawRepository =
@@ -59,7 +65,7 @@ fun createIOSRecognitionContainer(presenterProvider: () -> UIViewController?): A
                         PixelImageQualityAnalyzer(IOSLuminanceImageDecoder()),
                     ),
                 ),
-            ticketRecognizer = VisionTicketRecognizer(),
+            ticketRecognizer = IOSPpOcrTicketRecognizer(onnxRuntime),
             ticketParser = ConservativeTicketParser(),
             drawRepository =
                 officialDrawRepository.withOneShotConflictInjection(
@@ -77,6 +83,12 @@ fun createIOSRecognitionContainer(presenterProvider: () -> UIViewController?): A
             ocrConfidenceDiagnostics = createIOSOcrConfidenceDiagnostics(),
         )
     launchIOSMobileAnalysisPerformanceIfRequested(container, isDebugBinary)
+    launchIOSOcrAcceptanceIfRequested(
+        imageQualityAnalyzer = container.imageQualityAnalyzer,
+        ticketRecognizer = container.ticketRecognizer,
+        ticketParser = container.ticketParser,
+        isDebugBinary = isDebugBinary,
+    )
     return container
 }
 

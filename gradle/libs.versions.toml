@@ -21,11 +21,11 @@ kotlinx-datetime = "0.8.0"
 ktor = "3.5.2"
 ktlint = "1.8.0"
 material3 = "1.11.0-alpha07"
-mlkit-text-recognition-chinese = "16.0.1"
 lucide = "1.1.0"
 spotless = "8.9.0"
 okio = "3.17.0"
 onnxruntime = "1.29.0"
+onnxruntime-mobile = "1.24.2"
 pdfbox = "3.0.8"
 tom-roush-pdfbox = "2.0.27.0"
 
@@ -57,12 +57,10 @@ compose-components-resources = { module = "org.jetbrains.compose.components:comp
 compose-uiToolingPreview = { module = "org.jetbrains.compose.ui:ui-tooling-preview", version.ref = "composeMultiplatform" }
 kotlinx-coroutinesSwing = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-swing", version.ref = "kotlinx-coroutines" }
 kotlinx-coroutinesCore = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinx-coroutines" }
-kotlinx-coroutinesPlayServices = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-play-services", version.ref = "kotlinx-coroutines" }
 kotlinx-coroutinesTest = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "kotlinx-coroutines" }
 kotlinx-serializationJson = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinx-serialization" }
 kotlinx-datetime = { module = "org.jetbrains.kotlinx:kotlinx-datetime", version.ref = "kotlinx-datetime" }
 lucide-icons = { module = "com.composables:icons-lucide", version.ref = "lucide" }
-mlkit-textRecognitionChinese = { module = "com.google.mlkit:text-recognition-chinese", version.ref = "mlkit-text-recognition-chinese" }
 ktor-clientCore = { module = "io.ktor:ktor-client-core", version.ref = "ktor" }
 ktor-clientContentNegotiation = { module = "io.ktor:ktor-client-content-negotiation", version.ref = "ktor" }
 ktor-clientDarwin = { module = "io.ktor:ktor-client-darwin", version.ref = "ktor" }
@@ -71,6 +69,7 @@ ktor-clientOkhttp = { module = "io.ktor:ktor-client-okhttp", version.ref = "ktor
 ktor-serializationJson = { module = "io.ktor:ktor-serialization-kotlinx-json", version.ref = "ktor" }
 okio = { module = "com.squareup.okio:okio", version.ref = "okio" }
 onnxruntime = { module = "com.microsoft.onnxruntime:onnxruntime", version.ref = "onnxruntime" }
+onnxruntime-android = { module = "com.microsoft.onnxruntime:onnxruntime-android", version.ref = "onnxruntime-mobile" }
 pdfbox = { module = "org.apache.pdfbox:pdfbox", version.ref = "pdfbox" }
 tom-roush-pdfbox = { module = "com.tom-roush:pdfbox-android", version.ref = "tom-roush-pdfbox" }
 

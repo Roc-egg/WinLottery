@@ -33,15 +33,17 @@ kotlin {
     iosSimulatorArm64()
 
     sourceSets {
-        androidMain.dependencies {
-            implementation(libs.androidx.activity)
-            implementation(libs.androidx.camera.camera2)
-            implementation(libs.androidx.camera.core)
-            implementation(libs.androidx.camera.lifecycle)
-            implementation(libs.androidx.camera.view)
-            implementation(libs.androidx.exifinterface)
-            implementation(libs.kotlinx.coroutinesPlayServices)
-            implementation(libs.mlkit.textRecognitionChinese)
+        androidMain {
+            resources.srcDir("src/commonMain/resources")
+            dependencies {
+                implementation(libs.androidx.activity)
+                implementation(libs.androidx.camera.camera2)
+                implementation(libs.androidx.camera.core)
+                implementation(libs.androidx.camera.lifecycle)
+                implementation(libs.androidx.camera.view)
+                implementation(libs.androidx.exifinterface)
+                implementation(libs.onnxruntime.android)
+            }
         }
         commonMain.dependencies {
             implementation(project(":shared:domain"))
@@ -61,6 +63,9 @@ kotlin {
             implementation(libs.kotlinx.coroutinesSwing)
             implementation(libs.kotlinx.serializationJson)
             implementation(libs.onnxruntime)
+        }
+        jvmTest {
+            resources.srcDir("src/commonMain/resources")
         }
     }
 }

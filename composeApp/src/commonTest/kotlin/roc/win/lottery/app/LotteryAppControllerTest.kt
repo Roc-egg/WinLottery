@@ -33,6 +33,8 @@ import roc.win.lottery.recognition.ImageDimensionQualityAnalyzer
 import roc.win.lottery.recognition.ImageQualityAnalyzer
 import roc.win.lottery.recognition.ImageRef
 import roc.win.lottery.recognition.NormalizedBounds
+import roc.win.lottery.recognition.ProgressiveTicketRecognizer
+import roc.win.lottery.recognition.RecognitionProgress
 import roc.win.lottery.recognition.RecognitionResult
 import roc.win.lottery.recognition.TicketFieldCandidate
 import roc.win.lottery.recognition.TicketFieldReference
@@ -769,6 +771,42 @@ class LotteryAppControllerTest {
 
             assertIs<AppScreen.Error>(controller.uiState.value.screen)
             assertEquals(listOf("b1-demo-ticket"), paths.deletedImageIds)
+        }
+
+    /** 渐进式 OCR 回调必须持续更新分析页百分比和阶段说明，不得停留在固定中点。 */
+    @Test
+    fun progressiveRecognitionUpdatesAnalysisScreen() =
+        runTest {
+            val progressReported = CompletableDeferred<Unit>()
+            val continueRecognition = CompletableDeferred<Unit>()
+            val recognizer =
+                object : ProgressiveTicketRecognizer {
+                    /** 报告中间阶段并等待测试读取 UI 状态后结束识别。 */
+                    override suspend fun recognize(
+                        imageRef: ImageRef,
+                        onProgress: (RecognitionProgress) -> Unit,
+                    ): RecognitionResult {
+                        onProgress(RecognitionProgress(0.5f, "正在校准投注号码 2/4"))
+                        progressReported.complete(Unit)
+                        continueRecognition.await()
+                        return RecognitionResult.Failure("进度测试结束")
+                    }
+                }
+            val controller =
+                createController(
+                    repository = CountingDrawRepository(),
+                    ticketRecognizer = recognizer,
+                )
+
+            val analysisJob = launch { controller.startAnalysis(ImageAcquisitionSource.SYSTEM_PICKER) }
+            progressReported.await()
+
+            val analysis = assertIs<AppScreen.Analysis>(controller.uiState.value.screen)
+            assertEquals("正在校准投注号码 2/4", analysis.detail)
+            assertEquals(0.66f, analysis.progress, absoluteTolerance = 0.001f)
+
+            continueRecognition.complete(Unit)
+            analysisJob.join()
         }
 
     /** 分辨率不足时必须在 OCR 前阻断，并清理已经落盘的临时图片。 */

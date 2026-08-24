@@ -31,8 +31,8 @@ import kotlin.coroutines.resume
 /** 公共图片类型标识。 */
 private const val IMAGE_TYPE_IDENTIFIER = "public.image"
 
-/** OCR PoC 保留的最长图片边。 */
-private const val MAX_IMAGE_EDGE_PIXELS = 4096.0
+/** 与共享 OCR 解码上限一致的最长图片边，避免重复保留更大的中间副本。 */
+private const val MAX_IMAGE_EDGE_PIXELS = 2048.0
 
 /** 私有副本 JPEG 编码质量。 */
 private const val JPEG_QUALITY = 0.95

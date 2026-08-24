@@ -122,10 +122,11 @@
 
 任务：
 
-- Android CameraX 拍照、Photo Picker 和 ML Kit OCR。
-- iOS AVFoundation 拍照、PHPicker 和 Vision OCR。
+- Android CameraX 拍照、Photo Picker 和 PP-OCRv5 + ONNX Runtime Android。
+- iOS AVFoundation 拍照、PHPicker 和 PP-OCRv5 + ONNX Runtime Swift。
 - 图片临时文件、EXIF 方向、裁切、纠偏和增强。
 - 输出统一 OCR 行、文字、坐标和置信度模型。
+- 两端共用检测、方向分类、文字识别预后处理和 CTC 解码，只在平台层适配图片像素与 ONNX Session。
 - 对同一票样进行 Android/iOS 差异评估。
 - 保留已完成的 Windows/macOS 文件导入、ONNX Runtime 无遥测工作进程、PP-OCRv5 模型来源锁、可复现转换与数值一致性验证；V1 不继续桌面真实推理和分发验收。
 
