@@ -1,0 +1,235 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 1,
+    "identityHash": "6d8d42b74ee576500b8b76a7eb155bc1",
+    "entities": [
+      {
+        "tableName": "ticket_records",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `display_name` TEXT NOT NULL, `lottery_type` TEXT NOT NULL, `first_issue` TEXT NOT NULL, `period_count` INTEGER NOT NULL, `multiplier` INTEGER NOT NULL, `paid_amount_fen` INTEGER NOT NULL, `acquisition_source` TEXT NOT NULL, `lottery_type_origin` TEXT NOT NULL, `issue_origin` TEXT NOT NULL, `period_count_origin` TEXT NOT NULL, `multiplier_origin` TEXT NOT NULL, `paid_amount_origin` TEXT NOT NULL, `created_at_epoch_millis` INTEGER NOT NULL, `updated_at_epoch_millis` INTEGER NOT NULL, `data_version` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "displayName",
+            "columnName": "display_name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lotteryType",
+            "columnName": "lottery_type",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "firstIssue",
+            "columnName": "first_issue",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "periodCount",
+            "columnName": "period_count",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "multiplier",
+            "columnName": "multiplier",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "paidAmountFen",
+            "columnName": "paid_amount_fen",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "acquisitionSource",
+            "columnName": "acquisition_source",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lotteryTypeOrigin",
+            "columnName": "lottery_type_origin",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "issueOrigin",
+            "columnName": "issue_origin",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "periodCountOrigin",
+            "columnName": "period_count_origin",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "multiplierOrigin",
+            "columnName": "multiplier_origin",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "paidAmountOrigin",
+            "columnName": "paid_amount_origin",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAtEpochMillis",
+            "columnName": "created_at_epoch_millis",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAtEpochMillis",
+            "columnName": "updated_at_epoch_millis",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "dataVersion",
+            "columnName": "data_version",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_ticket_records_created_at_epoch_millis",
+            "unique": false,
+            "columnNames": [
+              "created_at_epoch_millis"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_ticket_records_created_at_epoch_millis` ON `${TABLE_NAME}` (`created_at_epoch_millis`)"
+          },
+          {
+            "name": "index_ticket_records_lottery_type",
+            "unique": false,
+            "columnNames": [
+              "lottery_type"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_ticket_records_lottery_type` ON `${TABLE_NAME}` (`lottery_type`)"
+          },
+          {
+            "name": "index_ticket_records_first_issue",
+            "unique": false,
+            "columnNames": [
+              "first_issue"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_ticket_records_first_issue` ON `${TABLE_NAME}` (`first_issue`)"
+          }
+        ]
+      },
+      {
+        "tableName": "ticket_bet_lines",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`record_id` TEXT NOT NULL, `line_index` INTEGER NOT NULL, `primary_numbers` TEXT NOT NULL, `secondary_numbers` TEXT NOT NULL, `is_additional` INTEGER NOT NULL, `primary_numbers_origin` TEXT NOT NULL, `secondary_numbers_origin` TEXT NOT NULL, `is_additional_origin` TEXT NOT NULL, PRIMARY KEY(`record_id`, `line_index`), FOREIGN KEY(`record_id`) REFERENCES `ticket_records`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "recordId",
+            "columnName": "record_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lineIndex",
+            "columnName": "line_index",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "primaryNumbers",
+            "columnName": "primary_numbers",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "secondaryNumbers",
+            "columnName": "secondary_numbers",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "isAdditional",
+            "columnName": "is_additional",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "primaryNumbersOrigin",
+            "columnName": "primary_numbers_origin",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "secondaryNumbersOrigin",
+            "columnName": "secondary_numbers_origin",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "isAdditionalOrigin",
+            "columnName": "is_additional_origin",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "record_id",
+            "line_index"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_ticket_bet_lines_record_id",
+            "unique": false,
+            "columnNames": [
+              "record_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_ticket_bet_lines_record_id` ON `${TABLE_NAME}` (`record_id`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "ticket_records",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "record_id"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '6d8d42b74ee576500b8b76a7eb155bc1')"
+    ]
+  }
+}
