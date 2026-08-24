@@ -4,6 +4,7 @@ import android.content.pm.ApplicationInfo
 import android.os.Build
 import android.util.Log
 import androidx.activity.ComponentActivity
+import roc.win.lottery.app.AndroidTicketRecordFileExchange
 import roc.win.lottery.app.AppContainer
 import roc.win.lottery.app.LogOcrConfidenceDiagnostics
 import roc.win.lottery.app.OcrConfidenceDiagnostics
@@ -73,6 +74,7 @@ fun createAndroidRecognitionContainer(activity: ComponentActivity): AppContainer
         usesRealRecognition = true,
         usesRealDrawData = true,
         ticketRecordStore = createAndroidTicketRecordStore(activity.applicationContext),
+        ticketRecordFileExchange = AndroidTicketRecordFileExchange(activity),
         ocrConfidenceDiagnostics = createAndroidOcrConfidenceDiagnostics(activity),
     )
 }

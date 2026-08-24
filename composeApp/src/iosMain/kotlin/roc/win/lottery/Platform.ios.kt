@@ -5,6 +5,7 @@ import platform.Foundation.NSProcessInfo
 import platform.UIKit.UIDevice
 import platform.UIKit.UIViewController
 import roc.win.lottery.app.AppContainer
+import roc.win.lottery.app.IOSTicketRecordFileExchange
 import roc.win.lottery.app.LogOcrConfidenceDiagnostics
 import roc.win.lottery.app.OcrConfidenceDiagnostics
 import roc.win.lottery.app.withOneShotConflictInjection
@@ -82,6 +83,7 @@ fun createIOSRecognitionContainer(
             usesRealRecognition = true,
             usesRealDrawData = true,
             ticketRecordStore = createIOSTicketRecordStore(),
+            ticketRecordFileExchange = IOSTicketRecordFileExchange(presenterProvider),
             ocrConfidenceDiagnostics = createIOSOcrConfidenceDiagnostics(),
         )
     launchIOSMobileAnalysisPerformanceIfRequested(container, isDebugBinary)
