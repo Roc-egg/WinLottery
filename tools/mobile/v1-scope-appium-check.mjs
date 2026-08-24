@@ -512,6 +512,10 @@ async function verifyManualReviewAccessibility(sessionId, platformName) {
   scrollCount += await clickScrollableAccessibilityElement(sessionId, "完成期号输入", platformName);
   await waitForKeyboardHidden(sessionId, platformName);
   await waitForEditableValue(sessionId, "开奖期号", platformName, REVIEW_INPUT_VALUES.issue);
+  for (const numberSectionText of ["前区（已选 0/5）", "后区（已选 0/2）"]) {
+    scrollCount += (await scrollAccessibilityElementIntoView(sessionId, numberSectionText)).scrollCount;
+    await observeReviewTexts(sessionId, observedTexts);
+  }
   scrollCount += await clickScrollableAccessibilityElement(sessionId, "确认 1 倍", platformName);
   await observeReviewTexts(sessionId, observedTexts);
   scrollCount += await clickScrollableAccessibilityElement(sessionId, "基本", platformName);
