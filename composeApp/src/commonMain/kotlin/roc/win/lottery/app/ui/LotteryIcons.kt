@@ -4,6 +4,9 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import com.composables.icons.lucide.ArrowLeft
 import com.composables.icons.lucide.Camera
 import com.composables.icons.lucide.Check
+import com.composables.icons.lucide.EllipsisVertical
+import com.composables.icons.lucide.FileDown
+import com.composables.icons.lucide.FileUp
 import com.composables.icons.lucide.History
 import com.composables.icons.lucide.Image
 import com.composables.icons.lucide.Info
@@ -53,6 +56,15 @@ object LotteryIcons {
 
     /** 删除投注行图标。 */
     val Delete: ImageVector = Lucide.Trash2
+
+    /** 更多操作图标。 */
+    val More: ImageVector = Lucide.EllipsisVertical
+
+    /** 逻辑票据包导入图标。 */
+    val ImportFile: ImageVector = Lucide.FileUp
+
+    /** 逻辑票据包导出图标。 */
+    val ExportFile: ImageVector = Lucide.FileDown
 
     /** 完成输入图标。 */
     val Done: ImageVector = Lucide.Check

@@ -114,13 +114,22 @@ fun App(container: AppContainer = remember { AppContainer.createDemo(getPlatform
                     loadError =
                         (recordCollection as? TicketRecordCollectionState.Failed)
                             ?.message,
+                    supportsFileExchange = container.ticketRecordFileExchange != null,
                     onBack = { scope.launch { controller.navigateBack() } },
                     onFilterChange = controller::updateTicketRecordFilter,
                     onSearchChange = controller::updateTicketRecordSearch,
                     onRename = { id, displayName ->
                         scope.launch { controller.renameTicketRecord(id, displayName) }
                     },
+                    onDelete = { id -> scope.launch { controller.deleteTicketRecord(id) } },
                     onQuery = { id -> scope.launch { controller.queryTicketRecord(id) } },
+                    onClearAll = { scope.launch { controller.clearTicketRecords() } },
+                    onExport = { scope.launch { controller.exportTicketRecords() } },
+                    onImport = { scope.launch { controller.selectTicketRecordImport() } },
+                    onConfirmImport = { keepLocalConflicts ->
+                        scope.launch { controller.confirmTicketRecordImport(keepLocalConflicts) }
+                    },
+                    onDismissImport = controller::dismissTicketRecordImport,
                 )
             }
 

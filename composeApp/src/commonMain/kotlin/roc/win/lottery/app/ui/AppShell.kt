@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -37,6 +38,7 @@ import androidx.compose.ui.unit.dp
  * @param actionIcon 可选的右侧操作图标。
  * @param actionDescription 右侧图标的无障碍说明。
  * @param onAction 右侧操作。
+ * @param actions 可选的自定义右侧操作区。
  * @param scrollableContent 是否由外壳提供纵向滚动；惰性列表页面应设为 `false`。
  * @param content 页面正文。
  */
@@ -48,6 +50,7 @@ fun AppShell(
     actionIcon: ImageVector? = null,
     actionDescription: String = "",
     onAction: () -> Unit = {},
+    actions: @Composable RowScope.() -> Unit = {},
     scrollableContent: Boolean = true,
     content: @Composable () -> Unit,
 ) {
@@ -80,9 +83,12 @@ fun AppShell(
                     style = MaterialTheme.typography.titleLarge,
                 )
                 Box(modifier = Modifier.widthIn(min = 48.dp), contentAlignment = Alignment.CenterEnd) {
-                    actionIcon?.let { icon ->
-                        IconButton(onClick = onAction) {
-                            Icon(icon, contentDescription = actionDescription)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        actions()
+                        actionIcon?.let { icon ->
+                            IconButton(onClick = onAction) {
+                                Icon(icon, contentDescription = actionDescription)
+                            }
                         }
                     }
                 }
