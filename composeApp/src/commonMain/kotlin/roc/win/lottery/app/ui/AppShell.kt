@@ -37,6 +37,7 @@ import androidx.compose.ui.unit.dp
  * @param actionIcon 可选的右侧操作图标。
  * @param actionDescription 右侧图标的无障碍说明。
  * @param onAction 右侧操作。
+ * @param scrollableContent 是否由外壳提供纵向滚动；惰性列表页面应设为 `false`。
  * @param content 页面正文。
  */
 @Composable
@@ -47,6 +48,7 @@ fun AppShell(
     actionIcon: ImageVector? = null,
     actionDescription: String = "",
     onAction: () -> Unit = {},
+    scrollableContent: Boolean = true,
     content: @Composable () -> Unit,
 ) {
     Surface(
@@ -90,18 +92,30 @@ fun AppShell(
                 modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background),
                 contentAlignment = Alignment.TopCenter,
             ) {
-                Column(
-                    modifier =
-                        Modifier
-                            .widthIn(max = 960.dp)
-                            .fillMaxWidth()
-                            .verticalScroll(rememberScrollState())
-                            .padding(horizontal = 24.dp),
-                    verticalArrangement = Arrangement.Top,
-                ) {
-                    Spacer(Modifier.height(28.dp))
-                    content()
-                    Spacer(Modifier.height(32.dp))
+                if (scrollableContent) {
+                    Column(
+                        modifier =
+                            Modifier
+                                .widthIn(max = 960.dp)
+                                .fillMaxWidth()
+                                .verticalScroll(rememberScrollState())
+                                .padding(horizontal = 24.dp),
+                        verticalArrangement = Arrangement.Top,
+                    ) {
+                        Spacer(Modifier.height(28.dp))
+                        content()
+                        Spacer(Modifier.height(32.dp))
+                    }
+                } else {
+                    Box(
+                        modifier =
+                            Modifier
+                                .widthIn(max = 960.dp)
+                                .fillMaxSize()
+                                .padding(horizontal = 24.dp),
+                    ) {
+                        content()
+                    }
                 }
             }
         }

@@ -1,6 +1,8 @@
 package roc.win.lottery.app
 
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import roc.win.lottery.Platform
@@ -8,6 +10,7 @@ import roc.win.lottery.data.DrawQueryResult
 import roc.win.lottery.data.DrawRepository
 import roc.win.lottery.data.FakeDrawRepository
 import roc.win.lottery.domain.BetLineDraft
+import roc.win.lottery.domain.ConfirmedTicket
 import roc.win.lottery.domain.DrawPolicy
 import roc.win.lottery.domain.DrawResult
 import roc.win.lottery.domain.DrawStatus
@@ -21,6 +24,10 @@ import roc.win.lottery.domain.RuleVersion
 import roc.win.lottery.domain.SourceEvidence
 import roc.win.lottery.domain.TicketDraft
 import roc.win.lottery.domain.TicketValidator
+import roc.win.lottery.persistence.CURRENT_TICKET_RECORD_DATA_VERSION
+import roc.win.lottery.persistence.StoredTicketRecord
+import roc.win.lottery.persistence.TicketAcquisitionSource
+import roc.win.lottery.persistence.TicketRecordStore
 import roc.win.lottery.recognition.AppPaths
 import roc.win.lottery.recognition.ConservativeTicketParser
 import roc.win.lottery.recognition.FakeAppPaths
@@ -58,12 +65,14 @@ class LotteryAppControllerTest {
             val repository = SequenceDrawRepository(DrawQueryResult.Success(verifiedDraw()))
             val paths = TrackingAppPaths()
             val imageAcquirer = TrackingImageAcquirer()
+            val ticketRecordStore = TrackingTicketRecordStore()
             val controller =
                 createController(
                     repository = repository,
                     appPaths = paths,
                     usesRealDrawData = true,
                     imageAcquirer = imageAcquirer,
+                    ticketRecordStore = ticketRecordStore,
                 )
 
             controller.startManualEntry()
@@ -104,6 +113,11 @@ class LotteryAppControllerTest {
             assertEquals(1, repository.queryCount)
             assertEquals(0, imageAcquirer.acquisitionCount)
             assertTrue(paths.deletedImageIds.isEmpty())
+            assertEquals(1, ticketRecordStore.savedRecords.size)
+            assertEquals(
+                TicketAcquisitionSource.MANUAL_ENTRY,
+                ticketRecordStore.savedRecords.single().acquisitionSource,
+            )
         }
 
     /** 完整手动双色球应自动固定非追加属性，并按七位精确期号进入真实测算。 */
@@ -170,6 +184,139 @@ class LotteryAppControllerTest {
             assertEquals(1, repository.queryCount)
             assertEquals(0, imageAcquirer.acquisitionCount)
             assertTrue(paths.deletedImageIds.isEmpty())
+        }
+
+    /** 新确认流程只保存一次，结果重试和返回后再次确认都不得重复写入。 */
+    @Test
+    fun confirmedTicketIsSavedOnceAcrossRetryAndReturn() =
+        runTest {
+            val repository =
+                SequenceDrawRepository(
+                    DrawQueryResult.Unavailable(DrawStatus.NETWORK_UNAVAILABLE, "测试网络不可用"),
+                    DrawQueryResult.Success(verifiedDraw()),
+                    DrawQueryResult.Success(verifiedDraw()),
+                )
+            val ticketRecordStore = TrackingTicketRecordStore()
+            val controller =
+                createController(
+                    repository = repository,
+                    usesRealDrawData = true,
+                    ticketRecordStore = ticketRecordStore,
+                )
+            controller.startAnalysis(ImageAcquisitionSource.SYSTEM_PICKER)
+
+            controller.confirmTicket()
+            assertIs<AppScreen.DrawUnavailable>(controller.uiState.value.screen)
+            controller.retryDrawQuery()
+            assertIs<AppScreen.VerificationResult>(controller.uiState.value.screen)
+            controller.navigateBack()
+            assertIs<AppScreen.Review>(controller.uiState.value.screen)
+            controller.confirmTicket()
+
+            assertIs<AppScreen.VerificationResult>(controller.uiState.value.screen)
+            assertEquals(3, repository.queryCount)
+            assertEquals(1, ticketRecordStore.saveCallCount)
+            assertEquals(1, ticketRecordStore.savedRecords.size)
+            assertEquals(
+                TicketAcquisitionSource.SYSTEM_PICKER,
+                ticketRecordStore.savedRecords.single().acquisitionSource,
+            )
+        }
+
+    /** 并发点击确认时第二次调用必须被流程代次闸门拒绝。 */
+    @Test
+    fun concurrentConfirmOnlySavesAndQueriesOnce() =
+        runTest {
+            val repository = SequenceDrawRepository(DrawQueryResult.Success(verifiedDraw()))
+            val ticketRecordStore = TrackingTicketRecordStore(suspendSave = true)
+            val controller =
+                createController(
+                    repository = repository,
+                    usesRealDrawData = true,
+                    ticketRecordStore = ticketRecordStore,
+                    imageAcquirer = FakeImageAcquirer(supportsCamera = true),
+                )
+            controller.startAnalysis(ImageAcquisitionSource.CAMERA)
+
+            val firstConfirmation = launch { controller.confirmTicket() }
+            ticketRecordStore.saveStarted.await()
+            val secondConfirmation = launch { controller.confirmTicket() }
+            secondConfirmation.join()
+
+            assertEquals(1, ticketRecordStore.saveCallCount)
+            ticketRecordStore.releaseSave()
+            firstConfirmation.join()
+
+            assertEquals(1, ticketRecordStore.savedRecords.size)
+            assertEquals(TicketAcquisitionSource.CAMERA, ticketRecordStore.savedRecords.single().acquisitionSource)
+            assertEquals(1, repository.queryCount)
+        }
+
+    /** 本机保存失败必须停留在确认页，并且不得向官网发起查询。 */
+    @Test
+    fun saveFailureBlocksDrawQuery() =
+        runTest {
+            val repository = SequenceDrawRepository(DrawQueryResult.Success(verifiedDraw()))
+            val ticketRecordStore = TrackingTicketRecordStore(failSave = true)
+            val controller =
+                createController(
+                    repository = repository,
+                    usesRealDrawData = true,
+                    ticketRecordStore = ticketRecordStore,
+                )
+            controller.startAnalysis(ImageAcquisitionSource.SYSTEM_PICKER)
+
+            controller.confirmTicket()
+
+            val review = assertIs<AppScreen.Review>(controller.uiState.value.screen)
+            assertEquals("无法保存本机记录，请检查设备存储后重试", review.saveError)
+            assertEquals(0, repository.queryCount)
+            assertEquals(1, ticketRecordStore.saveCallCount)
+            assertTrue(ticketRecordStore.savedRecords.isEmpty())
+        }
+
+    /** 记录重命名和二次查询必须直接复用保存票据，并在结果返回时恢复列表筛选。 */
+    @Test
+    fun storedTicketCanBeRenamedAndQueriedWithoutImageOrOcr() =
+        runTest {
+            val ticket =
+                checkNotNull(
+                    TicketReviewState
+                        .fromDraft(validDraft())
+                        .evaluate(TicketValidator())
+                        .ticket,
+                )
+            val storedRecord = storedTicketRecord(ticket)
+            val ticketRecordStore = TrackingTicketRecordStore(listOf(storedRecord))
+            val imageAcquirer = TrackingImageAcquirer()
+            val repository = SequenceDrawRepository(DrawQueryResult.Success(verifiedDraw()))
+            val controller =
+                createController(
+                    repository = repository,
+                    usesRealDrawData = true,
+                    ticketRecordStore = ticketRecordStore,
+                    imageAcquirer = imageAcquirer,
+                    ticketRecognizer = TicketRecognizer { error("记录查询不得调用 OCR") },
+                )
+            controller.showTicketRecords()
+            controller.updateTicketRecordFilter(TicketRecordFilter.SUPER_LOTTO)
+            controller.updateTicketRecordSearch("26091")
+            controller.renameTicketRecord(storedRecord.id, "  收藏票  ")
+
+            controller.queryTicketRecord(storedRecord.id)
+
+            val result = assertIs<AppScreen.VerificationResult>(controller.uiState.value.screen)
+            assertEquals(ticket, result.ticket)
+            assertEquals(1, repository.queryCount)
+            assertEquals(0, imageAcquirer.acquisitionCount)
+            assertEquals(0, ticketRecordStore.saveCallCount)
+            assertEquals("收藏票", ticketRecordStore.currentRecords.single().displayName)
+
+            controller.navigateBack()
+
+            val records = assertIs<AppScreen.Records>(controller.uiState.value.screen)
+            assertEquals(TicketRecordFilter.SUPER_LOTTO, records.filter)
+            assertEquals("26091", records.searchQuery)
         }
 
     /** 导入分析完成后必须停留在人工确认页，不能自动查询开奖。 */
@@ -1004,6 +1151,7 @@ class LotteryAppControllerTest {
         imageAcquirer: ImageAcquirer = FakeImageAcquirer(supportsCamera = false),
         imageQualityAnalyzer: ImageQualityAnalyzer = ImageDimensionQualityAnalyzer(),
         ticketParser: TicketParser = ConservativeTicketParser(),
+        ticketRecordStore: TicketRecordStore? = null,
         ocrConfidenceDiagnostics: OcrConfidenceDiagnostics = OcrConfidenceDiagnostics.Disabled,
     ): LotteryAppController {
         val platform =
@@ -1029,6 +1177,7 @@ class LotteryAppControllerTest {
                 usesRealImageAcquisition = false,
                 usesRealRecognition = usesRealRecognition,
                 usesRealDrawData = usesRealDrawData,
+                ticketRecordStore = ticketRecordStore,
                 ocrConfidenceDiagnostics = ocrConfidenceDiagnostics,
             ),
         )
@@ -1051,6 +1200,18 @@ class LotteryAppControllerTest {
             multiplier = 1,
             periodCount = 1,
             paidAmountFen = 300L,
+        )
+
+    /** 创建一条由测试预置、可直接用于二次查询的本机记录。 */
+    private fun storedTicketRecord(ticket: ConfirmedTicket): StoredTicketRecord =
+        StoredTicketRecord(
+            id = TEST_RECORD_ID,
+            displayName = "测试票",
+            ticket = ticket,
+            acquisitionSource = TicketAcquisitionSource.SYSTEM_PICKER,
+            createdAtEpochMillis = 1L,
+            updatedAtEpochMillis = 1L,
+            dataVersion = CURRENT_TICKET_RECORD_DATA_VERSION,
         )
 
     /** 向手动录入页的指定行写入一注号码。 */
@@ -1289,6 +1450,122 @@ class LotteryAppControllerTest {
         }
     }
 
+    /** 记录控制器读写调用，并可暂停或拒绝保存的最小内存票据仓库。 */
+    private class TrackingTicketRecordStore(
+        /** 初始可供记录页读取的票据。 */
+        initialRecords: List<StoredTicketRecord> = emptyList(),
+        /** 是否暂停保存直到测试显式放行。 */
+        private val suspendSave: Boolean = false,
+        /** 是否让每次保存抛出受控异常。 */
+        private val failSave: Boolean = false,
+    ) : TicketRecordStore {
+        /** 内部可变记录流。 */
+        private val mutableRecords = MutableStateFlow(initialRecords)
+
+        /** 测试可观察的只读记录流。 */
+        override val records: Flow<List<StoredTicketRecord>> = mutableRecords
+
+        /** 当前内存中的记录快照。 */
+        val currentRecords: List<StoredTicketRecord>
+            get() = mutableRecords.value
+
+        /** 只保存控制器本轮新建的记录，不包含初始数据。 */
+        val savedRecords = mutableListOf<StoredTicketRecord>()
+
+        /** 已收到的保存调用次数。 */
+        var saveCallCount: Int = 0
+            private set
+
+        /** 首次保存已经进入仓库的信号。 */
+        val saveStarted = CompletableDeferred<Unit>()
+
+        /** 暂停保存时由测试控制的放行信号。 */
+        private val saveRelease = CompletableDeferred<Unit>()
+
+        /** 当前仓库是否已收到关闭调用。 */
+        var isClosed: Boolean = false
+            private set
+
+        /** 保存一条调用记录，并按测试配置选择等待或失败。 */
+        override suspend fun save(
+            ticket: ConfirmedTicket,
+            acquisitionSource: TicketAcquisitionSource,
+            displayName: String?,
+        ): StoredTicketRecord {
+            saveCallCount += 1
+            saveStarted.complete(Unit)
+            if (suspendSave) {
+                saveRelease.await()
+            }
+            if (failSave) {
+                throw IllegalStateException("测试保存失败")
+            }
+            val record =
+                StoredTicketRecord(
+                    id = "10000000-0000-4000-8000-${saveCallCount.toString().padStart(12, '0')}",
+                    displayName = displayName?.trim() ?: "测试保存票",
+                    ticket = ticket,
+                    acquisitionSource = acquisitionSource,
+                    createdAtEpochMillis = saveCallCount.toLong(),
+                    updatedAtEpochMillis = saveCallCount.toLong(),
+                    dataVersion = CURRENT_TICKET_RECORD_DATA_VERSION,
+                )
+            savedRecords += record
+            mutableRecords.value = listOf(record) + mutableRecords.value
+            return record
+        }
+
+        /** 返回指定 UUID 的当前内存记录。 */
+        override suspend fun findById(id: String): StoredTicketRecord? =
+            mutableRecords.value.firstOrNull { it.id == id }
+
+        /** 修改指定记录名称，不存在时返回 `false`。 */
+        override suspend fun rename(
+            id: String,
+            displayName: String,
+        ): Boolean {
+            var renamed = false
+            mutableRecords.value =
+                mutableRecords.value.map { record ->
+                    if (record.id == id) {
+                        renamed = true
+                        record.copy(
+                            displayName = displayName.trim(),
+                            updatedAtEpochMillis =
+                                record.updatedAtEpochMillis + 1L,
+                        )
+                    } else {
+                        record
+                    }
+                }
+            return renamed
+        }
+
+        /** 删除指定记录，不存在时返回 `false`。 */
+        override suspend fun delete(id: String): Boolean {
+            val previous = mutableRecords.value
+            mutableRecords.value = previous.filterNot { it.id == id }
+            return mutableRecords.value.size != previous.size
+        }
+
+        /** 清空内存记录并返回删除数量。 */
+        override suspend fun clear(): Int {
+            val count = mutableRecords.value.size
+            mutableRecords.value = emptyList()
+            return count
+        }
+
+        /** 结束暂停中的保存调用。 */
+        fun releaseSave() {
+            saveRelease.complete(Unit)
+        }
+
+        /** 记录仓库生命周期已经结束。 */
+        override fun close() {
+            isClosed = true
+        }
+    }
+
     /** 记录调用次数并委托给固定演示仓库。 */
     private class CountingDrawRepository : DrawRepository {
         /** 实际返回演示结果的仓库。 */
@@ -1351,5 +1628,11 @@ class LotteryAppControllerTest {
             deletedImageIds += imageRef.id
             return true
         }
+    }
+
+    /** 测试记录使用的稳定标识。 */
+    private companion object {
+        /** 二次查询夹具使用的标准 UUID。 */
+        const val TEST_RECORD_ID = "00000000-0000-4000-8000-000000000001"
     }
 }

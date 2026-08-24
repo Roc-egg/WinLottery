@@ -6,6 +6,7 @@ import roc.win.lottery.data.FakeDrawRepository
 import roc.win.lottery.domain.LotteryPrizeCalculator
 import roc.win.lottery.domain.PrizeCalculator
 import roc.win.lottery.domain.TicketValidator
+import roc.win.lottery.persistence.TicketRecordStore
 import roc.win.lottery.recognition.AppPaths
 import roc.win.lottery.recognition.ConservativeTicketParser
 import roc.win.lottery.recognition.FakeAppPaths
@@ -33,6 +34,7 @@ import roc.win.lottery.recognition.TicketRecognizer
  * @property usesRealImageAcquisition 图片采集是否由真实平台实现提供。
  * @property usesRealRecognition 本地 OCR 是否由真实平台实现提供。
  * @property usesRealDrawData 开奖查询是否使用真实官网数据。
+ * @property ticketRecordStore 当前平台的本机结构化票据仓库；未接入的平台为 `null`。
  * @property ocrConfidenceDiagnostics Debug 包使用的匿名字段置信度诊断，默认禁用。
  */
 class AppContainer(
@@ -49,8 +51,14 @@ class AppContainer(
     val usesRealImageAcquisition: Boolean,
     val usesRealRecognition: Boolean,
     val usesRealDrawData: Boolean,
+    val ticketRecordStore: TicketRecordStore? = null,
     val ocrConfidenceDiagnostics: OcrConfidenceDiagnostics = OcrConfidenceDiagnostics.Disabled,
 ) {
+    /** 关闭容器持有的本机数据库连接。 */
+    fun close() {
+        ticketRecordStore?.close()
+    }
+
     /** 创建无相机、无真实 OCR、无网络也能演示状态流的开发容器。 */
     companion object {
         /**

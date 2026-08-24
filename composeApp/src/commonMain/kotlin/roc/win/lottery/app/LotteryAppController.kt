@@ -1,5 +1,6 @@
 package roc.win.lottery.app
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -10,6 +11,7 @@ import roc.win.lottery.domain.DrawStatus
 import roc.win.lottery.domain.Issue
 import roc.win.lottery.domain.IssueSequenceResolver
 import roc.win.lottery.domain.IssueSequenceResult
+import roc.win.lottery.persistence.TicketAcquisitionSource
 import roc.win.lottery.recognition.ImageAcquisitionResult
 import roc.win.lottery.recognition.ImageAcquisitionSource
 import roc.win.lottery.recognition.ImageQualityResult
@@ -37,11 +39,23 @@ class LotteryAppController(
     /** 当前流程持有的临时图片，确认或退出后立即清理。 */
     private var activeImageRef: ImageRef? = null
 
-    /** 最近一次提交查询的票面确认页，不再持有已删除的临时图片。 */
-    private var lastReviewScreen: AppScreen.Review? = null
+    /** 最近一次提交查询的来源页，可以是已清理图片的确认页或记录列表。 */
+    private var lastQuerySourceScreen: AppScreen? = null
 
     /** 当前查询被用户返回时需要恢复的来源页面。 */
     private var queryReturnScreen: AppScreen? = null
+
+    /** 当前新确认流程对应的票据采集方式。 */
+    private var currentAcquisitionSource: TicketAcquisitionSource? = null
+
+    /** 当前新确认流程是否已经成功保存过一条记录。 */
+    private var hasSavedCurrentFlow: Boolean = false
+
+    /** 正在执行确认的流程代次，用于阻止并发双击重复保存。 */
+    private var confirmingGeneration: Long? = null
+
+    /** 正在读取记录并发起查询的流程代次，用于阻止重复点击。 */
+    private var recordQueryGeneration: Long? = null
 
     /** 将多期票限制在已验证期号边界并展开为逐期查询。 */
     private val issueSequenceResolver = IssueSequenceResolver()
@@ -53,9 +67,10 @@ class LotteryAppController(
      */
     suspend fun startAnalysis(source: ImageAcquisitionSource) {
         clearTemporaryImage()
-        lastReviewScreen = null
+        lastQuerySourceScreen = null
         queryReturnScreen = null
         val generation = ++flowGeneration
+        resetConfirmationPersistence(source.toTicketAcquisitionSource())
         mutableUiState.value =
             AppUiState(
                 screen = AppScreen.Analysis("准备图片", "图片只会进入应用私有临时目录", 0.12f),
@@ -91,8 +106,9 @@ class LotteryAppController(
         if (!container.usesRealDrawData) return
         flowGeneration += 1L
         clearTemporaryImage()
-        lastReviewScreen = null
+        lastQuerySourceScreen = null
         queryReturnScreen = null
+        resetConfirmationPersistence(TicketAcquisitionSource.MANUAL_ENTRY)
         val editor = TicketReviewState.createManual()
         mutableUiState.value =
             AppUiState(
@@ -130,8 +146,9 @@ class LotteryAppController(
     suspend fun navigateHome() {
         flowGeneration += 1L
         clearTemporaryImage()
-        lastReviewScreen = null
+        lastQuerySourceScreen = null
         queryReturnScreen = null
+        resetConfirmationPersistence()
         mutableUiState.value = AppUiState(isDemo = container.isDemo)
     }
 
@@ -148,13 +165,14 @@ class LotteryAppController(
 
             is AppScreen.Analysis,
             is AppScreen.Review,
+            is AppScreen.Records,
             AppScreen.About,
             -> {
                 navigateHome()
             }
 
             is AppScreen.DrawQuery -> {
-                restorePreviousScreen(queryReturnScreen ?: lastReviewScreen)
+                restorePreviousScreen(queryReturnScreen ?: lastQuerySourceScreen)
             }
 
             is AppScreen.DemoComplete,
@@ -163,7 +181,94 @@ class LotteryAppController(
             is AppScreen.MultiPeriodVerificationResult,
             is AppScreen.Error,
             -> {
-                restorePreviousScreen(lastReviewScreen)
+                restorePreviousScreen(lastQuerySourceScreen)
+            }
+        }
+    }
+
+    /** 打开本机记录列表并结束此前的临时确认流程。 */
+    suspend fun showTicketRecords() {
+        if (container.ticketRecordStore == null) return
+        flowGeneration += 1L
+        clearTemporaryImage()
+        lastQuerySourceScreen = null
+        queryReturnScreen = null
+        resetConfirmationPersistence()
+        mutableUiState.update { it.copy(screen = AppScreen.Records()) }
+    }
+
+    /** 修改记录页的彩种筛选。 */
+    fun updateTicketRecordFilter(filter: TicketRecordFilter) {
+        val records = mutableUiState.value.screen as? AppScreen.Records ?: return
+        mutableUiState.update {
+            it.copy(screen = records.copy(filter = filter, operationError = null))
+        }
+    }
+
+    /** 修改记录页的名称或期号搜索文本。 */
+    fun updateTicketRecordSearch(query: String) {
+        val records = mutableUiState.value.screen as? AppScreen.Records ?: return
+        mutableUiState.update {
+            it.copy(screen = records.copy(searchQuery = query, operationError = null))
+        }
+    }
+
+    /** 重命名一条仍存在的本机记录，并把失败保留在列表页内。 */
+    suspend fun renameTicketRecord(
+        id: String,
+        displayName: String,
+    ) {
+        val store = container.ticketRecordStore ?: return
+        if (mutableUiState.value.screen !is AppScreen.Records) return
+        val errorMessage =
+            try {
+                if (store.rename(id, displayName)) {
+                    null
+                } else {
+                    "这条记录已不存在，列表已自动刷新"
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: IllegalArgumentException) {
+                error.message ?: "记录名称不合法"
+            } catch (_: Exception) {
+                "重命名失败，请稍后重试"
+            }
+        val current = mutableUiState.value.screen as? AppScreen.Records ?: return
+        mutableUiState.update {
+            it.copy(screen = current.copy(operationError = errorMessage))
+        }
+    }
+
+    /** 直接读取一条已保存票据并查询开奖，不触发图片采集、OCR 或再次保存。 */
+    suspend fun queryTicketRecord(id: String) {
+        val store = container.ticketRecordStore ?: return
+        val generation = flowGeneration
+        if (recordQueryGeneration == generation) return
+        if (mutableUiState.value.screen !is AppScreen.Records) return
+        recordQueryGeneration = generation
+        try {
+            val record =
+                try {
+                    store.findById(id)
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (_: Exception) {
+                    showTicketRecordOperationError("无法读取这条本机记录，请稍后重试", generation)
+                    return
+                }
+            if (generation != flowGeneration) return
+            if (record == null) {
+                showTicketRecordOperationError("这条记录已不存在，列表已自动刷新", generation)
+                return
+            }
+            val sourceScreen = mutableUiState.value.screen as? AppScreen.Records ?: return
+            lastQuerySourceScreen = sourceScreen.copy(operationError = null)
+            queryReturnScreen = lastQuerySourceScreen
+            queryDraw(record.ticket, generation)
+        } finally {
+            if (recordQueryGeneration == generation) {
+                recordQueryGeneration = null
             }
         }
     }
@@ -175,6 +280,7 @@ class LotteryAppController(
 
     /** 应用一次人工校正动作并立即刷新领域问题。 */
     fun updateTicketReview(action: TicketReviewAction) {
+        if (confirmingGeneration == flowGeneration) return
         val review = mutableUiState.value.screen as? AppScreen.Review ?: return
         val editor = review.editor.applyAction(action)
         mutableUiState.update {
@@ -183,6 +289,7 @@ class LotteryAppController(
                     review.copy(
                         editor = editor,
                         evaluation = editor.evaluate(container.ticketValidator),
+                        saveError = null,
                     ),
             )
         }
@@ -193,12 +300,38 @@ class LotteryAppController(
         val review = mutableUiState.value.screen as? AppScreen.Review ?: return
         val ticket = review.evaluation.ticket
         if (!review.evaluation.canConfirm || ticket == null) return
-
         val generation = flowGeneration
-        lastReviewScreen = review.forReturnNavigation()
-        queryReturnScreen = lastReviewScreen
-        clearTemporaryImage()
-        queryDraw(ticket, generation)
+        if (confirmingGeneration == generation) return
+        confirmingGeneration = generation
+        try {
+            val store = container.ticketRecordStore
+            if (store != null && !hasSavedCurrentFlow) {
+                val acquisitionSource = currentAcquisitionSource
+                if (acquisitionSource == null) {
+                    showReviewSaveError("无法确定票据采集方式，请返回首页后重试", generation)
+                    return
+                }
+                try {
+                    store.save(ticket, acquisitionSource)
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (_: Exception) {
+                    showReviewSaveError("无法保存本机记录，请检查设备存储后重试", generation)
+                    return
+                }
+                if (generation != flowGeneration) return
+                hasSavedCurrentFlow = true
+            }
+            if (generation != flowGeneration) return
+            lastQuerySourceScreen = review.forReturnNavigation()
+            queryReturnScreen = lastQuerySourceScreen
+            clearTemporaryImage()
+            queryDraw(ticket, generation)
+        } finally {
+            if (confirmingGeneration == generation) {
+                confirmingGeneration = null
+            }
+        }
     }
 
     /** 从结果页或不可用页保留用户确认票据并主动重新查询开奖。 */
@@ -571,7 +704,41 @@ class LotteryAppController(
             fieldCandidates = emptyList(),
             ocrEngineName = null,
             manualEntryReason = null,
+            saveError = null,
         )
+
+    /** 只在当前确认流程仍有效时显示本机保存错误。 */
+    private fun showReviewSaveError(
+        message: String,
+        generation: Long,
+    ) {
+        if (generation != flowGeneration) return
+        val review = mutableUiState.value.screen as? AppScreen.Review ?: return
+        mutableUiState.update { it.copy(screen = review.copy(saveError = message)) }
+    }
+
+    /** 只在当前记录页仍有效时显示列表操作错误。 */
+    private fun showTicketRecordOperationError(
+        message: String,
+        generation: Long,
+    ) {
+        if (generation != flowGeneration) return
+        val records = mutableUiState.value.screen as? AppScreen.Records ?: return
+        mutableUiState.update { it.copy(screen = records.copy(operationError = message)) }
+    }
+
+    /** 重置一次确认流程的采集来源和幂等保存状态。 */
+    private fun resetConfirmationPersistence(source: TicketAcquisitionSource? = null) {
+        currentAcquisitionSource = source
+        hasSavedCurrentFlow = false
+    }
+
+    /** 把图片采集来源映射为长期记录使用的稳定枚举。 */
+    private fun ImageAcquisitionSource.toTicketAcquisitionSource(): TicketAcquisitionSource =
+        when (this) {
+            ImageAcquisitionSource.CAMERA -> TicketAcquisitionSource.CAMERA
+            ImageAcquisitionSource.SYSTEM_PICKER -> TicketAcquisitionSource.SYSTEM_PICKER
+        }
 
     /** 恢复有效上一级页面；没有可恢复页面时清理流程并回到首页。 */
     private suspend fun restorePreviousScreen(screen: AppScreen?) {

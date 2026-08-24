@@ -32,9 +32,11 @@ import androidx.compose.ui.unit.dp
  * @param usesRealImageAcquisition 是否已接入真实图片采集。
  * @param usesRealRecognition 是否已接入真实本地 OCR。
  * @param usesRealDrawData 是否已接入真实官网开奖查询。
+ * @param hasTicketRecords 当前平台是否已接入本机结构化记录。
  * @param onCamera 拍照操作。
  * @param onImport 图片导入操作。
  * @param onManualEntry 手动录入彩票操作。
+ * @param onRecords 打开本机记录操作。
  * @param onAbout 关于与隐私操作。
  */
 @Composable
@@ -45,9 +47,11 @@ fun HomeScreen(
     usesRealImageAcquisition: Boolean,
     usesRealRecognition: Boolean,
     usesRealDrawData: Boolean,
+    hasTicketRecords: Boolean,
     onCamera: () -> Unit,
     onImport: () -> Unit,
     onManualEntry: () -> Unit,
+    onRecords: () -> Unit,
     onAbout: () -> Unit,
 ) {
     AppShell(
@@ -110,6 +114,23 @@ fun HomeScreen(
                         Text("手动录入彩票")
                     }
                 }
+                if (hasTicketRecords) {
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedButton(
+                        onClick = onRecords,
+                        modifier = Modifier.fillMaxWidth().height(54.dp),
+                        shape = MaterialTheme.shapes.small,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                        colors =
+                            ButtonDefaults.outlinedButtonColors(
+                                contentColor = MaterialTheme.colorScheme.secondary,
+                            ),
+                    ) {
+                        Icon(LotteryIcons.History, contentDescription = null)
+                        Spacer(Modifier.width(10.dp))
+                        Text("本机记录")
+                    }
+                }
                 Spacer(Modifier.height(32.dp))
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 Spacer(Modifier.height(24.dp))
@@ -123,7 +144,7 @@ fun HomeScreen(
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text("图片仅在本机处理", style = MaterialTheme.typography.titleMedium)
                         Text(
-                            "不上传、不保存测算历史；查询开奖时只发送彩种和期号。",
+                            "图片不上传且确认后删除；结构化票据信息仅保存在本机。",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )

@@ -93,6 +93,7 @@ fun AnalysisScreen(
  * @param fieldRegions 可在原图中定位的 OCR 字段区域。
  * @param fieldCandidates OCR 无法唯一确定、需要用户选择的字段候选。
  * @param manualEntryReason OCR 无法安全形成草稿时，转为原图辅助手动录入的原因。
+ * @param saveError 本机结构化记录保存失败时的安全恢复说明。
  * @param isDemo 开奖等后续能力是否仍为开发演示实现。
  * @param usesRealRecognition 当前草稿是否来自真实图片导入和本地 OCR。
  * @param usesRealDrawData 确认后是否查询真实官网开奖数据。
@@ -117,6 +118,7 @@ fun ReviewScreen(
     fieldRegions: List<TicketFieldRegion>,
     fieldCandidates: List<TicketFieldCandidate>,
     manualEntryReason: String?,
+    saveError: String?,
     isDemo: Boolean,
     usesRealRecognition: Boolean,
     usesRealDrawData: Boolean,
@@ -171,6 +173,10 @@ fun ReviewScreen(
                     }
                 },
             )
+            Spacer(Modifier.height(20.dp))
+        }
+        saveError?.let { message ->
+            StorageErrorBanner(message)
             Spacer(Modifier.height(20.dp))
         }
         previewState?.let { state ->
@@ -875,7 +881,7 @@ fun AboutScreen(onBack: () -> Unit) {
         Spacer(Modifier.height(16.dp))
         PolicyRow("本地处理", "图片、OCR 文本和投注号码默认只在当前设备处理。")
         PolicyRow("最少查询", "查询开奖时只发送用户确认的彩种和期号。")
-        PolicyRow("不留历史", "V1 不保存票图、官网原始响应或测算历史。")
+        PolicyRow("本机记录", "确认后只保存结构化票据信息，不保存票图、OCR 全文或开奖结果查询。")
         Spacer(Modifier.height(28.dp))
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         Spacer(Modifier.height(24.dp))
@@ -953,6 +959,23 @@ private fun StatusBanner(message: String) {
             modifier = Modifier.padding(16.dp),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSecondaryContainer,
+        )
+    }
+}
+
+/** 展示阻断确认流程的本机保存错误。 */
+@Composable
+private fun StorageErrorBanner(message: String) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.small,
+        color = MaterialTheme.colorScheme.errorContainer,
+    ) {
+        Text(
+            message,
+            modifier = Modifier.padding(16.dp),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onErrorContainer,
         )
     }
 }

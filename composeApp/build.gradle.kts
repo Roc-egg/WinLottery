@@ -57,6 +57,7 @@ kotlin {
         commonMain.dependencies {
             implementation(project(":shared:data"))
             implementation(project(":shared:domain"))
+            implementation(project(":shared:persistence"))
             implementation(project(":shared:recognition"))
             implementation(libs.compose.runtime)
             implementation(libs.compose.foundation)
@@ -68,6 +69,7 @@ kotlin {
             implementation(libs.androidx.lifecycle.viewmodelCompose)
             implementation(libs.androidx.lifecycle.runtimeCompose)
             implementation(libs.kotlinx.coroutinesCore)
+            implementation(libs.kotlinx.datetime)
             implementation(libs.lucide.icons)
             implementation(libs.okio)
         }

@@ -16,6 +16,19 @@ sealed interface AppScreen {
     data object Home : AppScreen
 
     /**
+     * 本机结构化票据记录页。
+     *
+     * @property filter 当前彩种筛选。
+     * @property searchQuery 当前名称或起始期号搜索文本。
+     * @property operationError 最近一次重命名或读取操作的安全错误说明。
+     */
+    data class Records(
+        val filter: TicketRecordFilter = TicketRecordFilter.ALL,
+        val searchQuery: String = "",
+        val operationError: String? = null,
+    ) : AppScreen
+
+    /**
      * 本地分析进度页。
      *
      * @property title 当前处理阶段。
@@ -38,6 +51,7 @@ sealed interface AppScreen {
      * @property fieldCandidates OCR 无法唯一确定、需要用户选择的字段候选。
      * @property ocrEngineName 当前字段所来自的 OCR 引擎；手动录入时为 `null`。
      * @property manualEntryReason OCR 无法安全形成草稿时，保留原图并转为空白手动录入的原因。
+     * @property saveError 本机记录保存失败时的安全恢复说明。
      */
     data class Review(
         val editor: TicketReviewState,
@@ -47,6 +61,7 @@ sealed interface AppScreen {
         val fieldCandidates: List<TicketFieldCandidate> = emptyList(),
         val ocrEngineName: String? = null,
         val manualEntryReason: String? = null,
+        val saveError: String? = null,
     ) : AppScreen
 
     /**

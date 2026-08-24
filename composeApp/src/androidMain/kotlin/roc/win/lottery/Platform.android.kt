@@ -12,6 +12,7 @@ import roc.win.lottery.data.AndroidSuperLottoPdfTextExtractor
 import roc.win.lottery.data.OfficialDrawRepository
 import roc.win.lottery.domain.LotteryPrizeCalculator
 import roc.win.lottery.domain.TicketValidator
+import roc.win.lottery.persistence.createAndroidTicketRecordStore
 import roc.win.lottery.recognition.AndroidAppPaths
 import roc.win.lottery.recognition.AndroidLuminanceImageDecoder
 import roc.win.lottery.recognition.AndroidPhotoPickerImageAcquirer
@@ -71,6 +72,7 @@ fun createAndroidRecognitionContainer(activity: ComponentActivity): AppContainer
         usesRealImageAcquisition = true,
         usesRealRecognition = true,
         usesRealDrawData = true,
+        ticketRecordStore = createAndroidTicketRecordStore(activity.applicationContext),
         ocrConfidenceDiagnostics = createAndroidOcrConfidenceDiagnostics(activity),
     )
 }
