@@ -53,11 +53,11 @@ require_release_file() {
 
 # 使用同一本机测试证书签名 Release APK，只供锁定 Android 虚拟机安装。
 sign_android_release_apk() {
-  local unsigned_apk="$1"
+  local source_apk="$1"
   local aligned_apk="$2"
   local signed_apk="$3"
 
-  "$zipalign_command" -f 4 "$unsigned_apk" "$aligned_apk"
+  "$zipalign_command" -f 4 "$source_apk" "$aligned_apk"
   "$apksigner_command" sign \
     --ks "$android_test_keystore" \
     --ks-key-alias androiddebugkey \
@@ -792,17 +792,26 @@ fi
 ./gradlew "${release_gradle_tasks[@]}" --rerun-tasks --console=plain
 
 readonly unsigned_android_apk="$REPOSITORY_ROOT/androidApp/build/outputs/apk/release/androidApp-release-unsigned.apk"
+readonly configured_signed_android_apk="$REPOSITORY_ROOT/androidApp/build/outputs/apk/release/androidApp-release.apk"
 readonly android_aab="$REPOSITORY_ROOT/androidApp/build/outputs/bundle/release/androidApp-release.aab"
 readonly android_debug_apk="$REPOSITORY_ROOT/androidApp/build/outputs/apk/debug/androidApp-debug.apk"
 readonly aligned_android_apk="$release_check_directory/androidApp-release-aligned.apk"
 readonly signed_android_apk="$release_check_directory/androidApp-release-test-signed.apk"
-require_release_file "$unsigned_android_apk"
 require_release_file "$android_aab"
 if [[ "$VERIFY_INSTALL_LIFECYCLE" == "1" || "$VERIFY_PROCESS_RECOVERY" == "1" || "$VERIFY_ABRUPT_TERMINATION" == "1" || "$VERIFY_CRASH_RECOVERY" == "1" || "$VERIFY_MEMORY_PRESSURE" == "1" || "$VERIFY_VERSION_UPGRADE" == "1" ]]; then
   require_release_file "$android_debug_apk"
 fi
 
-sign_android_release_apk "$unsigned_android_apk" "$aligned_android_apk" "$signed_android_apk"
+if [[ -s "$configured_signed_android_apk" ]]; then
+  "$apksigner_command" verify --verbose "$configured_signed_android_apk"
+  sign_android_release_apk \
+    "$configured_signed_android_apk" \
+    "$aligned_android_apk" \
+    "$signed_android_apk"
+else
+  require_release_file "$unsigned_android_apk"
+  sign_android_release_apk "$unsigned_android_apk" "$aligned_android_apk" "$signed_android_apk"
+fi
 
 if "$aapt_command" dump badging "$signed_android_apk" | rg -q '^application-debuggable'; then
   current_vm_fail "Android Release APK 清单仍允许调试"
