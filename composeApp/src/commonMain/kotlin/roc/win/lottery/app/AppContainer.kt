@@ -35,6 +35,7 @@ import roc.win.lottery.recognition.TicketRecognizer
  * @property usesRealRecognition 本地 OCR 是否由真实平台实现提供。
  * @property usesRealDrawData 开奖查询是否使用真实官网数据。
  * @property ticketRecordStore 当前平台的本机结构化票据仓库；未接入的平台为 `null`。
+ * @property ticketRecordFileExchange 当前平台的系统逻辑包文件接口；未接入的平台为 `null`。
  * @property ocrConfidenceDiagnostics Debug 包使用的匿名字段置信度诊断，默认禁用。
  */
 class AppContainer(
@@ -52,6 +53,7 @@ class AppContainer(
     val usesRealRecognition: Boolean,
     val usesRealDrawData: Boolean,
     val ticketRecordStore: TicketRecordStore? = null,
+    val ticketRecordFileExchange: TicketRecordFileExchange? = null,
     val ocrConfidenceDiagnostics: OcrConfidenceDiagnostics = OcrConfidenceDiagnostics.Disabled,
 ) {
     /** 关闭容器持有的本机数据库连接。 */

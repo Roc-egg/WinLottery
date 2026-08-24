@@ -11,7 +11,11 @@ import roc.win.lottery.domain.DrawStatus
 import roc.win.lottery.domain.Issue
 import roc.win.lottery.domain.IssueSequenceResolver
 import roc.win.lottery.domain.IssueSequenceResult
+import roc.win.lottery.persistence.TICKET_RECORD_EXPORT_EXTENSION
 import roc.win.lottery.persistence.TicketAcquisitionSource
+import roc.win.lottery.persistence.TicketRecordImportConflictPolicy
+import roc.win.lottery.persistence.TicketRecordImportException
+import roc.win.lottery.persistence.TicketRecordImportResult
 import roc.win.lottery.recognition.ImageAcquisitionResult
 import roc.win.lottery.recognition.ImageAcquisitionSource
 import roc.win.lottery.recognition.ImageQualityResult
@@ -56,6 +60,12 @@ class LotteryAppController(
 
     /** 正在读取记录并发起查询的流程代次，用于阻止重复点击。 */
     private var recordQueryGeneration: Long? = null
+
+    /** 正在执行删除、清空或文件操作的记录页流程代次。 */
+    private var recordManagementGeneration: Long? = null
+
+    /** 已通过导入预检、只在用户确认前保留于内存的原始文件字节。 */
+    private var pendingTicketRecordImportContent: ByteArray? = null
 
     /** 将多期票限制在已验证期号边界并展开为逐期查询。 */
     private val issueSequenceResolver = IssueSequenceResolver()
@@ -149,6 +159,7 @@ class LotteryAppController(
         lastQuerySourceScreen = null
         queryReturnScreen = null
         resetConfirmationPersistence()
+        resetTicketRecordManagement()
         mutableUiState.value = AppUiState(isDemo = container.isDemo)
     }
 
@@ -194,6 +205,7 @@ class LotteryAppController(
         lastQuerySourceScreen = null
         queryReturnScreen = null
         resetConfirmationPersistence()
+        resetTicketRecordManagement()
         mutableUiState.update { it.copy(screen = AppScreen.Records()) }
     }
 
@@ -201,7 +213,14 @@ class LotteryAppController(
     fun updateTicketRecordFilter(filter: TicketRecordFilter) {
         val records = mutableUiState.value.screen as? AppScreen.Records ?: return
         mutableUiState.update {
-            it.copy(screen = records.copy(filter = filter, operationError = null))
+            it.copy(
+                screen =
+                    records.copy(
+                        filter = filter,
+                        operationError = null,
+                        operationNotice = null,
+                    ),
+            )
         }
     }
 
@@ -209,7 +228,14 @@ class LotteryAppController(
     fun updateTicketRecordSearch(query: String) {
         val records = mutableUiState.value.screen as? AppScreen.Records ?: return
         mutableUiState.update {
-            it.copy(screen = records.copy(searchQuery = query, operationError = null))
+            it.copy(
+                screen =
+                    records.copy(
+                        searchQuery = query,
+                        operationError = null,
+                        operationNotice = null,
+                    ),
+            )
         }
     }
 
@@ -219,33 +245,211 @@ class LotteryAppController(
         displayName: String,
     ) {
         val store = container.ticketRecordStore ?: return
-        if (mutableUiState.value.screen !is AppScreen.Records) return
-        val errorMessage =
-            try {
-                if (store.rename(id, displayName)) {
-                    null
-                } else {
-                    "这条记录已不存在，列表已自动刷新"
+        val generation = beginTicketRecordManagement() ?: return
+        try {
+            val renamed =
+                try {
+                    store.rename(id, displayName)
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: IllegalArgumentException) {
+                    showTicketRecordOperationError(error.message ?: "记录名称不合法", generation)
+                    return
+                } catch (_: Exception) {
+                    showTicketRecordOperationError("重命名失败，请稍后重试", generation)
+                    return
                 }
-            } catch (error: CancellationException) {
-                throw error
-            } catch (error: IllegalArgumentException) {
-                error.message ?: "记录名称不合法"
-            } catch (_: Exception) {
-                "重命名失败，请稍后重试"
+            if (renamed) {
+                showTicketRecordOperationNotice("记录名称已更新", generation)
+            } else {
+                showTicketRecordOperationError("这条记录已不存在，列表已自动刷新", generation)
             }
-        val current = mutableUiState.value.screen as? AppScreen.Records ?: return
-        mutableUiState.update {
-            it.copy(screen = current.copy(operationError = errorMessage))
+        } finally {
+            finishTicketRecordManagement(generation)
         }
+    }
+
+    /** 删除一条仍存在的本机记录，并把结果保留在列表页内。 */
+    suspend fun deleteTicketRecord(id: String) {
+        val store = container.ticketRecordStore ?: return
+        val generation = beginTicketRecordManagement() ?: return
+        try {
+            val deleted =
+                try {
+                    store.delete(id)
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (_: Exception) {
+                    showTicketRecordOperationError("删除失败，请稍后重试", generation)
+                    return
+                }
+            if (deleted) {
+                showTicketRecordOperationNotice("记录已从本机删除", generation)
+            } else {
+                showTicketRecordOperationError("这条记录已不存在，列表已自动刷新", generation)
+            }
+        } finally {
+            finishTicketRecordManagement(generation)
+        }
+    }
+
+    /** 清空当前数据库中的全部结构化票据记录。 */
+    suspend fun clearTicketRecords() {
+        val store = container.ticketRecordStore ?: return
+        val generation = beginTicketRecordManagement() ?: return
+        try {
+            val deletedCount =
+                try {
+                    store.clear()
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (_: Exception) {
+                    showTicketRecordOperationError("清空失败，请稍后重试", generation)
+                    return
+                }
+            val message =
+                if (deletedCount == 0) {
+                    "本机记录已经为空"
+                } else {
+                    "已清空 $deletedCount 条本机记录"
+                }
+            showTicketRecordOperationNotice(message, generation)
+        } finally {
+            finishTicketRecordManagement(generation)
+        }
+    }
+
+    /** 生成规范化逻辑包，并在系统保存选择器中写入用户确认的位置。 */
+    suspend fun exportTicketRecords() {
+        val store = container.ticketRecordStore ?: return
+        val fileExchange = container.ticketRecordFileExchange ?: return
+        val generation = beginTicketRecordManagement() ?: return
+        try {
+            val exported =
+                try {
+                    store.exportPackage()
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (_: Exception) {
+                    showTicketRecordOperationError("无法生成导出文件，请稍后重试", generation)
+                    return
+                }
+            if (generation != flowGeneration) return
+            val fileName = "win-lottery-tickets-${exported.exportedAtEpochMillis}$TICKET_RECORD_EXPORT_EXTENSION"
+            when (val result = fileExchange.writeExportPackage(fileName, exported.content)) {
+                TicketRecordFileWriteResult.Cancelled -> {
+                    // 用户取消系统保存后保持记录页不变。
+                }
+
+                TicketRecordFileWriteResult.Success -> {
+                    showTicketRecordOperationNotice("已导出 ${exported.recordCount} 条记录", generation)
+                }
+
+                is TicketRecordFileWriteResult.Failure -> {
+                    showTicketRecordOperationError(result.message, generation)
+                }
+            }
+        } finally {
+            finishTicketRecordManagement(generation)
+        }
+    }
+
+    /** 从系统文件选择器读取逻辑包，完整预检后等待用户确认。 */
+    suspend fun selectTicketRecordImport() {
+        val store = container.ticketRecordStore ?: return
+        val fileExchange = container.ticketRecordFileExchange ?: return
+        val generation = beginTicketRecordManagement(clearPendingImport = true) ?: return
+        try {
+            when (val fileResult = fileExchange.readImportPackage()) {
+                TicketRecordFileReadResult.Cancelled -> {
+                    // 用户取消系统选择后保持记录页不变。
+                }
+
+                is TicketRecordFileReadResult.Failure -> {
+                    showTicketRecordOperationError(fileResult.message, generation)
+                }
+
+                is TicketRecordFileReadResult.Success -> {
+                    if (generation != flowGeneration) return
+                    val preview =
+                        try {
+                            store.inspectImport(fileResult.content)
+                        } catch (error: CancellationException) {
+                            throw error
+                        } catch (error: TicketRecordImportException) {
+                            showTicketRecordOperationError(error.message ?: "导入文件校验失败", generation)
+                            return
+                        } catch (_: Exception) {
+                            showTicketRecordOperationError("无法校验导入文件，请稍后重试", generation)
+                            return
+                        }
+                    if (generation != flowGeneration) return
+                    pendingTicketRecordImportContent = fileResult.content
+                    updateTicketRecordScreen(generation) { records ->
+                        records.copy(importPreview = preview)
+                    }
+                }
+            }
+        } finally {
+            finishTicketRecordManagement(generation)
+        }
+    }
+
+    /**
+     * 提交已经预检的逻辑包。
+     *
+     * @param keepLocalConflicts 是否由用户明确选择保留本机冲突项并导入其余记录。
+     */
+    suspend fun confirmTicketRecordImport(keepLocalConflicts: Boolean) {
+        val store = container.ticketRecordStore ?: return
+        val content = pendingTicketRecordImportContent ?: return
+        val generation = beginTicketRecordManagement(clearPendingImport = false) ?: return
+        try {
+            val policy =
+                if (keepLocalConflicts) {
+                    TicketRecordImportConflictPolicy.KEEP_LOCAL_AND_IMPORT_REST
+                } else {
+                    TicketRecordImportConflictPolicy.REJECT_ALL
+                }
+            when (val result = store.importPackage(content, policy)) {
+                is TicketRecordImportResult.Conflicts -> {
+                    updateTicketRecordScreen(generation) { records ->
+                        records.copy(importPreview = result.preview)
+                    }
+                }
+
+                is TicketRecordImportResult.Completed -> {
+                    pendingTicketRecordImportContent = null
+                    showTicketRecordOperationNotice(result.toUserMessage(), generation, clearImportPreview = true)
+                }
+            }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: TicketRecordImportException) {
+            showTicketRecordOperationError(error.message ?: "导入文件校验失败", generation)
+        } catch (_: Exception) {
+            showTicketRecordOperationError("导入失败，数据库未写入不完整数据", generation)
+        } finally {
+            finishTicketRecordManagement(generation)
+        }
+    }
+
+    /** 取消当前导入确认并立即丢弃内存中的文件字节。 */
+    fun dismissTicketRecordImport() {
+        if (recordManagementGeneration != null) return
+        pendingTicketRecordImportContent = null
+        val generation = flowGeneration
+        updateTicketRecordScreen(generation) { records -> records.copy(importPreview = null) }
     }
 
     /** 直接读取一条已保存票据并查询开奖，不触发图片采集、OCR 或再次保存。 */
     suspend fun queryTicketRecord(id: String) {
         val store = container.ticketRecordStore ?: return
         val generation = flowGeneration
+        if (recordManagementGeneration != null) return
         if (recordQueryGeneration == generation) return
-        if (mutableUiState.value.screen !is AppScreen.Records) return
+        val recordsScreen = mutableUiState.value.screen as? AppScreen.Records ?: return
+        if (recordsScreen.importPreview != null) return
         recordQueryGeneration = generation
         try {
             val record =
@@ -263,7 +467,7 @@ class LotteryAppController(
                 return
             }
             val sourceScreen = mutableUiState.value.screen as? AppScreen.Records ?: return
-            lastQuerySourceScreen = sourceScreen.copy(operationError = null)
+            lastQuerySourceScreen = sourceScreen.copy(operationError = null, operationNotice = null)
             queryReturnScreen = lastQuerySourceScreen
             queryDraw(record.ticket, generation)
         } finally {
@@ -717,14 +921,95 @@ class LotteryAppController(
         mutableUiState.update { it.copy(screen = review.copy(saveError = message)) }
     }
 
+    /**
+     * 开始一次互斥的记录管理操作，并清理上一次操作提示。
+     *
+     * @param clearPendingImport 是否同时取消尚未提交的导入确认。
+     * @return 当前记录页流程代次；页面失效或已有操作时返回 `null`。
+     */
+    private fun beginTicketRecordManagement(clearPendingImport: Boolean = true): Long? {
+        val generation = flowGeneration
+        val records = mutableUiState.value.screen as? AppScreen.Records ?: return null
+        if (recordManagementGeneration != null || recordQueryGeneration != null) return null
+        recordManagementGeneration = generation
+        if (clearPendingImport) {
+            pendingTicketRecordImportContent = null
+        }
+        mutableUiState.update {
+            it.copy(
+                screen =
+                    records.copy(
+                        operationError = null,
+                        operationNotice = null,
+                        isOperationInProgress = true,
+                        importPreview = if (clearPendingImport) null else records.importPreview,
+                    ),
+            )
+        }
+        return generation
+    }
+
+    /** 结束仍属于当前记录页代次的管理操作。 */
+    private fun finishTicketRecordManagement(generation: Long) {
+        if (recordManagementGeneration != generation) return
+        recordManagementGeneration = null
+        updateTicketRecordScreen(generation) { records ->
+            records.copy(isOperationInProgress = false)
+        }
+    }
+
+    /** 清除记录管理互斥状态和仅供导入确认使用的原始文件字节。 */
+    private fun resetTicketRecordManagement() {
+        recordManagementGeneration = null
+        pendingTicketRecordImportContent = null
+    }
+
+    /** 只在指定记录页流程仍有效时应用页面更新。 */
+    private fun updateTicketRecordScreen(
+        generation: Long,
+        transform: (AppScreen.Records) -> AppScreen.Records,
+    ) {
+        if (generation != flowGeneration) return
+        val records = mutableUiState.value.screen as? AppScreen.Records ?: return
+        mutableUiState.update { it.copy(screen = transform(records)) }
+    }
+
+    /** 只在当前记录页仍有效时显示操作成功摘要。 */
+    private fun showTicketRecordOperationNotice(
+        message: String,
+        generation: Long,
+        clearImportPreview: Boolean = false,
+    ) {
+        updateTicketRecordScreen(generation) { records ->
+            records.copy(
+                operationError = null,
+                operationNotice = message,
+                importPreview = if (clearImportPreview) null else records.importPreview,
+            )
+        }
+    }
+
     /** 只在当前记录页仍有效时显示列表操作错误。 */
     private fun showTicketRecordOperationError(
         message: String,
         generation: Long,
     ) {
-        if (generation != flowGeneration) return
-        val records = mutableUiState.value.screen as? AppScreen.Records ?: return
-        mutableUiState.update { it.copy(screen = records.copy(operationError = message)) }
+        updateTicketRecordScreen(generation) { records ->
+            records.copy(operationError = message, operationNotice = null)
+        }
+    }
+
+    /** 把一次成功导入转换为不暴露票面内容的用户摘要。 */
+    private fun TicketRecordImportResult.Completed.toUserMessage(): String {
+        val parts = mutableListOf<String>()
+        parts += if (importedCount > 0) "已导入 $importedCount 条记录" else "没有新增记录"
+        if (duplicateCount > 0) {
+            parts += "跳过 $duplicateCount 条相同记录"
+        }
+        if (skippedConflictCount > 0) {
+            parts += "保留本机 $skippedConflictCount 条冲突记录"
+        }
+        return parts.joinToString(separator = "，")
     }
 
     /** 重置一次确认流程的采集来源和幂等保存状态。 */

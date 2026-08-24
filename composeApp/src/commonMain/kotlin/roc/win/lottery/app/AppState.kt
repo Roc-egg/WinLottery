@@ -6,6 +6,7 @@ import roc.win.lottery.domain.DrawStatus
 import roc.win.lottery.domain.Issue
 import roc.win.lottery.domain.PrizeCheckResult
 import roc.win.lottery.domain.PrizeCheckStatus
+import roc.win.lottery.persistence.TicketRecordImportPreview
 import roc.win.lottery.recognition.ImageRef
 import roc.win.lottery.recognition.TicketFieldCandidate
 import roc.win.lottery.recognition.TicketFieldRegion
@@ -20,12 +21,18 @@ sealed interface AppScreen {
      *
      * @property filter 当前彩种筛选。
      * @property searchQuery 当前名称或起始期号搜索文本。
-     * @property operationError 最近一次重命名或读取操作的安全错误说明。
+     * @property operationError 最近一次记录或文件操作的安全错误说明。
+     * @property operationNotice 最近一次成功操作的摘要。
+     * @property isOperationInProgress 是否正在等待数据库或系统文件选择器。
+     * @property importPreview 已完整校验、等待用户确认的逻辑导入摘要。
      */
     data class Records(
         val filter: TicketRecordFilter = TicketRecordFilter.ALL,
         val searchQuery: String = "",
         val operationError: String? = null,
+        val operationNotice: String? = null,
+        val isOperationInProgress: Boolean = false,
+        val importPreview: TicketRecordImportPreview? = null,
     ) : AppScreen
 
     /**

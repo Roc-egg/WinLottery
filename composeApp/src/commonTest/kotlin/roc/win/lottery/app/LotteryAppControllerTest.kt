@@ -28,6 +28,7 @@ import roc.win.lottery.persistence.CURRENT_TICKET_RECORD_DATA_VERSION
 import roc.win.lottery.persistence.StoredTicketRecord
 import roc.win.lottery.persistence.TicketAcquisitionSource
 import roc.win.lottery.persistence.TicketRecordExport
+import roc.win.lottery.persistence.TicketRecordImportConflict
 import roc.win.lottery.persistence.TicketRecordImportConflictPolicy
 import roc.win.lottery.persistence.TicketRecordImportPreview
 import roc.win.lottery.persistence.TicketRecordImportResult
@@ -54,6 +55,7 @@ import roc.win.lottery.recognition.TicketParseResult
 import roc.win.lottery.recognition.TicketParser
 import roc.win.lottery.recognition.TicketRecognizer
 import kotlin.test.Test
+import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
@@ -321,6 +323,191 @@ class LotteryAppControllerTest {
             val records = assertIs<AppScreen.Records>(controller.uiState.value.screen)
             assertEquals(TicketRecordFilter.SUPER_LOTTO, records.filter)
             assertEquals("26091", records.searchQuery)
+        }
+
+    /** 删除和清空必须更新本机仓库，并在记录页保留明确的成功摘要。 */
+    @Test
+    fun storedTicketsCanBeDeletedAndCleared() =
+        runTest {
+            val ticket =
+                checkNotNull(
+                    TicketReviewState
+                        .fromDraft(validDraft())
+                        .evaluate(TicketValidator())
+                        .ticket,
+                )
+            val firstRecord = storedTicketRecord(ticket)
+            val secondRecord =
+                firstRecord.copy(
+                    id = "20000000-0000-4000-8000-000000000002",
+                    displayName = "第二张票",
+                )
+            val ticketRecordStore = TrackingTicketRecordStore(listOf(firstRecord, secondRecord))
+            val controller =
+                createController(
+                    repository = CountingDrawRepository(),
+                    ticketRecordStore = ticketRecordStore,
+                )
+            controller.showTicketRecords()
+
+            controller.deleteTicketRecord(firstRecord.id)
+
+            assertEquals(listOf(secondRecord), ticketRecordStore.currentRecords)
+            var records = assertIs<AppScreen.Records>(controller.uiState.value.screen)
+            assertEquals("记录已从本机删除", records.operationNotice)
+            assertFalse(records.isOperationInProgress)
+
+            controller.clearTicketRecords()
+
+            assertTrue(ticketRecordStore.currentRecords.isEmpty())
+            records = assertIs(controller.uiState.value.screen)
+            assertEquals("已清空 1 条本机记录", records.operationNotice)
+            assertFalse(records.isOperationInProgress)
+        }
+
+    /** 导出必须使用固定扩展名，并把规范化字节原样交给系统文件接口。 */
+    @Test
+    fun storedTicketsCanBeExportedThroughSystemFileExchange() =
+        runTest {
+            val exportedContent = byteArrayOf(1, 3, 5, 7)
+            val ticketRecordStore =
+                TrackingTicketRecordStore(
+                    exportResult =
+                        TicketRecordExport(
+                            content = exportedContent,
+                            recordCount = 2,
+                            exportedAtEpochMillis = 123_456L,
+                            payloadSha256 = "test-sha256",
+                        ),
+                )
+            val fileExchange =
+                TrackingTicketRecordFileExchange(
+                    writeResult = TicketRecordFileWriteResult.Success,
+                )
+            val controller =
+                createController(
+                    repository = CountingDrawRepository(),
+                    ticketRecordStore = ticketRecordStore,
+                    ticketRecordFileExchange = fileExchange,
+                )
+            controller.showTicketRecords()
+
+            controller.exportTicketRecords()
+
+            assertEquals("win-lottery-tickets-123456.wltickets.json", fileExchange.writtenFileName)
+            assertContentEquals(exportedContent, fileExchange.writtenContent)
+            val records = assertIs<AppScreen.Records>(controller.uiState.value.screen)
+            assertEquals("已导出 2 条记录", records.operationNotice)
+            assertFalse(records.isOperationInProgress)
+        }
+
+    /** 冲突导入必须先整批拒绝，只有用户确认后才保留本机并导入其余记录。 */
+    @Test
+    fun ticketRecordImportRequiresExplicitConflictDecision() =
+        runTest {
+            val importContent = byteArrayOf(2, 4, 6, 8)
+            val preview =
+                TicketRecordImportPreview(
+                    exportedAtEpochMillis = 123_456L,
+                    recordCount = 3,
+                    importableCount = 1,
+                    duplicateCount = 1,
+                    conflicts =
+                        listOf(
+                            TicketRecordImportConflict(
+                                id = TEST_RECORD_ID,
+                                localDisplayName = "本机票",
+                                importedDisplayName = "导入票",
+                            ),
+                        ),
+                    payloadSha256 = "test-sha256",
+                )
+            val ticketRecordStore =
+                TrackingTicketRecordStore(
+                    inspectImportResult = preview,
+                    importResults =
+                        listOf(
+                            TicketRecordImportResult.Conflicts(preview),
+                            TicketRecordImportResult.Completed(
+                                importedCount = 1,
+                                duplicateCount = 1,
+                                skippedConflictCount = 1,
+                            ),
+                        ),
+                )
+            val fileExchange =
+                TrackingTicketRecordFileExchange(
+                    readResult = TicketRecordFileReadResult.Success(importContent),
+                )
+            val controller =
+                createController(
+                    repository = CountingDrawRepository(),
+                    ticketRecordStore = ticketRecordStore,
+                    ticketRecordFileExchange = fileExchange,
+                )
+            controller.showTicketRecords()
+
+            controller.selectTicketRecordImport()
+
+            var records = assertIs<AppScreen.Records>(controller.uiState.value.screen)
+            assertEquals(preview, records.importPreview)
+            assertFalse(records.isOperationInProgress)
+            assertContentEquals(importContent, ticketRecordStore.inspectedImportContent)
+
+            controller.confirmTicketRecordImport(keepLocalConflicts = false)
+
+            records = assertIs(controller.uiState.value.screen)
+            assertEquals(preview, records.importPreview)
+            assertEquals(
+                listOf(TicketRecordImportConflictPolicy.REJECT_ALL),
+                ticketRecordStore.importPolicies,
+            )
+
+            controller.confirmTicketRecordImport(keepLocalConflicts = true)
+
+            records = assertIs(controller.uiState.value.screen)
+            assertNull(records.importPreview)
+            assertEquals(
+                "已导入 1 条记录，跳过 1 条相同记录，保留本机 1 条冲突记录",
+                records.operationNotice,
+            )
+            assertEquals(
+                listOf(
+                    TicketRecordImportConflictPolicy.REJECT_ALL,
+                    TicketRecordImportConflictPolicy.KEEP_LOCAL_AND_IMPORT_REST,
+                ),
+                ticketRecordStore.importPolicies,
+            )
+            assertContentEquals(importContent, ticketRecordStore.importedContents.last())
+        }
+
+    /** 离开记录页后，迟到的文件选择结果不得触发预检或保留待确认字节。 */
+    @Test
+    fun lateTicketRecordFileSelectionIsDiscardedAfterLeavingRecords() =
+        runTest {
+            val ticketRecordStore = TrackingTicketRecordStore()
+            val fileExchange = SuspendedTicketRecordFileExchange()
+            val controller =
+                createController(
+                    repository = CountingDrawRepository(),
+                    ticketRecordStore = ticketRecordStore,
+                    ticketRecordFileExchange = fileExchange,
+                )
+            controller.showTicketRecords()
+
+            val selection = launch { controller.selectTicketRecordImport() }
+            fileExchange.readStarted.await()
+            assertTrue(assertIs<AppScreen.Records>(controller.uiState.value.screen).isOperationInProgress)
+
+            controller.navigateHome()
+            fileExchange.completeRead(TicketRecordFileReadResult.Success(byteArrayOf(9, 8, 7)))
+            selection.join()
+
+            assertEquals(AppScreen.Home, controller.uiState.value.screen)
+            assertEquals(0, ticketRecordStore.inspectImportCallCount)
+            controller.showTicketRecords()
+            controller.confirmTicketRecordImport(keepLocalConflicts = true)
+            assertTrue(ticketRecordStore.importPolicies.isEmpty())
         }
 
     /** 导入分析完成后必须停留在人工确认页，不能自动查询开奖。 */
@@ -1156,6 +1343,7 @@ class LotteryAppControllerTest {
         imageQualityAnalyzer: ImageQualityAnalyzer = ImageDimensionQualityAnalyzer(),
         ticketParser: TicketParser = ConservativeTicketParser(),
         ticketRecordStore: TicketRecordStore? = null,
+        ticketRecordFileExchange: TicketRecordFileExchange? = null,
         ocrConfidenceDiagnostics: OcrConfidenceDiagnostics = OcrConfidenceDiagnostics.Disabled,
     ): LotteryAppController {
         val platform =
@@ -1182,6 +1370,7 @@ class LotteryAppControllerTest {
                 usesRealRecognition = usesRealRecognition,
                 usesRealDrawData = usesRealDrawData,
                 ticketRecordStore = ticketRecordStore,
+                ticketRecordFileExchange = ticketRecordFileExchange,
                 ocrConfidenceDiagnostics = ocrConfidenceDiagnostics,
             ),
         )
@@ -1462,6 +1651,12 @@ class LotteryAppControllerTest {
         private val suspendSave: Boolean = false,
         /** 是否让每次保存抛出受控异常。 */
         private val failSave: Boolean = false,
+        /** 测试配置的逻辑导出结果。 */
+        private val exportResult: TicketRecordExport? = null,
+        /** 测试配置的逻辑导入预检结果。 */
+        private val inspectImportResult: TicketRecordImportPreview? = null,
+        /** 每次导入事务按调用顺序返回的结果。 */
+        private val importResults: List<TicketRecordImportResult> = emptyList(),
     ) : TicketRecordStore {
         /** 内部可变记录流。 */
         private val mutableRecords = MutableStateFlow(initialRecords)
@@ -1479,6 +1674,23 @@ class LotteryAppControllerTest {
         /** 已收到的保存调用次数。 */
         var saveCallCount: Int = 0
             private set
+
+        /** 已收到的导入预检调用次数。 */
+        var inspectImportCallCount: Int = 0
+            private set
+
+        /** 最近一次导入预检收到的文件字节。 */
+        var inspectedImportContent: ByteArray? = null
+            private set
+
+        /** 导入事务按调用顺序收到的冲突策略。 */
+        val importPolicies = mutableListOf<TicketRecordImportConflictPolicy>()
+
+        /** 导入事务按调用顺序收到的文件字节。 */
+        val importedContents = mutableListOf<ByteArray>()
+
+        /** 下一次导入调用对应的预置结果索引。 */
+        private var importResultIndex: Int = 0
 
         /** 首次保存已经进入仓库的信号。 */
         val saveStarted = CompletableDeferred<Unit>()
@@ -1559,17 +1771,27 @@ class LotteryAppControllerTest {
             return count
         }
 
-        /** 旧控制器测试不应触发尚未配置的逻辑导出。 */
-        override suspend fun exportPackage(): TicketRecordExport = error("当前测试未配置逻辑导出")
+        /** 返回测试配置的逻辑导出；未配置时拒绝意外调用。 */
+        override suspend fun exportPackage(): TicketRecordExport = exportResult ?: error("当前测试未配置逻辑导出")
 
-        /** 旧控制器测试不应触发尚未配置的逻辑导入预检。 */
-        override suspend fun inspectImport(content: ByteArray): TicketRecordImportPreview = error("当前测试未配置逻辑导入预检")
+        /** 记录预检字节并返回测试配置的摘要。 */
+        override suspend fun inspectImport(content: ByteArray): TicketRecordImportPreview {
+            inspectImportCallCount += 1
+            inspectedImportContent = content.copyOf()
+            return inspectImportResult ?: error("当前测试未配置逻辑导入预检")
+        }
 
-        /** 旧控制器测试不应触发尚未配置的逻辑导入事务。 */
+        /** 记录冲突策略和文件字节，并按调用顺序返回预置事务结果。 */
         override suspend fun importPackage(
             content: ByteArray,
             conflictPolicy: TicketRecordImportConflictPolicy,
-        ): TicketRecordImportResult = error("当前测试未配置逻辑导入事务")
+        ): TicketRecordImportResult {
+            importPolicies += conflictPolicy
+            importedContents += content.copyOf()
+            val result = importResults.getOrNull(importResultIndex) ?: error("当前测试未配置逻辑导入事务")
+            importResultIndex += 1
+            return result
+        }
 
         /** 结束暂停中的保存调用。 */
         fun releaseSave() {
@@ -1579,6 +1801,61 @@ class LotteryAppControllerTest {
         /** 记录仓库生命周期已经结束。 */
         override fun close() {
             isClosed = true
+        }
+    }
+
+    /** 记录系统文件接口调用并返回预置结果。 */
+    private class TrackingTicketRecordFileExchange(
+        /** 导入选择器需要返回的结果。 */
+        private val readResult: TicketRecordFileReadResult = TicketRecordFileReadResult.Cancelled,
+        /** 导出选择器需要返回的结果。 */
+        private val writeResult: TicketRecordFileWriteResult = TicketRecordFileWriteResult.Cancelled,
+    ) : TicketRecordFileExchange {
+        /** 最近一次导出收到的建议文件名。 */
+        var writtenFileName: String? = null
+            private set
+
+        /** 最近一次导出收到的完整文件字节。 */
+        var writtenContent: ByteArray? = null
+            private set
+
+        /** 返回预置的导入文件选择结果。 */
+        override suspend fun readImportPackage(): TicketRecordFileReadResult = readResult
+
+        /** 记录导出参数并返回预置的系统保存结果。 */
+        override suspend fun writeExportPackage(
+            suggestedFileName: String,
+            content: ByteArray,
+        ): TicketRecordFileWriteResult {
+            writtenFileName = suggestedFileName
+            writtenContent = content.copyOf()
+            return writeResult
+        }
+    }
+
+    /** 由测试控制导入文件选择完成时机的系统文件接口。 */
+    private class SuspendedTicketRecordFileExchange : TicketRecordFileExchange {
+        /** 导入读取已经开始的信号。 */
+        val readStarted = CompletableDeferred<Unit>()
+
+        /** 测试稍后提供的导入读取结果。 */
+        private val readCompletion = CompletableDeferred<TicketRecordFileReadResult>()
+
+        /** 发出开始信号并等待测试提供文件选择结果。 */
+        override suspend fun readImportPackage(): TicketRecordFileReadResult {
+            readStarted.complete(Unit)
+            return readCompletion.await()
+        }
+
+        /** 当前测试不允许触发导出选择器。 */
+        override suspend fun writeExportPackage(
+            suggestedFileName: String,
+            content: ByteArray,
+        ): TicketRecordFileWriteResult = error("当前测试不应触发逻辑导出")
+
+        /** 完成正在等待的导入文件读取。 */
+        fun completeRead(result: TicketRecordFileReadResult) {
+            readCompletion.complete(result)
         }
     }
 
