@@ -16,8 +16,8 @@ spotless {
     kotlin {
         target(
             "androidApp/src/**/*.kt",
-            "composeApp/src/**/*.kt",
             "desktopApp/src/**/*.kt",
+            "shared/src/**/*.kt",
             "shared/*/src/**/*.kt",
         )
         ktlint(libs.versions.ktlint.get())
@@ -26,8 +26,8 @@ spotless {
         target(
             "*.gradle.kts",
             "androidApp/*.gradle.kts",
-            "composeApp/*.gradle.kts",
             "desktopApp/*.gradle.kts",
+            "shared/*.gradle.kts",
             "shared/*/*.gradle.kts",
         )
         ktlint(libs.versions.ktlint.get())

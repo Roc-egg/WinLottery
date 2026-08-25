@@ -31,7 +31,7 @@ jobs:
       - name: 构建 macOS 分发包
         run: ./gradlew :desktopApp:packageDmg
       - name: 编译 iOS 模拟器共享框架
-        run: ./gradlew :composeApp:linkDebugFrameworkIosSimulatorArm64
+        run: ./gradlew :shared:linkDebugFrameworkIosSimulatorArm64
 
   windows:
     name: Windows 桌面包

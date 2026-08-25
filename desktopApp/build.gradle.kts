@@ -26,7 +26,7 @@ val desktopLauncherRelativePath =
     }
 
 dependencies {
-    implementation(project(":composeApp"))
+    implementation(project(":shared"))
     implementation(project(":shared:recognition"))
 
     implementation(compose.desktop.currentOs)

@@ -33,7 +33,7 @@ plugins {
 
 include(":androidApp")
 include(":desktopApp")
-include(":composeApp")
+include(":shared")
 include(":shared:data")
 include(":shared:domain")
 include(":shared:persistence")
