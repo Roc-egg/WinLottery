@@ -13,6 +13,9 @@ const screenshotDirectory = process.argv[4];
 /** 可选的单平台诊断目标，正式入口默认执行双端。 */
 const targetPlatform = process.argv[13] ?? "both";
 
+/** 真实导入阶段由宿主放入系统文件区的逻辑包名称。 */
+const transferFileName = process.argv[14];
+
 /** Android 会话参数。 */
 const androidConfig = {
   platformName: "Android",
@@ -53,17 +56,29 @@ const PREPARE_PHASE = "prepare";
 /** 支持的最大字号验收阶段。 */
 const ACCEPT_PHASE = "accept";
 
+/** 支持的真实逻辑包导出阶段。 */
+const EXPORT_PHASE = "export";
+
+/** 支持的真实逻辑包导入阶段。 */
+const IMPORT_PHASE = "import";
+
+/** 支持的合成记录清理阶段。 */
+const CLEANUP_PHASE = "cleanup";
+
 /** 早期诊断阶段使用过的合成记录名称。 */
 const LEGACY_SYNTHETIC_RECORD_NAME = "大乐透 26999";
 
 /** 单个合成名称允许清理的最大记录数。 */
 const MAX_SYNTHETIC_RECORD_DELETE_COUNT = 20;
 
-if (![PREPARE_PHASE, ACCEPT_PHASE].includes(acceptancePhase)) {
+if (![PREPARE_PHASE, ACCEPT_PHASE, EXPORT_PHASE, IMPORT_PHASE, CLEANUP_PHASE].includes(acceptancePhase)) {
   throw new Error(`不支持的记录验收阶段：${acceptancePhase}`);
 }
 if (!["both", "android", "ios"].includes(targetPlatform)) {
   throw new Error(`不支持的记录验收平台：${targetPlatform}`);
+}
+if (acceptancePhase === IMPORT_PHASE && !transferFileName?.endsWith(".wltickets.json")) {
+  throw new Error("真实导入阶段缺少 .wltickets.json 文件名");
 }
 
 /** 发起 WebDriver 请求并统一解析错误。 */
@@ -200,6 +215,55 @@ async function findVisibleExactElement(sessionId, accessibilityName) {
     await waitForPageUpdate(300);
   }
   throw new Error(`当前窗口缺少完整可见元素：${accessibilityName}`);
+}
+
+/** 返回当前窗口内属性包含指定文本的可见元素快照。 */
+async function findVisibleContainingElements(sessionId, text) {
+  const textLiteral = JSON.stringify(text);
+  const elements = await webdriverRequest(`/session/${sessionId}/elements`, "POST", {
+    using: "xpath",
+    value:
+      `//*[contains(@content-desc, ${textLiteral}) or contains(@text, ${textLiteral}) or ` +
+      `contains(@name, ${textLiteral}) or contains(@label, ${textLiteral}) or ` +
+      `contains(@value, ${textLiteral})]`,
+  });
+  const windowRect = await webdriverRequest(`/session/${sessionId}/window/rect`);
+  const visibleElements = [];
+  for (const element of elements) {
+    const elementId = readElementId(element, text);
+    try {
+      const [elementRect, displayed] = await Promise.all([
+        webdriverRequest(`/session/${sessionId}/element/${elementId}/rect`),
+        webdriverRequest(`/session/${sessionId}/element/${elementId}/displayed`),
+      ]);
+      if (displayed && isRectInsideWindow(elementRect, windowRect)) {
+        visibleElements.push({ elementId, elementRect });
+      }
+    } catch (error) {
+      if (error.webdriverError !== "stale element reference") throw error;
+    }
+  }
+  return visibleElements;
+}
+
+/** 点击首个当前可见的候选文案，并返回实际命中的文案。 */
+async function clickFirstVisibleCandidate(sessionId, accessibilityNames, platformName) {
+  for (const accessibilityName of accessibilityNames) {
+    const elements = await findVisibleExactElements(sessionId, accessibilityName);
+    if (elements.length > 0) {
+      await tapElementCenter(sessionId, elements[0].elementRect, platformName);
+      return accessibilityName;
+    }
+  }
+  throw new Error(`当前窗口缺少候选元素：${accessibilityNames.join("、")}`);
+}
+
+/** 点击当前窗口中垂直位置最靠下的同名元素，避开与按钮同名的标题。 */
+async function clickBottommostVisibleExactElement(sessionId, accessibilityName, platformName) {
+  const elements = await findVisibleExactElements(sessionId, accessibilityName);
+  if (elements.length === 0) throw new Error(`当前窗口缺少完整可见元素：${accessibilityName}`);
+  elements.sort((first, second) => second.elementRect.y - first.elementRect.y);
+  await tapElementCenter(sessionId, elements[0].elementRect, platformName);
 }
 
 /** 等待 iOS 滚动减速结束并返回稳定的元素矩形。 */
@@ -675,6 +739,13 @@ async function isRecordPageVisible(sessionId) {
   return elements.length > 0;
 }
 
+/** 从首页进入记录页；已经位于记录页时保持当前状态。 */
+async function openRecordPage(sessionId, config) {
+  if (await isRecordPageVisible(sessionId)) return;
+  await clickScrollableExactElement(sessionId, "本机记录", config.platformName);
+  await findVisibleExactElement(sessionId, "记录管理");
+}
+
 /** 等待平台原生文件选择器真正进入前台。 */
 async function waitForNativePicker(sessionId, config) {
   let source = "";
@@ -688,6 +759,63 @@ async function waitForNativePicker(sessionId, config) {
     await waitForPageUpdate(500);
   }
   throw new Error(`${config.platformName} 系统文件选择器未进入前台`);
+}
+
+/** 在系统文件选择器中查找宿主预置的短文件名。 */
+async function findTransferFileInPicker(sessionId, config, fileName) {
+  if (config.platformName === "iOS") {
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const elements = await findVisibleContainingElements(sessionId, fileName);
+      if (elements.length > 0) return elements[0];
+      await waitForPageUpdate(400);
+    }
+    const browseNames = ["浏览", "Browse"];
+    for (const browseName of browseNames) {
+      const browseElements = await findVisibleExactElements(sessionId, browseName);
+      if (browseElements.length > 0) {
+        await tapElementCenter(sessionId, browseElements[0].elementRect, config.platformName);
+        break;
+      }
+    }
+    await waitForPageUpdate(800);
+    const localNames = ["我的 iPhone", "On My iPhone"];
+    for (const localName of localNames) {
+      const localElements = await findVisibleExactElements(sessionId, localName);
+      if (localElements.length > 0) {
+        await tapElementCenter(sessionId, localElements[0].elementRect, config.platformName);
+        break;
+      }
+    }
+  } else {
+    const rootNames = ["Show roots", "显示根目录", "Open navigation drawer"];
+    for (const rootName of rootNames) {
+      const rootElements = await findVisibleExactElements(sessionId, rootName);
+      if (rootElements.length > 0) {
+        await tapElementCenter(sessionId, rootElements[0].elementRect, config.platformName);
+        break;
+      }
+    }
+    await waitForPageUpdate(800);
+    const downloadNames = ["Downloads", "下载"];
+    for (const downloadName of downloadNames) {
+      const downloadElements = await findVisibleExactElements(sessionId, downloadName);
+      if (downloadElements.length > 0) {
+        await tapElementCenter(sessionId, downloadElements.at(-1).elementRect, config.platformName);
+        break;
+      }
+    }
+  }
+
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const elements =
+      config.platformName === "Android"
+        ? await findVisibleExactElements(sessionId, fileName)
+        : await findVisibleContainingElements(sessionId, fileName);
+    if (elements.length > 0) return elements[0];
+    await waitForPageUpdate(500);
+  }
+  const source = await readSource(sessionId);
+  throw new Error(`${config.platformName} 系统文件选择器缺少 ${fileName}；页面含文件名=${source.includes(fileName)}`);
 }
 
 /** 取消平台原生文件选择器并等待返回记录页。 */
@@ -745,6 +873,60 @@ async function verifyImportPicker(sessionId, config) {
   await cancelNativePicker(sessionId, config);
 }
 
+/** 在系统保存选择器中确认一次真实导出，并等待应用写入成功。 */
+async function exportRecordsThroughNativePicker(sessionId, config, screenshotLabel) {
+  await openRecordPage(sessionId, config);
+  await verifyExportWarning(sessionId, config);
+  await clickVisibleExactElement(sessionId, "选择保存位置", config.platformName);
+  await waitForNativePicker(sessionId, config);
+  await saveScreenshot(sessionId, config, `${screenshotLabel}-picker`);
+  await clickFirstVisibleCandidate(sessionId, ["SAVE", "Save", "保存"], config.platformName);
+  const source = await waitForAnySourceText(sessionId, ["已导出", "无法写入", "所选位置无法写入"], 40);
+  if (!source.includes("已导出")) {
+    throw new Error(`${config.platformName} 真实导出没有成功：${source.slice(0, 1600)}`);
+  }
+  await saveScreenshot(sessionId, config, `${screenshotLabel}-completed`);
+}
+
+/** 通过系统打开选择器真实导入宿主预置文件，并核对对端记录可见。 */
+async function importRecordsThroughNativePicker(sessionId, config, fileName, expectedRecordName) {
+  await openRecordPage(sessionId, config);
+  await openAndVerifyManagementMenu(sessionId, config);
+  await clickVisibleExactElement(sessionId, "导入记录", config.platformName);
+  await waitForNativePicker(sessionId, config);
+  const fileElement = await findTransferFileInPicker(sessionId, config, fileName);
+  await tapElementCenter(sessionId, fileElement.elementRect, config.platformName);
+  await saveScreenshot(sessionId, config, "roundtrip-file-selected");
+
+  let previewSource;
+  try {
+    previewSource = await waitForAnySourceText(sessionId, ["文件包含", "导入文件校验失败"], 40);
+  } catch (error) {
+    if (config.platformName === "Android") {
+      const currentPackage = await webdriverRequest(`/session/${sessionId}/appium/device/current_package`);
+      throw new Error(`Android 点选文件后前台包为 ${currentPackage}`, { cause: error });
+    }
+    throw error;
+  }
+  if (!previewSource.includes("文件包含")) {
+    throw new Error(`${config.platformName} 跨端文件没有通过导入预检`);
+  }
+  if (previewSource.includes("发现记录冲突")) {
+    await clickBottommostVisibleExactElement(sessionId, "保留本机并导入其余", config.platformName);
+  } else {
+    await clickBottommostVisibleExactElement(sessionId, "导入", config.platformName);
+  }
+
+  const resultSource = await waitForAnySourceText(sessionId, ["已导入", "没有新增记录", "导入文件校验失败"], 40);
+  if (!resultSource.includes("已导入")) {
+    throw new Error(`${config.platformName} 跨端文件没有新增记录：${resultSource.slice(0, 1600)}`);
+  }
+  await replaceEditableValue(sessionId, "名称或起始期号", config.platformName, expectedRecordName);
+  await hideKeyboard(sessionId);
+  await waitForSourceText(sessionId, expectedRecordName, 30);
+  await saveScreenshot(sessionId, config, "roundtrip-imported-record");
+}
+
 /** 删除指定名称的所有合成记录。 */
 async function deleteSyntheticRecordsByName(sessionId, config, recordName) {
   for (let attempt = 0; attempt < MAX_SYNTHETIC_RECORD_DELETE_COUNT; attempt += 1) {
@@ -764,8 +946,10 @@ async function deleteSyntheticRecordsByName(sessionId, config, recordName) {
 /** 删除所有明确命名的合成记录，避免影响其他本机数据。 */
 async function deleteSyntheticRecords(sessionId, config) {
   const recordNames = [
-    config.recordName,
-    config.defaultRecordName,
+    androidConfig.recordName,
+    androidConfig.defaultRecordName,
+    iosConfig.recordName,
+    iosConfig.defaultRecordName,
     LEGACY_SYNTHETIC_RECORD_NAME,
   ];
   for (const recordName of new Set(recordNames)) {
@@ -775,6 +959,9 @@ async function deleteSyntheticRecords(sessionId, config) {
 
 /** 执行标准字号记录准备与界面检查。 */
 async function runPreparePhase(sessionId, config) {
+  await openRecordPage(sessionId, config);
+  await deleteSyntheticRecords(sessionId, config);
+  await clickVisibleExactElement(sessionId, "返回", config.platformName);
   await createSyntheticRecord(sessionId, config);
   await renameSyntheticRecord(sessionId, config);
   await verifyRecordLayout(sessionId, config, "standard-records");
@@ -785,17 +972,36 @@ async function runPreparePhase(sessionId, config) {
   process.stdout.write(`${config.platformName} 标准字号记录创建与管理检查通过\n`);
 }
 
-/** 执行最大字号布局、系统文件选择器与合成数据清理检查。 */
+/** 执行最大字号布局与系统文件选择器检查。 */
 async function runAcceptPhase(sessionId, config) {
-  await clickScrollableExactElement(sessionId, "本机记录", config.platformName);
+  await openRecordPage(sessionId, config);
   await waitForSourceText(sessionId, config.recordName, 30);
   await verifyRecordLayout(sessionId, config, "maximum-records");
   await verifyDeleteConfirmation(sessionId, config);
   await verifyClearConfirmation(sessionId, config);
   await verifyExportPicker(sessionId, config);
   await verifyImportPicker(sessionId, config);
-  await deleteSyntheticRecords(sessionId, config);
   process.stdout.write(`${config.platformName} 最大字号记录与文件选择器检查通过\n`);
+}
+
+/** 执行真实系统文件导出。 */
+async function runExportPhase(sessionId, config) {
+  await exportRecordsThroughNativePicker(sessionId, config, "roundtrip-export");
+  process.stdout.write(`${config.platformName} 真实逻辑包导出通过\n`);
+}
+
+/** 执行对端逻辑包导入，并核对导入记录进入列表。 */
+async function runImportPhase(sessionId, config) {
+  const expectedRecordName = config.platformName === "Android" ? iosConfig.recordName : androidConfig.recordName;
+  await importRecordsThroughNativePicker(sessionId, config, transferFileName, expectedRecordName);
+  process.stdout.write(`${config.platformName} 真实跨端逻辑包导入通过\n`);
+}
+
+/** 清理双端明确命名的合成记录，不影响其他本机数据。 */
+async function runCleanupPhase(sessionId, config) {
+  await openRecordPage(sessionId, config);
+  await deleteSyntheticRecords(sessionId, config);
+  process.stdout.write(`${config.platformName} 合成记录清理通过\n`);
 }
 
 /** 创建并执行 Android 当前阶段验收。 */
@@ -812,11 +1018,11 @@ async function verifyAndroid() {
       "appium:noReset": true,
       "appium:newCommandTimeout": 180,
     });
-    if (acceptancePhase === PREPARE_PHASE) {
-      await runPreparePhase(sessionId, androidConfig);
-    } else {
-      await runAcceptPhase(sessionId, androidConfig);
-    }
+    if (acceptancePhase === PREPARE_PHASE) await runPreparePhase(sessionId, androidConfig);
+    if (acceptancePhase === ACCEPT_PHASE) await runAcceptPhase(sessionId, androidConfig);
+    if (acceptancePhase === EXPORT_PHASE) await runExportPhase(sessionId, androidConfig);
+    if (acceptancePhase === IMPORT_PHASE) await runImportPhase(sessionId, androidConfig);
+    if (acceptancePhase === CLEANUP_PHASE) await runCleanupPhase(sessionId, androidConfig);
   } finally {
     await deleteSession(sessionId);
   }
@@ -839,11 +1045,11 @@ async function verifyIOS() {
       "appium:wdaLocalPort": 8102,
       "appium:newCommandTimeout": 180,
     });
-    if (acceptancePhase === PREPARE_PHASE) {
-      await runPreparePhase(sessionId, iosConfig);
-    } else {
-      await runAcceptPhase(sessionId, iosConfig);
-    }
+    if (acceptancePhase === PREPARE_PHASE) await runPreparePhase(sessionId, iosConfig);
+    if (acceptancePhase === ACCEPT_PHASE) await runAcceptPhase(sessionId, iosConfig);
+    if (acceptancePhase === EXPORT_PHASE) await runExportPhase(sessionId, iosConfig);
+    if (acceptancePhase === IMPORT_PHASE) await runImportPhase(sessionId, iosConfig);
+    if (acceptancePhase === CLEANUP_PHASE) await runCleanupPhase(sessionId, iosConfig);
   } finally {
     await deleteSession(sessionId);
   }
