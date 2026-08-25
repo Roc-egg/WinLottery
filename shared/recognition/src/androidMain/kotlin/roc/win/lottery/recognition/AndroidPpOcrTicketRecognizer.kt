@@ -5,6 +5,7 @@ import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
 import android.content.Context
 import android.graphics.Bitmap
+import android.os.Build
 import java.io.File
 import java.io.FileInputStream
 import java.io.InputStream
@@ -199,6 +200,10 @@ private class AndroidPpOcrOnnxRuntime(
                 options.setMemoryPatternOptimization(false)
                 // 复用百余次推理的本地分配，减少频繁申请与释放张量内存的耗时。
                 options.setCPUArenaAllocator(true)
+                if (Build.HARDWARE in ANDROID_EMULATOR_HARDWARE) {
+                    // ARM64 模拟器可能错误宣告 SME2 能力，禁用对应内核以避免非法指令崩溃。
+                    options.addConfigEntry(DISABLE_KLEIDIAI_CONFIG_KEY, ENABLED_CONFIG_VALUE)
+                }
                 environment.createSession(resources.modelFile(model).absolutePath, options)
             }
         }
@@ -213,6 +218,15 @@ private class AndroidPpOcrOnnxRuntime(
 
         /** 当前识别调用固定只传入一张裁图。 */
         const val CTC_BATCH_SIZE = 1
+
+        /** ONNX Runtime 禁用 KleidiAI 内核的 Session 配置项。 */
+        const val DISABLE_KLEIDIAI_CONFIG_KEY = "mlas.disable_kleidiai"
+
+        /** ONNX Runtime 布尔配置的启用值。 */
+        const val ENABLED_CONFIG_VALUE = "1"
+
+        /** Android Emulator 使用的虚拟硬件标识。 */
+        val ANDROID_EMULATOR_HARDWARE = setOf("goldfish", "ranchu")
     }
 }
 

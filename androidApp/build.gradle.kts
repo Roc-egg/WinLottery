@@ -39,14 +39,28 @@ android {
         versionCode = 2
         versionName = "1.0.1"
     }
+    signingConfigs {
+        // 调试版和发布版统一使用的仓库签名。
+        create("gwz") {
+            storeFile = rootProject.file("SignInfo/gwz.jks")
+            storePassword = "gwz123456"
+            keyAlias = "gwz-alias"
+            keyPassword = "gwz123456"
+        }
+    }
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
     }
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("gwz")
+        }
         release {
-            isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("gwz")
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
