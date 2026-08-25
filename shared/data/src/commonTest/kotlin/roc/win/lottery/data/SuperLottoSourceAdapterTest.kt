@@ -49,6 +49,41 @@ class SuperLottoSourceAdapterTest {
         )
     }
 
+    /** 第 26096 期官网元级取整金额和高奖池固定奖档应进入奖金终态。 */
+    @Test
+    fun issue26096PublishedPayoutsReachFinalPayout() {
+        val issue = "26096"
+        val result =
+            SuperLottoSourceAdapter.parseMain(
+                rawJson =
+                    DrawContractFixtures.superLottoMain(
+                        issue = issue,
+                        numbers = "08 09 10 11 25 04 12",
+                        drawDate = "2026-08-24",
+                        firstPrizeAmount = "6,561,952",
+                        firstAdditionalCount = "1",
+                        firstAdditionalAmount = "5,249,561",
+                        secondPrizeAmount = "57,893",
+                        secondAdditionalCount = "53",
+                        secondAdditionalAmount = "46,315",
+                    ),
+                targetIssue = issue,
+                sourceUrl = MAIN_URL,
+            )
+        val snapshot = assertIs<SourceParseResult.Success<MainDrawSnapshot>>(result).value
+
+        assertTrue(snapshot.payoutFieldsComplete)
+        assertEquals(700L, snapshot.prizeTiers.single { it.code == PrizeTierCodes.SEVENTH }.singlePrizeFen)
+        assertEquals(
+            524_956_100L,
+            snapshot.prizeTiers.single { it.code == PrizeTierCodes.FIRST }.additionalPrizeFen,
+        )
+        assertEquals(
+            4_631_500L,
+            snapshot.prizeTiers.single { it.code == PrizeTierCodes.SECOND }.additionalPrizeFen,
+        )
+    }
+
     /** 大乐透前后区属于不同号码池，跨区同值不应被当作重复。 */
     @Test
     fun sameValueAcrossNumberAreasIsAllowed() {

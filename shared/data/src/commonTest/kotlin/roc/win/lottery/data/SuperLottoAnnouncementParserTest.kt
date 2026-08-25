@@ -34,6 +34,29 @@ class SuperLottoAnnouncementParserTest {
         assertEquals(700L, seventh.singlePrizeFen)
     }
 
+    /** 第 26096 期真实奖级表应通过 PDF 独立证据解析。 */
+    @Test
+    fun issue26096AnnouncementReturnsSupportingSnapshot() {
+        val result =
+            SuperLottoAnnouncementParser.parseExtractedText(
+                rawText = SuperLottoAnnouncementTestFixtures.ISSUE_26096_ANNOUNCEMENT_TEXT,
+                targetIssue = SuperLottoAnnouncementTestFixtures.ISSUE_26096,
+                sourceUrl = SuperLottoAnnouncementTestFixtures.ISSUE_26096_PDF_URL,
+            )
+        val snapshot = assertIs<SourceParseResult.Success<SupportingDrawSnapshot>>(result).value
+
+        assertEquals("2026-08-24", snapshot.drawDate)
+        assertEquals(700L, snapshot.prizeTiers.single { it.code == PrizeTierCodes.SEVENTH }.singlePrizeFen)
+        assertEquals(
+            524_956_100L,
+            snapshot.prizeTiers.single { it.code == PrizeTierCodes.FIRST }.additionalPrizeFen,
+        )
+        assertEquals(
+            4_631_500L,
+            snapshot.prizeTiers.single { it.code == PrizeTierCodes.SECOND }.additionalPrizeFen,
+        )
+    }
+
     /** 合并奖级单元格位于基本与追加行之间时也应按同一字段语义解析。 */
     @Test
     fun mergedTierCellBetweenRowsReturnsSupportingSnapshot() {

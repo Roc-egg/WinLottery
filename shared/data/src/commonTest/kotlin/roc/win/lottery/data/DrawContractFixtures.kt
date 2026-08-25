@@ -26,8 +26,12 @@ internal object DrawContractFixtures {
         notice: Int = 1,
         promotionFlag: Int = 0,
         detailUrl: String = defaultDltDetailUrl(issue),
+        firstPrizeAmount: String = "10,000,000",
         firstAdditionalCount: String = "0",
         firstAdditionalAmount: String = "---",
+        secondPrizeAmount: String = "343,183",
+        secondAdditionalCount: String = "15",
+        secondAdditionalAmount: String = "274,546",
         thirdPrizeAmount: String = "6666",
         extraPrizeName: String? = null,
     ): String =
@@ -51,8 +55,12 @@ internal object DrawContractFixtures {
                                         notice = notice,
                                         promotionFlag = promotionFlag,
                                         detailUrl = detailUrl,
+                                        firstPrizeAmount = firstPrizeAmount,
                                         firstAdditionalCount = firstAdditionalCount,
                                         firstAdditionalAmount = firstAdditionalAmount,
+                                        secondPrizeAmount = secondPrizeAmount,
+                                        secondAdditionalCount = secondAdditionalCount,
+                                        secondAdditionalAmount = secondAdditionalAmount,
                                         thirdPrizeAmount = thirdPrizeAmount,
                                         extraPrizeName = extraPrizeName,
                                     ),
@@ -68,8 +76,12 @@ internal object DrawContractFixtures {
                                             notice = notice,
                                             promotionFlag = promotionFlag,
                                             detailUrl = detailUrl,
+                                            firstPrizeAmount = firstPrizeAmount,
                                             firstAdditionalCount = firstAdditionalCount,
                                             firstAdditionalAmount = firstAdditionalAmount,
+                                            secondPrizeAmount = secondPrizeAmount,
+                                            secondAdditionalCount = secondAdditionalCount,
+                                            secondAdditionalAmount = secondAdditionalAmount,
                                             thirdPrizeAmount = thirdPrizeAmount,
                                             extraPrizeName = extraPrizeName,
                                         ),
@@ -90,8 +102,12 @@ internal object DrawContractFixtures {
         verify: Int = 1,
         notice: Int = 1,
         detailUrl: String = defaultDltDetailUrl(issue),
+        firstPrizeAmount: String = "10,000,000",
         firstAdditionalCount: String = "0",
         firstAdditionalAmount: String = "0",
+        secondPrizeAmount: String = "343,183",
+        secondAdditionalCount: String = "15",
+        secondAdditionalAmount: String = "274,546",
         thirdPrizeAmount: String = "6666",
         extraPrizeName: String? = null,
         businessSuccess: Boolean = true,
@@ -118,8 +134,12 @@ internal object DrawContractFixtures {
                                         notice = notice,
                                         promotionFlag = 0,
                                         detailUrl = detailUrl,
+                                        firstPrizeAmount = firstPrizeAmount,
                                         firstAdditionalCount = firstAdditionalCount,
                                         firstAdditionalAmount = firstAdditionalAmount,
+                                        secondPrizeAmount = secondPrizeAmount,
+                                        secondAdditionalCount = secondAdditionalCount,
+                                        secondAdditionalAmount = secondAdditionalAmount,
                                         thirdPrizeAmount = thirdPrizeAmount,
                                         extraPrizeName = extraPrizeName,
                                     ),
@@ -278,8 +298,12 @@ internal object DrawContractFixtures {
         notice: Int,
         promotionFlag: Int,
         detailUrl: String,
+        firstPrizeAmount: String,
         firstAdditionalCount: String,
         firstAdditionalAmount: String,
+        secondPrizeAmount: String,
+        secondAdditionalCount: String,
+        secondAdditionalAmount: String,
         thirdPrizeAmount: String,
         extraPrizeName: String?,
     ): JsonObject =
@@ -296,8 +320,12 @@ internal object DrawContractFixtures {
             put(
                 "prizeLevelList",
                 superLottoPrizeRows(
+                    firstPrizeAmount = firstPrizeAmount,
                     firstAdditionalCount = firstAdditionalCount,
                     firstAdditionalAmount = firstAdditionalAmount,
+                    secondPrizeAmount = secondPrizeAmount,
+                    secondAdditionalCount = secondAdditionalCount,
+                    secondAdditionalAmount = secondAdditionalAmount,
                     thirdPrizeAmount = thirdPrizeAmount,
                     extraPrizeName = extraPrizeName,
                 ),
@@ -306,16 +334,20 @@ internal object DrawContractFixtures {
 
     /** 构造大乐透必要奖级行。 */
     private fun superLottoPrizeRows(
+        firstPrizeAmount: String,
         firstAdditionalCount: String,
         firstAdditionalAmount: String,
+        secondPrizeAmount: String,
+        secondAdditionalCount: String,
+        secondAdditionalAmount: String,
         thirdPrizeAmount: String,
         extraPrizeName: String?,
     ): JsonArray =
         buildJsonArray {
-            add(superLottoPrizeRow("一等奖", "3", "10,000,000"))
+            add(superLottoPrizeRow("一等奖", "3", firstPrizeAmount))
             add(superLottoPrizeRow("一等奖(追加)", firstAdditionalCount, firstAdditionalAmount))
-            add(superLottoPrizeRow("二等奖", "65", "343,183"))
-            add(superLottoPrizeRow("二等奖(追加)", "15", "274,546"))
+            add(superLottoPrizeRow("二等奖", "65", secondPrizeAmount))
+            add(superLottoPrizeRow("二等奖(追加)", secondAdditionalCount, secondAdditionalAmount))
             add(superLottoPrizeRow("三等奖", "780", thirdPrizeAmount))
             add(superLottoPrizeRow("四等奖", "13,907", "380"))
             add(superLottoPrizeRow("五等奖", "57,982", "200"))
