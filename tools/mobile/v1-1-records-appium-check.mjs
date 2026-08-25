@@ -65,13 +65,29 @@ const IMPORT_PHASE = "import";
 /** 支持的合成记录清理阶段。 */
 const CLEANUP_PHASE = "cleanup";
 
+/** 支持的覆盖升级前真实记录准备阶段。 */
+const UPGRADE_PREPARE_PHASE = "upgrade-prepare";
+
+/** 支持的覆盖升级后真实记录读取阶段。 */
+const UPGRADE_VERIFY_PHASE = "upgrade-verify";
+
 /** 早期诊断阶段使用过的合成记录名称。 */
 const LEGACY_SYNTHETIC_RECORD_NAME = "大乐透 26999";
 
 /** 单个合成名称允许清理的最大记录数。 */
 const MAX_SYNTHETIC_RECORD_DELETE_COUNT = 20;
 
-if (![PREPARE_PHASE, ACCEPT_PHASE, EXPORT_PHASE, IMPORT_PHASE, CLEANUP_PHASE].includes(acceptancePhase)) {
+if (
+  ![
+    PREPARE_PHASE,
+    ACCEPT_PHASE,
+    EXPORT_PHASE,
+    IMPORT_PHASE,
+    CLEANUP_PHASE,
+    UPGRADE_PREPARE_PHASE,
+    UPGRADE_VERIFY_PHASE,
+  ].includes(acceptancePhase)
+) {
   throw new Error(`不支持的记录验收阶段：${acceptancePhase}`);
 }
 if (!["both", "android", "ios"].includes(targetPlatform)) {
@@ -657,6 +673,25 @@ async function verifyRecordLayout(sessionId, config, screenshotLabel) {
   await saveScreenshot(sessionId, config, screenshotLabel);
 }
 
+/** 核对真实记录从 Room 读取后的卡片字段，避免只凭标题判断升级成功。 */
+async function verifyStoredRecordFields(sessionId, config, screenshotLabel) {
+  await scrollElementIntoView(sessionId, config.recordName);
+  const expectedTexts = [
+    config.recordName,
+    `超级大乐透 · ${config.issue}`,
+    "1 期 · 1 倍 · 1 注 · 2.00 元",
+    "手动录入 ·",
+    "查询开奖",
+  ];
+  let source = await readSource(sessionId);
+  for (const expectedText of expectedTexts) {
+    if (!source.includes(expectedText)) {
+      source = await waitForSourceText(sessionId, expectedText, 30);
+    }
+  }
+  await saveScreenshot(sessionId, config, screenshotLabel);
+}
+
 /** 打开记录管理菜单并核对三个操作完整可见。 */
 async function openAndVerifyManagementMenu(sessionId, config) {
   await clickVisibleExactElement(sessionId, "记录管理", config.platformName);
@@ -1004,6 +1039,25 @@ async function runCleanupPhase(sessionId, config) {
   process.stdout.write(`${config.platformName} 合成记录清理通过\n`);
 }
 
+/** 在旧版 Release 中通过真实 UI 创建并读取一条 Room 记录。 */
+async function runUpgradePreparePhase(sessionId, config) {
+  await openRecordPage(sessionId, config);
+  await deleteSyntheticRecords(sessionId, config);
+  await clickVisibleExactElement(sessionId, "返回", config.platformName);
+  await createSyntheticRecord(sessionId, config);
+  await renameSyntheticRecord(sessionId, config);
+  await verifyStoredRecordFields(sessionId, config, "upgrade-before");
+  process.stdout.write(`${config.platformName} 升级前真实 Room 记录创建通过\n`);
+}
+
+/** 在新版 Release 中通过记录页逐项读取覆盖安装前保存的 Room 记录。 */
+async function runUpgradeVerifyPhase(sessionId, config) {
+  await openRecordPage(sessionId, config);
+  await waitForSourceText(sessionId, config.recordName, 30);
+  await verifyStoredRecordFields(sessionId, config, "upgrade-after");
+  process.stdout.write(`${config.platformName} 升级后真实 Room 记录读取通过\n`);
+}
+
 /** 创建并执行 Android 当前阶段验收。 */
 async function verifyAndroid() {
   let sessionId;
@@ -1023,6 +1077,8 @@ async function verifyAndroid() {
     if (acceptancePhase === EXPORT_PHASE) await runExportPhase(sessionId, androidConfig);
     if (acceptancePhase === IMPORT_PHASE) await runImportPhase(sessionId, androidConfig);
     if (acceptancePhase === CLEANUP_PHASE) await runCleanupPhase(sessionId, androidConfig);
+    if (acceptancePhase === UPGRADE_PREPARE_PHASE) await runUpgradePreparePhase(sessionId, androidConfig);
+    if (acceptancePhase === UPGRADE_VERIFY_PHASE) await runUpgradeVerifyPhase(sessionId, androidConfig);
   } finally {
     await deleteSession(sessionId);
   }
@@ -1050,6 +1106,8 @@ async function verifyIOS() {
     if (acceptancePhase === EXPORT_PHASE) await runExportPhase(sessionId, iosConfig);
     if (acceptancePhase === IMPORT_PHASE) await runImportPhase(sessionId, iosConfig);
     if (acceptancePhase === CLEANUP_PHASE) await runCleanupPhase(sessionId, iosConfig);
+    if (acceptancePhase === UPGRADE_PREPARE_PHASE) await runUpgradePreparePhase(sessionId, iosConfig);
+    if (acceptancePhase === UPGRADE_VERIFY_PHASE) await runUpgradeVerifyPhase(sessionId, iosConfig);
   } finally {
     await deleteSession(sessionId);
   }

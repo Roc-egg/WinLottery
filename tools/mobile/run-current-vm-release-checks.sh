@@ -2,7 +2,8 @@
 
 set -euo pipefail
 
-readonly REPOSITORY_ROOT="${0:A:h:h:h}"
+readonly SCRIPT_DIRECTORY="${0:A:h}"
+readonly REPOSITORY_ROOT="${SCRIPT_DIRECTORY:h:h}"
 readonly ANDROID_APPLICATION_ID="roc.win.lottery"
 readonly ANDROID_ACTIVITY="roc.win.lottery.MainActivity"
 readonly ANDROID_DEBUG_CRASH_EXTRA="roc.win.lottery.debug.CRASH_ON_CREATE"
@@ -12,7 +13,11 @@ readonly IOS_EXPECTED_BUNDLE_ID="roc.win.lottery.WinLottery"
 readonly IOS_DEBUG_CRASH_ENVIRONMENT="WINLOTTERY_DEBUG_CRASH_ON_LAUNCH"
 readonly CONTROLLED_CRASH_MARKER="WinLotteryControlledCrashAcceptance"
 readonly MEMORY_PRESSURE_MARKER="WinLotteryMemoryPressureAcceptance"
-readonly UPGRADE_BASE_REVISION="7df5e68"
+readonly UPGRADE_BASE_REVISION="523ab8a"
+readonly UPGRADE_RECORDS_CHECK_SCRIPT="$SCRIPT_DIRECTORY/v1-1-records-appium-check.mjs"
+readonly UPGRADE_APPIUM_PORT=4727
+readonly UPGRADE_APPIUM_BASE_URL="http://127.0.0.1:$UPGRADE_APPIUM_PORT"
+readonly UPGRADE_IOS_PLATFORM_VERSION="26.5"
 readonly VERIFY_INSTALL_LIFECYCLE="${WINLOTTERY_VERIFY_INSTALL_LIFECYCLE:-0}"
 readonly VERIFY_PROCESS_RECOVERY="${WINLOTTERY_VERIFY_PROCESS_RECOVERY:-0}"
 readonly VERIFY_ABRUPT_TERMINATION="${WINLOTTERY_VERIFY_ABRUPT_TERMINATION:-0}"
@@ -20,11 +25,19 @@ readonly VERIFY_CRASH_RECOVERY="${WINLOTTERY_VERIFY_CRASH_RECOVERY:-0}"
 readonly VERIFY_MEMORY_PRESSURE="${WINLOTTERY_VERIFY_MEMORY_PRESSURE:-0}"
 readonly VERIFY_VERSION_UPGRADE="${WINLOTTERY_VERIFY_VERSION_UPGRADE:-0}"
 ios_upgrade_persistent_directories=()
+upgrade_appium_process_id=""
+upgrade_evidence_directory=""
+upgrade_appium_log=""
+upgrade_screenshot_directory=""
 
-source "${0:A:h}/current-vm-guard.sh"
+source "$SCRIPT_DIRECTORY/current-vm-guard.sh"
 
 # 失败时尽力恢复 Release 应用，并清理本轮签名 APK 与 Xcode DerivedData。
 cleanup_release_check() {
+  if [[ -n "$upgrade_appium_process_id" ]] && kill -0 "$upgrade_appium_process_id" 2>/dev/null; then
+    kill "$upgrade_appium_process_id" 2>/dev/null || true
+    wait "$upgrade_appium_process_id" 2>/dev/null || true
+  fi
   if [[ "${android_restore_required:-0}" == "1" && -s "${signed_android_apk:-}" ]]; then
     adb -s "$CURRENT_ANDROID_SERIAL_ID" install -r -d "$signed_android_apk" >/dev/null 2>&1 || true
     adb -s "$CURRENT_ANDROID_SERIAL_ID" shell am start \
@@ -46,13 +59,67 @@ cleanup_release_check() {
   fi
 }
 
+# 启动只服务于真实 Room 覆盖升级阶段的本机 Appium，并保留截图与日志供复核。
+start_upgrade_appium() {
+  upgrade_evidence_directory="$(mktemp -d "${TMPDIR:-/tmp}/winlottery-v1-1-upgrade.XXXXXX")"
+  upgrade_screenshot_directory="$upgrade_evidence_directory/screenshots"
+  upgrade_appium_log="$upgrade_evidence_directory/appium.log"
+  mkdir -p "$upgrade_screenshot_directory"
+
+  appium \
+    --address 127.0.0.1 \
+    --port "$UPGRADE_APPIUM_PORT" \
+    --log-level warn \
+    --log-no-colors \
+    >"$upgrade_appium_log" 2>&1 &
+  upgrade_appium_process_id=$!
+
+  for _ in {1..100}; do
+    if curl --silent --show-error --fail "$UPGRADE_APPIUM_BASE_URL/status" >/dev/null 2>&1; then
+      return
+    fi
+    if ! kill -0 "$upgrade_appium_process_id" 2>/dev/null; then
+      print -u2 "升级验收 Appium 提前退出"
+      tail -n 120 "$upgrade_appium_log" >&2 || true
+      current_vm_fail "无法启动升级验收 Appium"
+    fi
+    sleep 0.1
+  done
+  current_vm_fail "等待升级验收 Appium 就绪超时"
+}
+
+# 对指定平台执行一次旧版建档、新版读回或合成记录清理，并统一保留失败诊断。
+run_upgrade_record_phase() {
+  local phase="$1"
+  local target_platform="$2"
+  if ! node \
+    "$UPGRADE_RECORDS_CHECK_SCRIPT" \
+    "$UPGRADE_APPIUM_BASE_URL" \
+    "$phase" \
+    "$upgrade_screenshot_directory" \
+    "$CURRENT_ANDROID_SERIAL_ID" \
+    "$CURRENT_ANDROID_AVD_NAME" \
+    "$ANDROID_APPLICATION_ID" \
+    "$ANDROID_ACTIVITY" \
+    "$CURRENT_IOS_SIMULATOR_UDID" \
+    "$CURRENT_IOS_SIMULATOR_NAME" \
+    "$UPGRADE_IOS_PLATFORM_VERSION" \
+    "$IOS_EXPECTED_BUNDLE_ID" \
+    "$target_platform"; then
+    print -u2 "V1.1 $phase/$target_platform 真实 Room 升级验收失败"
+    tail -n 120 "$upgrade_appium_log" >&2 || true
+    print -u2 "升级验收证据保留于：$upgrade_evidence_directory"
+    exit 1
+  fi
+}
+
 # 要求文件存在且非空，避免后续命令误用不存在的构建产物。
 require_release_file() {
   [[ -s "$1" ]] || current_vm_fail "缺少构建产物 $1"
 }
 
-# 使用同一本机测试证书签名 Release APK，只供锁定 Android 虚拟机安装。
-sign_android_release_apk() {
+# 使用同一本机验收证书重新签名 APK，只供锁定 Android 虚拟机覆盖安装。
+sign_android_acceptance_apk() {
   local source_apk="$1"
   local aligned_apk="$2"
   local signed_apk="$3"
@@ -486,7 +553,7 @@ verify_ios_memory_pressure() {
   ios_restore_required=0
 }
 
-# 执行 Android Release 构建号升级，验证持久标记保留、临时图片清扫和 Release 恢复。
+# 执行 Android Release 覆盖升级，验证真实 Room 记录与持久标记保留、临时图片清扫和 Release 恢复。
 verify_android_version_upgrade() {
   local base_debug_apk="$1"
   local base_release_apk="$2"
@@ -503,8 +570,12 @@ verify_android_version_upgrade() {
   (( current_version_code > base_version_code )) || current_vm_fail "Android 当前构建号没有高于升级基线"
 
   android_restore_required=1
-  adb -s "$CURRENT_ANDROID_SERIAL_ID" uninstall "$ANDROID_APPLICATION_ID" >/dev/null 2>&1 || true
-  adb -s "$CURRENT_ANDROID_SERIAL_ID" install "$base_debug_apk"
+  # Android 用户版系统只允许已安装的可调试包降级，先用同版本同证书 Debug 包无损切换安装状态。
+  adb -s "$CURRENT_ANDROID_SERIAL_ID" install --no-incremental -r -d "$current_debug_apk"
+  local current_debug_package_flags
+  current_debug_package_flags="$(adb -s "$CURRENT_ANDROID_SERIAL_ID" shell dumpsys package "$ANDROID_APPLICATION_ID" | rg 'pkgFlags=' | head -n 1)"
+  [[ "$current_debug_package_flags" == *DEBUGGABLE* ]] || current_vm_fail "Android 当前过渡测试包不可调试"
+  adb -s "$CURRENT_ANDROID_SERIAL_ID" install --no-incremental -r -d "$base_debug_apk"
   adb -s "$CURRENT_ANDROID_SERIAL_ID" shell am start -W -n "$ANDROID_APPLICATION_ID/$ANDROID_ACTIVITY"
   local debug_package_flags
   debug_package_flags="$(adb -s "$CURRENT_ANDROID_SERIAL_ID" shell dumpsys package "$ANDROID_APPLICATION_ID" | rg 'pkgFlags=' | head -n 1)"
@@ -521,6 +592,9 @@ verify_android_version_upgrade() {
   local installed_base_version
   installed_base_version="$(adb -s "$CURRENT_ANDROID_SERIAL_ID" shell dumpsys package "$ANDROID_APPLICATION_ID" | sed -n 's/^[[:space:]]*versionCode=\([0-9]*\).*/\1/p' | head -n 1)"
   [[ "$installed_base_version" == "$base_version_code" ]] || current_vm_fail "Android 安装的基线构建号不匹配"
+  adb -s "$CURRENT_ANDROID_SERIAL_ID" shell am force-stop "$ANDROID_APPLICATION_ID"
+  adb -s "$CURRENT_ANDROID_SERIAL_ID" shell am start -W -n "$ANDROID_APPLICATION_ID/$ANDROID_ACTIVITY"
+  run_upgrade_record_phase upgrade-prepare android
 
   adb -s "$CURRENT_ANDROID_SERIAL_ID" install -r "$current_release_apk"
   local current_package_flags
@@ -531,6 +605,8 @@ verify_android_version_upgrade() {
   [[ "$installed_current_version" == "$current_version_code" ]] || current_vm_fail "Android 升级后的构建号不匹配"
   adb -s "$CURRENT_ANDROID_SERIAL_ID" shell am start -W -n "$ANDROID_APPLICATION_ID/$ANDROID_ACTIVITY"
   sleep 1
+  run_upgrade_record_phase upgrade-verify android
+  run_upgrade_record_phase cleanup android
 
   adb -s "$CURRENT_ANDROID_SERIAL_ID" install -r -d "$current_debug_apk"
   adb -s "$CURRENT_ANDROID_SERIAL_ID" shell run-as "$ANDROID_APPLICATION_ID" test -f "$persistent_marker" ||
@@ -550,7 +626,7 @@ verify_android_version_upgrade() {
   android_restore_required=0
 }
 
-# 执行 iOS Release 构建号升级，验证匿名数据保留、临时票图清扫和 Release 恢复。
+# 执行 iOS Release 覆盖升级，验证真实 Room 记录与匿名数据保留、临时票图清扫和 Release 恢复。
 verify_ios_version_upgrade() {
   local base_release_app="$1"
   local current_release_app="$2"
@@ -567,7 +643,6 @@ verify_ios_version_upgrade() {
 
   ios_restore_required=1
   xcrun simctl terminate "$CURRENT_IOS_SIMULATOR_UDID" "$IOS_EXPECTED_BUNDLE_ID" >/dev/null 2>&1 || true
-  xcrun simctl uninstall "$CURRENT_IOS_SIMULATOR_UDID" "$IOS_EXPECTED_BUNDLE_ID" >/dev/null 2>&1 || true
   xcrun simctl install "$CURRENT_IOS_SIMULATOR_UDID" "$base_release_app"
   local data_container_before app_container_before
   data_container_before="$(xcrun simctl get_app_container "$CURRENT_IOS_SIMULATOR_UDID" "$IOS_EXPECTED_BUNDLE_ID" data)"
@@ -584,6 +659,10 @@ verify_ios_version_upgrade() {
   ios_upgrade_persistent_directories+=("$persistent_directory")
   mkdir -p "$persistent_directory" "$ticket_directory"
   touch "$persistent_marker" "$ticket_marker"
+  xcrun simctl launch --terminate-running-process \
+    "$CURRENT_IOS_SIMULATOR_UDID" \
+    "$IOS_EXPECTED_BUNDLE_ID" >/dev/null
+  run_upgrade_record_phase upgrade-prepare ios
 
   xcrun simctl install "$CURRENT_IOS_SIMULATOR_UDID" "$current_release_app"
   local data_container_after app_container_after
@@ -608,6 +687,8 @@ verify_ios_version_upgrade() {
   })"
   [[ "$ios_launch_result" == "$IOS_EXPECTED_BUNDLE_ID: "* ]] || current_vm_fail "iOS 升级后 Release 启动结果异常"
   sleep 1
+  run_upgrade_record_phase upgrade-verify ios
+  run_upgrade_record_phase cleanup ios
   [[ -f "$persistent_marker" ]] || current_vm_fail "iOS 构建号升级后匿名持久标记丢失"
   [[ ! -e "$ticket_marker" ]] || current_vm_fail "iOS 构建号升级并启动后仍存在临时票图标记"
   rm -f -- "$persistent_marker"
@@ -714,9 +795,10 @@ for required_command in codesign file jarsigner plutil rg shasum strings unzip x
   command -v "$required_command" >/dev/null || current_vm_fail "缺少命令 $required_command"
 done
 if [[ "$VERIFY_VERSION_UPGRADE" == "1" ]]; then
-  for required_command in git tar; do
+  for required_command in appium curl git node tail tar; do
     command -v "$required_command" >/dev/null || current_vm_fail "缺少命令 $required_command"
   done
+  [[ -f "$UPGRADE_RECORDS_CHECK_SCRIPT" ]] || current_vm_fail "缺少 V1.1 记录 Appium 检查脚本"
   git -C "$REPOSITORY_ROOT" cat-file -e "${UPGRADE_BASE_REVISION}^{commit}" 2>/dev/null ||
     current_vm_fail "找不到升级基线提交 $UPGRADE_BASE_REVISION"
   git -C "$REPOSITORY_ROOT" merge-base --is-ancestor "$UPGRADE_BASE_REVISION" HEAD ||
@@ -762,14 +844,29 @@ if [[ "$VERIFY_VERSION_UPGRADE" == "1" ]]; then
   )
   upgrade_base_debug_apk="$upgrade_base_source/androidApp/build/outputs/apk/debug/androidApp-debug.apk"
   upgrade_base_unsigned_apk="$upgrade_base_source/androidApp/build/outputs/apk/release/androidApp-release-unsigned.apk"
+  upgrade_base_configured_signed_apk="$upgrade_base_source/androidApp/build/outputs/apk/release/androidApp-release.apk"
   upgrade_base_aligned_apk="$release_check_directory/upgrade-base-release-aligned.apk"
   upgrade_base_signed_apk="$release_check_directory/upgrade-base-release-test-signed.apk"
   require_release_file "$upgrade_base_debug_apk"
-  require_release_file "$upgrade_base_unsigned_apk"
-  sign_android_release_apk \
-    "$upgrade_base_unsigned_apk" \
-    "$upgrade_base_aligned_apk" \
-    "$upgrade_base_signed_apk"
+  if [[ -s "$upgrade_base_configured_signed_apk" ]]; then
+    "$apksigner_command" verify --verbose "$upgrade_base_configured_signed_apk"
+    sign_android_acceptance_apk \
+      "$upgrade_base_configured_signed_apk" \
+      "$upgrade_base_aligned_apk" \
+      "$upgrade_base_signed_apk"
+  else
+    require_release_file "$upgrade_base_unsigned_apk"
+    sign_android_acceptance_apk \
+      "$upgrade_base_unsigned_apk" \
+      "$upgrade_base_aligned_apk" \
+      "$upgrade_base_signed_apk"
+  fi
+  upgrade_base_aligned_debug_apk="$release_check_directory/upgrade-base-debug-aligned.apk"
+  upgrade_base_signed_debug_apk="$release_check_directory/upgrade-base-debug-test-signed.apk"
+  sign_android_acceptance_apk \
+    "$upgrade_base_debug_apk" \
+    "$upgrade_base_aligned_debug_apk" \
+    "$upgrade_base_signed_debug_apk"
 
   upgrade_base_ios_derived_data="$release_check_directory/upgrade-base-ios-derived-data"
   xcodebuild \
@@ -789,28 +886,37 @@ release_gradle_tasks=(spotlessCheck :androidApp:assembleRelease :androidApp:bund
 if [[ "$VERIFY_INSTALL_LIFECYCLE" == "1" || "$VERIFY_PROCESS_RECOVERY" == "1" || "$VERIFY_ABRUPT_TERMINATION" == "1" || "$VERIFY_CRASH_RECOVERY" == "1" || "$VERIFY_MEMORY_PRESSURE" == "1" || "$VERIFY_VERSION_UPGRADE" == "1" ]]; then
   release_gradle_tasks+=(:androidApp:assembleDebug)
 fi
+if [[ "$VERIFY_VERSION_UPGRADE" == "1" ]]; then
+  ./gradlew :androidApp:clean --console=plain
+fi
 ./gradlew "${release_gradle_tasks[@]}" --rerun-tasks --console=plain
 
 readonly unsigned_android_apk="$REPOSITORY_ROOT/androidApp/build/outputs/apk/release/androidApp-release-unsigned.apk"
 readonly configured_signed_android_apk="$REPOSITORY_ROOT/androidApp/build/outputs/apk/release/androidApp-release.apk"
 readonly android_aab="$REPOSITORY_ROOT/androidApp/build/outputs/bundle/release/androidApp-release.aab"
 readonly android_debug_apk="$REPOSITORY_ROOT/androidApp/build/outputs/apk/debug/androidApp-debug.apk"
+readonly aligned_android_debug_apk="$release_check_directory/androidApp-debug-aligned.apk"
+readonly signed_android_debug_apk="$release_check_directory/androidApp-debug-test-signed.apk"
 readonly aligned_android_apk="$release_check_directory/androidApp-release-aligned.apk"
 readonly signed_android_apk="$release_check_directory/androidApp-release-test-signed.apk"
 require_release_file "$android_aab"
 if [[ "$VERIFY_INSTALL_LIFECYCLE" == "1" || "$VERIFY_PROCESS_RECOVERY" == "1" || "$VERIFY_ABRUPT_TERMINATION" == "1" || "$VERIFY_CRASH_RECOVERY" == "1" || "$VERIFY_MEMORY_PRESSURE" == "1" || "$VERIFY_VERSION_UPGRADE" == "1" ]]; then
   require_release_file "$android_debug_apk"
+  sign_android_acceptance_apk \
+    "$android_debug_apk" \
+    "$aligned_android_debug_apk" \
+    "$signed_android_debug_apk"
 fi
 
 if [[ -s "$configured_signed_android_apk" ]]; then
   "$apksigner_command" verify --verbose "$configured_signed_android_apk"
-  sign_android_release_apk \
+  sign_android_acceptance_apk \
     "$configured_signed_android_apk" \
     "$aligned_android_apk" \
     "$signed_android_apk"
 else
   require_release_file "$unsigned_android_apk"
-  sign_android_release_apk "$unsigned_android_apk" "$aligned_android_apk" "$signed_android_apk"
+  sign_android_acceptance_apk "$unsigned_android_apk" "$aligned_android_apk" "$signed_android_apk"
 fi
 
 if "$aapt_command" dump badging "$signed_android_apk" | rg -q '^application-debuggable'; then
@@ -911,31 +1017,32 @@ ios_launch_result="$({
 [[ "$ios_launch_result" == *:* ]] || current_vm_fail "iOS Release 应用启动结果异常"
 
 if [[ "$VERIFY_PROCESS_RECOVERY" == "1" ]]; then
-  verify_android_process_recovery "$android_debug_apk" "$signed_android_apk"
+  verify_android_process_recovery "$signed_android_debug_apk" "$signed_android_apk"
   verify_ios_process_recovery
 fi
 if [[ "$VERIFY_ABRUPT_TERMINATION" == "1" ]]; then
-  verify_android_abrupt_termination "$android_debug_apk" "$signed_android_apk"
+  verify_android_abrupt_termination "$signed_android_debug_apk" "$signed_android_apk"
   verify_ios_abrupt_termination "$ios_launch_result"
 fi
 if [[ "$VERIFY_CRASH_RECOVERY" == "1" ]]; then
-  verify_android_crash_recovery "$android_debug_apk" "$signed_android_apk"
+  verify_android_crash_recovery "$signed_android_debug_apk" "$signed_android_apk"
   verify_ios_crash_recovery "$ios_debug_app" "$ios_release_app"
 fi
 if [[ "$VERIFY_MEMORY_PRESSURE" == "1" ]]; then
-  verify_android_memory_pressure "$android_debug_apk" "$signed_android_apk"
+  verify_android_memory_pressure "$signed_android_debug_apk" "$signed_android_apk"
   verify_ios_memory_pressure "$ios_debug_app" "$ios_release_app"
 fi
 if [[ "$VERIFY_VERSION_UPGRADE" == "1" ]]; then
+  start_upgrade_appium
   verify_android_version_upgrade \
-    "$upgrade_base_debug_apk" \
+    "$upgrade_base_signed_debug_apk" \
     "$upgrade_base_signed_apk" \
-    "$android_debug_apk" \
+    "$signed_android_debug_apk" \
     "$signed_android_apk"
   verify_ios_version_upgrade "$upgrade_base_ios_release_app" "$ios_release_app"
 fi
 if [[ "$VERIFY_INSTALL_LIFECYCLE" == "1" ]]; then
-  verify_android_install_lifecycle "$android_debug_apk" "$signed_android_apk"
+  verify_android_install_lifecycle "$signed_android_debug_apk" "$signed_android_apk"
   verify_ios_install_lifecycle "$ios_release_app"
 fi
 
@@ -963,7 +1070,8 @@ if [[ "$VERIFY_MEMORY_PRESSURE" == "1" ]]; then
   print "Android 内存收紧回调、iOS Debug 模拟内存警告和 Release 隔离检查通过"
 fi
 if [[ "$VERIFY_VERSION_UPGRADE" == "1" ]]; then
-  print "双虚拟机构建号 1 到 2 的 Release 覆盖升级、匿名数据保留和临时票图清扫检查通过"
+  print "双虚拟机构建号 2 到 3 的 Release 覆盖升级、真实 Room 记录与匿名数据保留、临时票图清扫检查通过"
+  print "升级验收截图与日志：$upgrade_evidence_directory"
 fi
 print "Android APK SHA-256：$(shasum -a 256 "$signed_android_apk" | awk '{print $1}')"
 print "Android AAB SHA-256：$(shasum -a 256 "$android_aab" | awk '{print $1}')"
