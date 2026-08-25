@@ -104,34 +104,41 @@ set_and_verify_orientation() {
     fail_with_appium_log "系统方向不是 $expected_orientation"
 }
 
-# 保存当前应用截图，并核对像素方向与文件非空。
+# 保存当前应用截图，并等待 WebDriverAgent 的截图像素方向与系统方向一致。
 verify_screenshot_orientation() {
   local session_id="$1"
   local expected_orientation="$2"
   local screenshot_path="$3"
-  local screenshot_value
-  screenshot_value="$(
-    curl --silent --show-error --fail-with-body \
-      "$APPIUM_BASE_URL/session/$session_id/screenshot" |
-      jq -r '.value // empty'
-  )" || fail_with_appium_log "无法取得 $expected_orientation 截图"
-  [[ -n "$screenshot_value" ]] || fail_with_appium_log "$expected_orientation 截图为空"
-  print -rn -- "$screenshot_value" | base64 -D >"$screenshot_path"
+  local attempt screenshot_value screenshot_size screenshot_width screenshot_height
+  for attempt in {1..10}; do
+    screenshot_value="$(
+      curl --silent --show-error --fail-with-body \
+        "$APPIUM_BASE_URL/session/$session_id/screenshot" |
+        jq -r '.value // empty'
+    )" || fail_with_appium_log "无法取得 $expected_orientation 截图"
+    [[ -n "$screenshot_value" ]] || fail_with_appium_log "$expected_orientation 截图为空"
+    print -rn -- "$screenshot_value" | base64 -D >"$screenshot_path"
 
-  local screenshot_size screenshot_width screenshot_height
-  screenshot_size="$(stat -f '%z' "$screenshot_path")"
-  (( screenshot_size > 10000 )) || fail_with_appium_log "$expected_orientation 截图文件异常"
-  screenshot_width="$(sips -g pixelWidth "$screenshot_path" | awk '/pixelWidth:/ { print $2 }')"
-  screenshot_height="$(sips -g pixelHeight "$screenshot_path" | awk '/pixelHeight:/ { print $2 }')"
-  print -r -- "$screenshot_width" | rg -q '^[0-9]+$' || fail_with_appium_log "截图宽度不是纯数字"
-  print -r -- "$screenshot_height" | rg -q '^[0-9]+$' || fail_with_appium_log "截图高度不是纯数字"
+    screenshot_size="$(stat -f '%z' "$screenshot_path")"
+    (( screenshot_size > 10000 )) || fail_with_appium_log "$expected_orientation 截图文件异常"
+    screenshot_width="$(sips -g pixelWidth "$screenshot_path" | awk '/pixelWidth:/ { print $2 }')"
+    screenshot_height="$(sips -g pixelHeight "$screenshot_path" | awk '/pixelHeight:/ { print $2 }')"
+    print -r -- "$screenshot_width" | rg -q '^[0-9]+$' || fail_with_appium_log "截图宽度不是纯数字"
+    print -r -- "$screenshot_height" | rg -q '^[0-9]+$' || fail_with_appium_log "截图高度不是纯数字"
 
-  if [[ "$expected_orientation" == "LANDSCAPE" ]]; then
-    (( screenshot_width > screenshot_height )) || fail_with_appium_log "横屏截图宽高关系异常"
-  else
-    (( screenshot_height > screenshot_width )) || fail_with_appium_log "竖屏截图宽高关系异常"
-  fi
-  print -r -- "${screenshot_width}x${screenshot_height}"
+    if [[ "$expected_orientation" == "LANDSCAPE" ]] &&
+      (( screenshot_width > screenshot_height )); then
+      print -r -- "${screenshot_width}x${screenshot_height}"
+      return
+    fi
+    if [[ "$expected_orientation" == "PORTRAIT" ]] &&
+      (( screenshot_height > screenshot_width )); then
+      print -r -- "${screenshot_width}x${screenshot_height}"
+      return
+    fi
+    (( attempt < 10 )) && sleep 0.5
+  done
+  fail_with_appium_log "$expected_orientation 截图宽高关系异常：${screenshot_width}x${screenshot_height}"
 }
 
 # 读取当前应用窗口的辅助功能树。
