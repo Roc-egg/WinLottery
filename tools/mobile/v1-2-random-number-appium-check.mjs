@@ -20,6 +20,9 @@ const iosConfig = {
   bundleId: process.argv[11],
 };
 
+/** 可选的单平台诊断目标；正式脚本不传时固定执行双端。 */
+const targetPlatform = process.argv[12] ?? "both";
+
 /** 标准字号验收模式。 */
 const STANDARD_MODE = "standard";
 
@@ -31,6 +34,9 @@ const DISCLAIMER_TEXT = "生成结果仅供娱乐，不代表预测，不构成�
 
 if (![STANDARD_MODE, MAXIMUM_MODE].includes(acceptanceMode)) {
   throw new Error(`未知 V1.2 验收模式：${acceptanceMode}`);
+}
+if (!["both", "android", "ios"].includes(targetPlatform)) {
+  throw new Error(`未知 V1.2 目标平台：${targetPlatform}`);
 }
 
 /** 发起 WebDriver 请求并统一解析错误。 */
@@ -72,6 +78,16 @@ function isRectInsideWindow(elementRect, windowRect) {
     elementRect.y >= windowRect.y &&
     elementRect.x + elementRect.width <= windowRect.x + windowRect.width &&
     elementRect.y + elementRect.height <= windowRect.y + windowRect.height
+  );
+}
+
+/** 判断两次元素矩形快照是否一致。 */
+function isSameRect(firstRect, secondRect) {
+  return (
+    firstRect?.x === secondRect?.x &&
+    firstRect?.y === secondRect?.y &&
+    firstRect?.width === secondRect?.width &&
+    firstRect?.height === secondRect?.height
   );
 }
 
@@ -172,6 +188,18 @@ async function findVisibleExactElement(sessionId, accessibilityName) {
   throw new Error(`当前窗口缺少完整可见元素：${accessibilityName}`);
 }
 
+/** 等待 iOS 滚动减速结束并返回稳定的元素矩形。 */
+async function waitForStableExactElementRect(sessionId, accessibilityName) {
+  let previousRect;
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const element = await findVisibleExactElement(sessionId, accessibilityName);
+    if (isSameRect(previousRect, element.elementRect)) return element.elementRect;
+    previousRect = element.elementRect;
+    await waitForPageUpdate(250);
+  }
+  throw new Error(`等待 iOS 元素位置稳定超时：${accessibilityName}`);
+}
+
 /** 在元素矩形中心发送一次平台原生触摸点按。 */
 async function tapElementCenter(sessionId, elementRect, platformName) {
   const x = Math.round(elementRect.x + elementRect.width / 2);
@@ -230,6 +258,32 @@ async function swipeVertically(sessionId, direction) {
   await waitForPageUpdate();
 }
 
+/** 小幅向上滚动，让刚进入窗口底部的注单内容完整展开。 */
+async function swipeUpSlightly(sessionId) {
+  const windowRect = await webdriverRequest(`/session/${sessionId}/window/rect`);
+  const x = Math.round(windowRect.x + windowRect.width / 2);
+  const startY = Math.round(windowRect.y + windowRect.height * 0.66);
+  const endY = Math.round(windowRect.y + windowRect.height * 0.52);
+  await webdriverRequest(`/session/${sessionId}/actions`, "POST", {
+    actions: [
+      {
+        type: "pointer",
+        id: "finger",
+        parameters: { pointerType: "touch" },
+        actions: [
+          { type: "pointerMove", duration: 0, x, y: startY, origin: "viewport" },
+          { type: "pointerDown", button: 0 },
+          { type: "pause", duration: 120 },
+          { type: "pointerMove", duration: 350, x, y: endY, origin: "viewport" },
+          { type: "pointerUp", button: 0 },
+        ],
+      },
+    ],
+  });
+  await webdriverRequest(`/session/${sessionId}/actions`, "DELETE");
+  await waitForPageUpdate();
+}
+
 /** 按指定方向滚动，直到目标元素完整进入窗口。 */
 async function scrollElementIntoView(sessionId, accessibilityName, direction = "up") {
   for (let scrollCount = 0; scrollCount <= 18; scrollCount += 1) {
@@ -251,7 +305,11 @@ async function clickScrollableExactElement(
   direction = "up",
 ) {
   const element = await scrollElementIntoView(sessionId, accessibilityName, direction);
-  await tapElementCenter(sessionId, element.elementRect, platformName);
+  const elementRect =
+    platformName === "iOS"
+      ? await waitForStableExactElementRect(sessionId, accessibilityName)
+      : element.elementRect;
+  await tapElementCenter(sessionId, elementRect, platformName);
   return element.scrollCount;
 }
 
@@ -276,12 +334,19 @@ async function findAndroidSelectableElement(sessionId, accessibilityName) {
 async function waitForElementSelected(sessionId, accessibilityName, platformName) {
   let selectedValue;
   for (let attempt = 0; attempt < 12; attempt += 1) {
-    const element =
+    const androidElement =
       platformName === "Android"
         ? await findAndroidSelectableElement(sessionId, accessibilityName)
-        : (await findVisibleExactElements(sessionId, accessibilityName))[0];
-    if (element) {
-      const elementId = readElementId(element, accessibilityName);
+        : undefined;
+    const iosElement =
+      platformName === "iOS"
+        ? (await findVisibleExactElements(sessionId, accessibilityName))[0]
+        : undefined;
+    const elementId =
+      platformName === "Android"
+        ? androidElement && readElementId(androidElement, accessibilityName)
+        : iosElement?.elementId;
+    if (elementId) {
       selectedValue = await webdriverRequest(
         `/session/${sessionId}/element/${elementId}/attribute/${platformName === "Android" ? "checked" : "selected"}`,
       );
@@ -293,10 +358,20 @@ async function waitForElementSelected(sessionId, accessibilityName, platformName
 }
 
 /** 核对指定步进器在冻结上限处已经禁用。 */
-async function assertCounterMaximumDisabled(sessionId, accessibilityName) {
-  const element = await findVisibleExactElement(sessionId, accessibilityName);
+async function assertCounterMaximumDisabled(sessionId, accessibilityName, platformName) {
+  const element =
+    platformName === "Android"
+      ? await webdriverRequest(`/session/${sessionId}/element`, "POST", {
+          using: "xpath",
+          value: `//*[@content-desc=${JSON.stringify(accessibilityName)}]/..`,
+        })
+      : await findVisibleExactElement(sessionId, accessibilityName);
+  const elementId =
+    platformName === "Android"
+      ? readElementId(element, accessibilityName)
+      : element.elementId;
   const enabledValue = await webdriverRequest(
-    `/session/${sessionId}/element/${element.elementId}/attribute/enabled`,
+    `/session/${sessionId}/element/${elementId}/attribute/enabled`,
   );
   if (enabledValue === true || enabledValue === "true") {
     throw new Error(`${accessibilityName} 在冻结上限处仍可用`);
@@ -334,39 +409,54 @@ async function incrementCounter(sessionId, accessibilityName, count, platformNam
 
 /** 选择彩种并核对分段控件真实选中。 */
 async function selectLottery(sessionId, lotteryName, platformName) {
-  await clickScrollableExactElement(sessionId, lotteryName, platformName, "down");
+  const element = await scrollElementIntoView(sessionId, lotteryName, "down");
+  if (platformName === "iOS") {
+    await waitForStableExactElementRect(sessionId, lotteryName);
+    const accessibleButton = await webdriverRequest(`/session/${sessionId}/element`, "POST", {
+      using: "accessibility id",
+      value: lotteryName,
+    });
+    const elementId = readElementId(accessibleButton, lotteryName);
+    await webdriverRequest(`/session/${sessionId}/element/${elementId}/click`, "POST", {});
+    await waitForPageUpdate();
+  } else {
+    await tapElementCenter(sessionId, element.elementRect, platformName);
+  }
   await waitForElementSelected(sessionId, lotteryName, platformName);
 }
 
 /** 读取当前期指定注单内的两位号码，作为会话结果稳定性证据。 */
 async function readLineBallSignature(sessionId, lineNumber) {
-  const title = await scrollElementIntoView(sessionId, `第 ${lineNumber} 注`, "up");
-  const nextTitles = await findVisibleExactElements(sessionId, `第 ${lineNumber + 1} 注`);
-  const windowRect = await webdriverRequest(`/session/${sessionId}/window/rect`);
-  const lowerBoundary =
-    nextTitles.length > 0
-      ? Math.min(...nextTitles.map((element) => element.elementRect.y))
-      : windowRect.y + windowRect.height;
-  const upperBoundary = title.elementRect.y + title.elementRect.height;
-  const balls = [];
-  for (let number = 1; number <= 35; number += 1) {
-    const label = number.toString().padStart(2, "0");
-    const elements = await findVisibleExactElements(sessionId, label);
-    for (const element of elements) {
-      const centerY = element.elementRect.y + element.elementRect.height / 2;
-      if (centerY > upperBoundary && centerY < lowerBoundary) {
-        balls.push({ label, elementRect: element.elementRect });
+  await scrollElementIntoView(sessionId, `第 ${lineNumber} 注`, "up");
+  let balls = [];
+  for (let positionAttempt = 0; positionAttempt < 3; positionAttempt += 1) {
+    const title = await findVisibleExactElement(sessionId, `第 ${lineNumber} 注`);
+    const nextTitles = await findVisibleExactElements(sessionId, `第 ${lineNumber + 1} 注`);
+    const windowRect = await webdriverRequest(`/session/${sessionId}/window/rect`);
+    const lowerBoundary =
+      nextTitles.length > 0
+        ? Math.min(...nextTitles.map((element) => element.elementRect.y))
+        : windowRect.y + windowRect.height;
+    const upperBoundary = title.elementRect.y + title.elementRect.height;
+    balls = [];
+    for (let number = 1; number <= 35; number += 1) {
+      const label = number.toString().padStart(2, "0");
+      const elements = await findVisibleExactElements(sessionId, label);
+      for (const element of elements) {
+        const centerY = element.elementRect.y + element.elementRect.height / 2;
+        if (centerY > upperBoundary && centerY < lowerBoundary) {
+          balls.push({ label, elementRect: element.elementRect });
+        }
       }
     }
+    balls.sort(
+      (first, second) =>
+        first.elementRect.y - second.elementRect.y || first.elementRect.x - second.elementRect.x,
+    );
+    if (balls.length === 7) return balls.map((ball) => ball.label).join("-");
+    await swipeUpSlightly(sessionId);
   }
-  balls.sort(
-    (first, second) =>
-      first.elementRect.y - second.elementRect.y || first.elementRect.x - second.elementRect.x,
-  );
-  if (balls.length !== 7) {
-    throw new Error(`第 ${lineNumber} 注完整可见号码数量不是 7：${balls.map((ball) => ball.label).join("、")}`);
-  }
-  return balls.map((ball) => ball.label).join("-");
+  throw new Error(`第 ${lineNumber} 注完整可见号码数量不是 7：${balls.map((ball) => ball.label).join("、")}`);
 }
 
 /** 在有限次重新生成后确认当前可见注单确实发生更新。 */
@@ -381,6 +471,14 @@ async function verifyRegeneration(sessionId, previousSignature, platformName) {
   }
 }
 
+/** 分段核对生成摘要和当前期次标题，避免要求两段内容同时挤进一屏。 */
+async function verifyGeneratedHeader(sessionId, summaryText, modeText, periodTitle) {
+  await scrollElementIntoView(sessionId, "生成结果", "up");
+  await waitForSourceTexts(sessionId, [summaryText, modeText]);
+  await scrollElementIntoView(sessionId, periodTitle, "up");
+  await waitForSourceText(sessionId, periodTitle);
+}
+
 /** 核对双色球逐期独立、期次切换、重新生成和一级页面会话保留。 */
 async function verifyDoubleColorBallWorkflow(sessionId, platformName) {
   await selectLottery(sessionId, "双色球", platformName);
@@ -389,12 +487,12 @@ async function verifyDoubleColorBallWorkflow(sessionId, platformName) {
   await clickScrollableExactElement(sessionId, "逐期独立", platformName);
   await waitForElementSelected(sessionId, "逐期独立", platformName);
   await clickScrollableExactElement(sessionId, "生成号码", platformName);
-  await scrollElementIntoView(sessionId, "生成结果", "up");
-  await waitForSourceTexts(sessionId, [
+  await verifyGeneratedHeader(
+    sessionId,
     "双色球 · 3 期 · 每期 2 注",
     "每一期按相同注数独立随机",
     "第 1 期号码",
-  ]);
+  );
 
   const firstPeriodSignature = await readLineBallSignature(sessionId, 1);
   await clickScrollableExactElement(sessionId, "第 2 期", platformName, "down");
@@ -403,12 +501,12 @@ async function verifyDoubleColorBallWorkflow(sessionId, platformName) {
 
   await openRecords(sessionId, platformName);
   await openNumberPicker(sessionId, platformName);
-  await scrollElementIntoView(sessionId, "生成结果", "up");
-  await waitForSourceTexts(sessionId, [
+  await verifyGeneratedHeader(
+    sessionId,
     "双色球 · 3 期 · 每期 2 注",
     "每一期按相同注数独立随机",
     "第 1 期号码",
-  ]);
+  );
   const retainedSignature = await readLineBallSignature(sessionId, 1);
   if (retainedSignature !== firstPeriodSignature) {
     throw new Error(`${platformName} 切换一级页面后双色球会话结果发生变化`);
@@ -423,20 +521,20 @@ async function verifySuperLottoMaximum(sessionId, platformName) {
   await incrementCounter(sessionId, "增加期数", 17, platformName);
   await incrementCounter(sessionId, "增加每期注数", 8, platformName);
   await waitForSourceText(sessionId, "共 200 注（20 期 × 每期 10 注）");
-  await assertCounterMaximumDisabled(sessionId, "增加期数");
-  await assertCounterMaximumDisabled(sessionId, "增加每期注数");
+  await assertCounterMaximumDisabled(sessionId, "增加期数", platformName);
+  await assertCounterMaximumDisabled(sessionId, "增加每期注数", platformName);
   const source = await readSource(sessionId);
   if (source.includes("逐期独立")) {
     throw new Error(`${platformName} 大乐透配置仍暴露逐期独立入口`);
   }
 
   await clickScrollableExactElement(sessionId, "生成号码", platformName);
-  await scrollElementIntoView(sessionId, "生成结果", "up");
-  await waitForSourceTexts(sessionId, [
+  await verifyGeneratedHeader(
+    sessionId,
     "大乐透 · 20 期 · 每期 10 注",
     "所有期次复用同一批号码",
     "第 1 期号码",
-  ]);
+  );
   await readLineBallSignature(sessionId, 10);
 }
 
@@ -464,12 +562,12 @@ async function verifyMaximumMode(sessionId, platformName) {
   await clickScrollableExactElement(sessionId, "逐期独立", platformName);
   await waitForElementSelected(sessionId, "逐期独立", platformName);
   await clickScrollableExactElement(sessionId, "生成号码", platformName);
-  await scrollElementIntoView(sessionId, "生成结果", "up");
-  await waitForSourceTexts(sessionId, [
+  await verifyGeneratedHeader(
+    sessionId,
     "双色球 · 2 期 · 每期 2 注",
     "每一期按相同注数独立随机",
     "第 1 期号码",
-  ]);
+  );
   await readLineBallSignature(sessionId, 2);
   await clickScrollableExactElement(sessionId, "第 2 期", platformName, "down");
   await waitForSourceText(sessionId, "第 2 期号码");
@@ -477,13 +575,14 @@ async function verifyMaximumMode(sessionId, platformName) {
 
   await openVerification(sessionId, platformName);
   await openNumberPicker(sessionId, platformName);
-  await scrollElementIntoView(sessionId, "生成结果", "up");
-  await waitForSourceTexts(sessionId, [
+  await verifyGeneratedHeader(
+    sessionId,
     "双色球 · 2 期 · 每期 2 注",
     "每一期按相同注数独立随机",
-  ]);
+    "第 1 期号码",
+  );
   await scrollElementIntoView(sessionId, DISCLAIMER_TEXT, "down");
-  await scrollElementIntoView(sessionId, "重新生成", "down");
+  await scrollElementIntoView(sessionId, "重新生成", "up");
   process.stdout.write(`${platformName} 最大字号 V1.2 随机选号检查通过\n`);
 }
 
@@ -532,5 +631,5 @@ async function verifyIOS() {
   }
 }
 
-await verifyAndroid();
-await verifyIOS();
+if (targetPlatform === "both" || targetPlatform === "android") await verifyAndroid();
+if (targetPlatform === "both" || targetPlatform === "ios") await verifyIOS();
