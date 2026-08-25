@@ -76,7 +76,7 @@
 
 - Android APK、iOS 模拟器、Windows 开发包和 macOS 开发包能够构建并启动。
 - `commonTest`、Android 单元测试、Desktop 测试和 iOS 测试可运行。
-- 依赖方向符合 `composeApp → recognition/data → domain`。
+- 依赖方向符合 `平台宿主 → shared → data/persistence/recognition → domain`；领域层不反向依赖 UI、网络、数据库或 OCR。
 - 平台接口有 fake 实现，可在无相机、无 OCR、无网络下演示状态流。
 
 ## 5. B2：开奖查询与规则引擎

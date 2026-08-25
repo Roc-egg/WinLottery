@@ -4,7 +4,7 @@
 
 ## 已实现范围
 
-- 建立 `:composeApp`、`:shared:domain`、`:shared:data`、`:shared:recognition` 的物理模块和单向依赖。
+- 建立共享 UI、领域、数据和识别的物理模块与单向依赖；共享 UI 模块已于 2026-08-25 从旧模板名 `:composeApp` 迁移为 `:shared`，并纳入 V1.1 新增的 `:shared:persistence`。
 - 保留 Android、iOS、Desktop 四端宿主入口；Desktop 同一 JVM 目标用于 Windows 和 macOS。
 - 配置 Ktor Core、Android/Desktop OkHttp、iOS Darwin、kotlinx.serialization 和 Coroutines。
 - 定义不可变票据、统一开奖模型、测算结果、领域校验状态和金额分单位约束。

@@ -194,13 +194,34 @@ V1 始终显示一次票面确认页，不启用完全自动放行。确认页�
 
 ### 4.2 模块划分
 
+本仓库于 2026-08-25 核对 [JetBrains Kotlin Multiplatform 官方共享 UI 模板](https://www.jetbrains.com/help/kotlin-multiplatform-dev/compose-multiplatform-create-first-app.html)，采用独立平台宿主与 `shared` 共享模块的当前命名。旧模板中的 `composeApp` 并非错误，但已经迁移为 `:shared`；迁移不改变 Kotlin 包名、iOS framework 名或业务行为。官方模板中的 `webApp` 是可选宿主，本项目当前没有 Web 目标，不为结构对齐引入无用模块。
+
 ```text
+:androidApp
+:desktopApp
+:shared
 :shared:domain
 :shared:data
+:shared:persistence
 :shared:recognition
-:composeApp
-:iosApp
+iosApp/（Xcode 工程，不是 Gradle 模块）
 ```
+
+`:androidApp`：
+
+- Android Application 宿主、清单、图标、版本、签名和 R8 配置。
+- 依赖 `:shared` 并启动共享 Compose UI。
+
+`:desktopApp`：
+
+- Windows/macOS JVM 宿主、原生分发配置和桌面进程入口。
+- 依赖 `:shared`；为受控 ONNX Runtime 子进程额外直接依赖 `:shared:recognition`。
+
+`:shared`：
+
+- 共享 Compose 页面、状态持有者和应用装配。
+- 通过 `commonMain` 共享业务流程，通过平台 source set 实现相机、选图、文件、网络和能力工厂。
+- 产出供 iOS 宿主嵌入的静态 `Shared.framework`。
 
 `:shared:domain`：
 
@@ -216,6 +237,12 @@ V1 始终显示一次票面确认页，不启用完全自动放行。确认页�
 - Repository、当前流程数据状态和刷新策略。
 - 上游 DTO 不得泄漏到领域层。
 
+`:shared:persistence`：
+
+- Room 3 实体、DAO、数据库工厂、显式迁移和模式导出。
+- 结构化票据的事务读写、跨平台逻辑导入导出与完整性校验。
+- 只依赖领域模型，不保存票图、OCR 全文或官网原始响应。
+
 `:shared:recognition`：
 
 - OCR 标准结果模型。
@@ -223,21 +250,23 @@ V1 始终显示一次票面确认页，不启用完全自动放行。确认页�
 - 票面文字归一化、版式解析、候选值与置信度。
 - 具体 OCR、图像解码和预处理位于各平台 source set。
 
-`:composeApp`：
-
-- 共享 Compose 页面、导航、状态持有者和应用装配。
-- Android、Desktop 入口。
-- 平台相机、选图、权限和能力工厂。
-
-`:iosApp`：
+`iosApp/`：
 
 - Xcode 宿主、签名配置、Info.plist 和 Compose ViewController 入口。
 
 依赖方向：
 
 ```text
-composeApp → recognition/data → domain
+:androidApp / :desktopApp / iosApp
+                  ↓
+               :shared
+          ↙       ↓        ↘
+       data   persistence   recognition
+          ↘       ↓        ↙
+             :shared:domain
 ```
+
+`:shared` 同时直接依赖 `:shared:domain`。所有业务子模块保持指向领域层的单向依赖，领域层不反向依赖 UI、网络、数据库或 OCR；Desktop 的工作进程依赖是宿主打包需要，不改变业务依赖方向。
 
 第一版采用构造注入和轻量 `AppContainer`，不提前引入 DI 框架。
 

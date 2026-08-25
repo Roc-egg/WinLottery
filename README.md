@@ -124,15 +124,22 @@ Android/iOS 确认票面后，单期票只查询用户确认的精确期号；�
 
 ## 模块
 
+项目已按 2026-08-25 核对的 [JetBrains Kotlin Multiplatform 官方共享 UI 模板](https://www.jetbrains.com/help/kotlin-multiplatform-dev/compose-multiplatform-create-first-app.html) 对齐：Android、Desktop 和 iOS 使用独立宿主，共享 UI 与应用装配位于 `:shared`。`composeApp` 是旧模板使用的模块名，并非 KMP 功能错误；本项目没有 Web 目标，因此不创建可选的 `webApp`。
+
 ```text
-:androidApp / :desktopApp / :iosApp
-                 ↓
-             :composeApp
-              ↙       ↘
-  :shared:recognition  :shared:data
-              ↘       ↙
-           :shared:domain
+:androidApp     :desktopApp      iosApp（Xcode）
+      └──────────────┼──────────────┘
+                     ↓
+                  :shared
+        ┌────────────┼────────────┐
+        ↓            ↓            ↓
+:shared:data  :shared:persistence  :shared:recognition
+        └────────────┼────────────┘
+                     ↓
+              :shared:domain
 ```
+
+`:shared` 还直接依赖 `:shared:domain`；`iosApp` 通过 `Shared.framework` 接入共享模块，不属于 Gradle project。`:desktopApp` 为启动独立 ONNX Runtime 工作进程额外直接依赖 `:shared:recognition`。
 
 ## 本地运行
 
