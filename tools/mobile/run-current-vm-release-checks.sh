@@ -13,7 +13,7 @@ readonly IOS_EXPECTED_BUNDLE_ID="roc.win.lottery.WinLottery"
 readonly IOS_DEBUG_CRASH_ENVIRONMENT="WINLOTTERY_DEBUG_CRASH_ON_LAUNCH"
 readonly CONTROLLED_CRASH_MARKER="WinLotteryControlledCrashAcceptance"
 readonly MEMORY_PRESSURE_MARKER="WinLotteryMemoryPressureAcceptance"
-readonly UPGRADE_BASE_REVISION="523ab8a"
+readonly UPGRADE_BASE_REVISION="2ec6791"
 readonly UPGRADE_RECORDS_CHECK_SCRIPT="$SCRIPT_DIRECTORY/v1-1-records-appium-check.mjs"
 readonly UPGRADE_APPIUM_PORT=4727
 readonly UPGRADE_APPIUM_BASE_URL="http://127.0.0.1:$UPGRADE_APPIUM_PORT"
@@ -1070,7 +1070,7 @@ if [[ "$VERIFY_MEMORY_PRESSURE" == "1" ]]; then
   print "Android 内存收紧回调、iOS Debug 模拟内存警告和 Release 隔离检查通过"
 fi
 if [[ "$VERIFY_VERSION_UPGRADE" == "1" ]]; then
-  print "双虚拟机构建号 2 到 3 的 Release 覆盖升级、真实 Room 记录与匿名数据保留、临时票图清扫检查通过"
+  print "双虚拟机构建号 3 到 4 的 Release 覆盖升级、真实 Room 记录与匿名数据保留、临时票图清扫检查通过"
   print "升级验收截图与日志：$upgrade_evidence_directory"
 fi
 print "Android APK SHA-256：$(shasum -a 256 "$signed_android_apk" | awk '{print $1}')"

@@ -201,12 +201,12 @@ verify_home_accessibility() {
   local platform_name="$2"
   local page_source
   page_source="$(read_page_source "$session_id")"
-  if [[ "$page_source" != *"导入彩票图片"* || "$page_source" != *"手动录入彩票"* ]]; then
+  if [[ "$page_source" != *"导入图片"* || "$page_source" != *"手动录入"* ]]; then
     scroll_home_actions_into_view "$session_id"
     page_source="$(read_page_source "$session_id")"
   fi
-  [[ "$page_source" == *"导入彩票图片"* ]] || fail_with_appium_log "$platform_name 首页缺少导图入口"
-  [[ "$page_source" == *"手动录入彩票"* ]] || fail_with_appium_log "$platform_name 首页缺少手动录入入口"
+  [[ "$page_source" == *"导入图片"* ]] || fail_with_appium_log "$platform_name 首页缺少导图入口"
+  [[ "$page_source" == *"手动录入"* ]] || fail_with_appium_log "$platform_name 首页缺少手动录入入口"
 }
 
 # 返回指定 Simulator 内目标 iOS 应用的唯一进程标识。

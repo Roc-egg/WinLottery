@@ -541,7 +541,7 @@ async function waitForElementEnabled(sessionId, accessibilityName) {
 
 /** 从手动录入走真实保存链路，生成一条合成记录。 */
 async function createSyntheticRecord(sessionId, config) {
-  await clickScrollableExactElement(sessionId, "手动录入彩票", config.platformName);
+  await clickFirstVisibleCandidate(sessionId, ["手动录入", "手动录入彩票"], config.platformName);
   await clickScrollableExactElement(sessionId, "超级大乐透", config.platformName);
   await replaceEditableValue(sessionId, "开奖期号", config.platformName, config.issue);
   await clickScrollableExactElement(sessionId, "完成期号输入", config.platformName);
@@ -579,8 +579,8 @@ async function createSyntheticRecord(sessionId, config) {
   await clickVisibleExactElement(sessionId, "返回", config.platformName);
   await waitForSourceText(sessionId, "手动录入彩票");
   await clickVisibleExactElement(sessionId, "返回", config.platformName);
-  await waitForSourceText(sessionId, "本机记录");
-  await clickScrollableExactElement(sessionId, "本机记录", config.platformName);
+  await waitForAnySourceText(sessionId, ["记录", "本机记录"]);
+  await openRecordPage(sessionId, config);
   await waitForSourceText(sessionId, config.defaultRecordName, 30);
 }
 
@@ -647,7 +647,9 @@ async function saveScreenshot(sessionId, config, label) {
 
 /** 核对记录页顶部、筛选和合成记录卡片没有出界或相互遮挡。 */
 async function verifyRecordLayout(sessionId, config, screenshotLabel) {
-  const requiredHeaderTexts = ["本机记录", "名称或起始期号", "全部", "大乐透", "双色球", "记录管理"];
+  const source = await readSource(sessionId);
+  const recordPageTitle = source.includes("本机记录") ? "本机记录" : "记录";
+  const requiredHeaderTexts = [recordPageTitle, "名称或起始期号", "全部", "大乐透", "双色球", "记录管理"];
   for (const text of requiredHeaderTexts) await assertElementInsideWindow(sessionId, text);
 
   const recordTitle = await scrollElementIntoView(sessionId, config.recordName);
@@ -774,11 +776,33 @@ async function isRecordPageVisible(sessionId) {
   return elements.length > 0;
 }
 
-/** 从首页进入记录页；已经位于记录页时保持当前状态。 */
+/** 从首页进入新旧结构的记录页；已经位于记录页时保持当前状态。 */
 async function openRecordPage(sessionId, config) {
   if (await isRecordPageVisible(sessionId)) return;
-  await clickScrollableExactElement(sessionId, "本机记录", config.platformName);
+  const currentRecordNavigation = await findVisibleExactElements(sessionId, "记录");
+  if (currentRecordNavigation.length > 0) {
+    currentRecordNavigation.sort((first, second) => second.elementRect.y - first.elementRect.y);
+    await tapElementCenter(sessionId, currentRecordNavigation[0].elementRect, config.platformName);
+  } else {
+    await clickScrollableExactElement(sessionId, "本机记录", config.platformName);
+  }
   await findVisibleExactElement(sessionId, "记录管理");
+}
+
+/** 从记录页返回核对页，同时兼容旧版返回按钮和新版一级导航。 */
+async function leaveRecordPage(sessionId, config) {
+  const backElements = await findVisibleExactElements(sessionId, "返回");
+  if (backElements.length > 0) {
+    await tapElementCenter(sessionId, backElements[0].elementRect, config.platformName);
+  } else {
+    const verificationNavigation = await findVisibleExactElements(sessionId, "核对");
+    if (verificationNavigation.length === 0) {
+      throw new Error(`${config.platformName} 记录页缺少核对一级导航`);
+    }
+    verificationNavigation.sort((first, second) => second.elementRect.y - first.elementRect.y);
+    await tapElementCenter(sessionId, verificationNavigation[0].elementRect, config.platformName);
+  }
+  await waitForAnySourceText(sessionId, ["手动录入", "手动录入彩票"]);
 }
 
 /** 等待平台原生文件选择器真正进入前台。 */
@@ -996,7 +1020,7 @@ async function deleteSyntheticRecords(sessionId, config) {
 async function runPreparePhase(sessionId, config) {
   await openRecordPage(sessionId, config);
   await deleteSyntheticRecords(sessionId, config);
-  await clickVisibleExactElement(sessionId, "返回", config.platformName);
+  await leaveRecordPage(sessionId, config);
   await createSyntheticRecord(sessionId, config);
   await renameSyntheticRecord(sessionId, config);
   await verifyRecordLayout(sessionId, config, "standard-records");
@@ -1043,7 +1067,7 @@ async function runCleanupPhase(sessionId, config) {
 async function runUpgradePreparePhase(sessionId, config) {
   await openRecordPage(sessionId, config);
   await deleteSyntheticRecords(sessionId, config);
-  await clickVisibleExactElement(sessionId, "返回", config.platformName);
+  await leaveRecordPage(sessionId, config);
   await createSyntheticRecord(sessionId, config);
   await renameSyntheticRecord(sessionId, config);
   await verifyStoredRecordFields(sessionId, config, "upgrade-before");

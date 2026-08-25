@@ -499,7 +499,7 @@ function sourceContext(source, anchorText) {
 /** 验证最大字号手动录入控件可达，返回后再次进入时状态已经清空。 */
 async function verifyManualReviewAccessibility(sessionId, platformName) {
   await clickAccessibilityElement(sessionId, "返回");
-  let scrollCount = await clickScrollableAccessibilityElement(sessionId, "手动录入彩票", platformName);
+  let scrollCount = await clickScrollableAccessibilityElement(sessionId, "手动录入", platformName);
   const observedTexts = new Set();
   let source = await observeReviewTexts(sessionId, observedTexts);
   if (source.includes("投注号码")) {
@@ -546,7 +546,7 @@ async function verifyManualReviewAccessibility(sessionId, platformName) {
   }
 
   await clickAccessibilityElement(sessionId, "返回");
-  scrollCount += await clickScrollableAccessibilityElement(sessionId, "手动录入彩票", platformName);
+  scrollCount += await clickScrollableAccessibilityElement(sessionId, "手动录入", platformName);
   source = await webdriverRequest(`/session/${sessionId}/source`);
   if (
     source.includes("投注号码") ||
@@ -558,7 +558,7 @@ async function verifyManualReviewAccessibility(sessionId, platformName) {
   }
   scrollCount += await verifyDoubleColorBallEditor(sessionId, platformName);
   await clickAccessibilityElement(sessionId, "返回");
-  scrollCount += await clickScrollableAccessibilityElement(sessionId, "手动录入彩票", platformName);
+  scrollCount += await clickScrollableAccessibilityElement(sessionId, "手动录入", platformName);
   source = await webdriverRequest(`/session/${sessionId}/source`);
   if (source.includes("投注号码")) {
     throw new Error(`${platformName} 返回首页后再次手动录入仍保留双色球状态`);
