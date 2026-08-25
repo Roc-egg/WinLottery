@@ -149,7 +149,7 @@ class PrizeRulesTest {
         )
     }
 
-    /** 大乐透高奖池固定奖档和元级四舍五入追加奖金应完整通过。 */
+    /** 大乐透高奖池固定奖档和元级取整追加奖金应完整通过。 */
     @Test
     fun superLottoOfficialHighPoolPayoutsAreComplete() {
         val result =
@@ -159,6 +159,23 @@ class PrizeRulesTest {
                     firstAdditionalPrizeFen = 800_000_000L,
                     secondPrizeFen = 15_584_600L,
                     secondAdditionalPrizeFen = 12_467_700L,
+                    fixedPrizes = highPoolFixedPrizes,
+                ),
+            )
+
+        assertEquals(SuperLottoPrizeTierValidationStatus.COMPLETE, result.status)
+    }
+
+    /** 第 26096 期上下两个方向的元级取整追加奖金都应通过。 */
+    @Test
+    fun superLotto26096PublishedPayoutsAreComplete() {
+        val result =
+            SuperLottoPrizeTierValidator.validate(
+                superLottoTiers(
+                    firstPrizeFen = 656_195_200L,
+                    firstAdditionalPrizeFen = 524_956_100L,
+                    secondPrizeFen = 5_789_300L,
+                    secondAdditionalPrizeFen = 4_631_500L,
                     fixedPrizes = highPoolFixedPrizes,
                 ),
             )

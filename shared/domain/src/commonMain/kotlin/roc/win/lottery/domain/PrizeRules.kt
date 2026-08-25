@@ -241,9 +241,9 @@ object SuperLottoPrizeTierValidator {
             if (
                 basePrizeFen != null &&
                 additionalPrizeFen != null &&
-                !matchesRoundedAdditionalPrize(basePrizeFen, additionalPrizeFen)
+                !matchesPublishedAdditionalPrize(basePrizeFen, additionalPrizeFen)
             ) {
-                return invalid("大乐透一、二等奖追加奖金不符合基本奖金的 80% 规则")
+                return invalid("大乐透一、二等奖追加奖金不符合基本奖金 80% 的元级公布口径")
             }
         }
         val complete =
@@ -261,20 +261,21 @@ object SuperLottoPrizeTierValidator {
         )
     }
 
-    /** 按官网以元公布的口径校验四舍五入后的 80% 追加单注奖金。 */
-    private fun matchesRoundedAdditionalPrize(
+    /** 校验两个独立按元取整的官网金额仍可能来自同一组 80% 浮动奖金。 */
+    private fun matchesPublishedAdditionalPrize(
         basePrizeFen: Long,
         additionalPrizeFen: Long,
     ): Boolean {
         if (basePrizeFen % FEN_PER_YUAN != 0L || additionalPrizeFen % FEN_PER_YUAN != 0L) return false
         val baseYuan = basePrizeFen / FEN_PER_YUAN
-        val expectedAdditionalYuan =
+        val lowerAdditionalYuan =
             (baseYuan / ADDITIONAL_RATIO_DENOMINATOR) * ADDITIONAL_RATIO_NUMERATOR +
-                (
-                    (baseYuan % ADDITIONAL_RATIO_DENOMINATOR) * ADDITIONAL_RATIO_NUMERATOR +
-                        ADDITIONAL_ROUNDING_OFFSET
-                ) / ADDITIONAL_RATIO_DENOMINATOR
-        return additionalPrizeFen / FEN_PER_YUAN == expectedAdditionalYuan
+                (baseYuan % ADDITIONAL_RATIO_DENOMINATOR) * ADDITIONAL_RATIO_NUMERATOR /
+                ADDITIONAL_RATIO_DENOMINATOR
+        val upperAdditionalYuan =
+            lowerAdditionalYuan +
+                if (baseYuan % ADDITIONAL_RATIO_DENOMINATOR == 0L) 0L else 1L
+        return additionalPrizeFen / FEN_PER_YUAN in lowerAdditionalYuan..upperAdditionalYuan
     }
 
     /** 创建统一的非法结果。 */
@@ -337,9 +338,6 @@ object SuperLottoPrizeTierValidator {
 
     /** 追加奖金比例分母。 */
     private const val ADDITIONAL_RATIO_DENOMINATOR = 5L
-
-    /** 整数除法实现四舍五入时使用的偏移。 */
-    private const val ADDITIONAL_ROUNDING_OFFSET = 2L
 }
 
 /** B2 本地中奖规则计算器。 */
