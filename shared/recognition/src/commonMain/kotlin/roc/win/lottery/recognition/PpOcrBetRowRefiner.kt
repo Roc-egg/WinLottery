@@ -258,7 +258,16 @@ internal object PpOcrBetRowRefiner {
         val overlappingCrop =
             centerGap <= typicalHeight * MAXIMUM_OVERLAPPING_REPLACEMENT_CENTER_GAP_RATIO &&
                 line.bounds.verticalOverlapRatio(other.line.bounds) >= MINIMUM_REPLACEMENT_VERTICAL_OVERLAP_RATIO
-        if (sameSignature) return closeIdenticalCenter || overlappingCrop
+        val sparseCrossSourceOverlap =
+            centerGap <= typicalHeight * MAXIMUM_OVERLAPPING_REPLACEMENT_CENTER_GAP_RATIO &&
+                row.sourcePriority != other.row.sourcePriority &&
+                (
+                    row.sourcePriority == RefinementSourcePriority.SPARSE ||
+                        other.row.sourcePriority == RefinementSourcePriority.SPARSE
+                ) &&
+                line.bounds.verticalOverlapRatio(other.line.bounds) >=
+                MINIMUM_SPARSE_CROSS_SOURCE_VERTICAL_OVERLAP_RATIO
+        if (sameSignature) return closeIdenticalCenter || overlappingCrop || sparseCrossSourceOverlap
         val closelyOverlappingConflict =
             centerGap <= typicalHeight * MAXIMUM_CONFLICTING_REPLACEMENT_CENTER_GAP_RATIO &&
                 line.bounds.verticalOverlapRatio(other.line.bounds) >= MINIMUM_REPLACEMENT_VERTICAL_OVERLAP_RATIO
@@ -653,6 +662,7 @@ internal object PpOcrBetRowRefiner {
                 extentRegions = denseRegions,
                 sourcePriority = RefinementSourcePriority.SPARSE,
                 baselineSlope = globalSlope,
+                typicalHeightOverride = typicalHeight,
             )
         }
     }
@@ -815,8 +825,13 @@ internal object PpOcrBetRowRefiner {
         extentRegions: List<PpOcrRecognizedRegion>,
         sourcePriority: RefinementSourcePriority = RefinementSourcePriority.DENSE,
         baselineSlope: Float? = null,
+        typicalHeightOverride: Float? = null,
     ): RefinementRow {
         val slope = baselineSlope ?: fitBaseline(regions).first
+        val typicalHeight =
+            typicalHeightOverride
+                ?: regions.map { it.sourceBox.averageHeight }.sorted().medianOrNull()
+                ?: 0f
         val intercept =
             regions
                 .map { region ->
@@ -825,11 +840,11 @@ internal object PpOcrBetRowRefiner {
                 }.average()
                 .toFloat()
         return RefinementRow(
-            sourceBoxes = listOf(buildMergedRowBox(regions, extentRegions, slope)),
+            sourceBoxes = listOf(buildMergedRowBox(regions, extentRegions, slope, typicalHeight)),
             evidenceRegions = regions,
             baselineSlope = slope,
             baselineIntercept = intercept,
-            typicalHeight = regions.map { it.sourceBox.averageHeight }.sorted().medianOrNull() ?: 0f,
+            typicalHeight = typicalHeight,
             replacementHeightRatio = REPLACED_FRAGMENT_HEIGHT_RATIO,
             sourcePriority = sourcePriority,
         )
@@ -1015,9 +1030,9 @@ internal object PpOcrBetRowRefiner {
         regions: List<PpOcrRecognizedRegion>,
         extentRegions: List<PpOcrRecognizedRegion>,
         slope: Float,
+        typicalHeight: Float,
     ): SourceTextBox {
         val axisLength = sqrt(1f + slope * slope)
-        val typicalHeight = regions.map { it.sourceBox.averageHeight }.sorted().medianOrNull() ?: 0f
         val centerShort =
             regions
                 .map { region ->
@@ -1633,6 +1648,9 @@ internal object PpOcrBetRowRefiner {
 
     /** 最终裁图至少重叠较矮框的该比例才视为同一物理行。 */
     private const val MINIMUM_REPLACEMENT_VERTICAL_OVERLAP_RATIO = 0.5f
+
+    /** 稀疏与更强来源识别到相同号码时，认定重复所需的最小文字框纵向交叠比例。 */
+    private const val MINIMUM_SPARSE_CROSS_SOURCE_VERTICAL_OVERLAP_RATIO = 0.2f
 
     /** 重叠异号候选至少包含该数量的原图碎片，才视为证据完整的一方。 */
     private const val MINIMUM_RELIABLE_REPLACEMENT_EVIDENCE_COUNT = 7

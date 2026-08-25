@@ -354,6 +354,50 @@ class PpOcrBetRowRefinerTest {
         assertTrue(refined.all { line -> line.text.count(Char::isDigit) >= 14 })
     }
 
+    /** 过高的稀疏检测框必须复用密集号码高度，避免裁入相邻行并重复生成投注。 */
+    @Test
+    fun oversizedSparseRegionUsesDenseRowHeight() {
+        val firstText = "01 07 14 22 35 + 03 11"
+        val middleText = "02 08 15 23 34 + 04 12"
+        val lastText = "03 09 16 24 33 + 05 09"
+        val regions =
+            buildList {
+                addAll(numberRegions(y = 100f, values = listOf("01", "07", "14", "22", "35", "03", "11")))
+                add(wideRegion("残缺 23 34 后段", x = 170f, y = 130f, halfHeight = 16f))
+                addAll(numberRegions(y = 160f, values = listOf("03", "09", "16", "24", "33", "05", "09")))
+            }
+        val sparseCropHeights = mutableListOf<Float>()
+
+        val refined =
+            PpOcrBetRowRefiner.refine(regions) { box ->
+                val centerY = (box.topLeft.y + box.bottomLeft.y) / 2f
+                val cropHeight = box.topLeft.distanceTo(box.bottomLeft)
+                val text =
+                    when {
+                        centerY < 115f -> {
+                            firstText
+                        }
+
+                        centerY >= 145f -> {
+                            lastText
+                        }
+
+                        else -> {
+                            sparseCropHeights += cropHeight
+                            if (cropHeight <= 16.1f) middleText else firstText
+                        }
+                    }
+                listOf(recognizedLine(text))
+            }
+
+        assertTrue(sparseCropHeights.isNotEmpty())
+        assertTrue(sparseCropHeights.all { height -> height <= 16.1f })
+        assertEquals(
+            listOf(firstText, middleText, lastText).sorted(),
+            refined.map(OcrTextLine::text).sorted(),
+        )
+    }
+
     /** 稀疏长框必须复用整票文字方向生成裁图，不能因单框回归退化为水平线。 */
     @Test
     fun sparseRowCropUsesGlobalTextSlope() {
@@ -745,6 +789,62 @@ class PpOcrBetRowRefinerTest {
         assertEquals(1, refined.count { line -> line.text == repeatedText })
     }
 
+    /** 稀疏与密集候选的同号文字框部分交叠时，应判定为同一物理投注行。 */
+    @Test
+    fun partiallyOverlappingSparseAndDenseReplacementsAreDeduplicated() {
+        val repeatedText = "01 07 14 22 35 + 03 11"
+        val lastText = "03 09 16 24 33 + 05 09"
+        val regions =
+            buildList {
+                addAll(numberRegions(y = 100f, values = listOf("01", "07", "14", "22", "35", "03", "11")))
+                add(wideRegion("残缺 23 34 后段", x = 170f, y = 119f))
+                addAll(numberRegions(y = 160f, values = listOf("03", "09", "16", "24", "33", "05", "09")))
+            }
+
+        val refined =
+            PpOcrBetRowRefiner.refine(regions) { box ->
+                val centerY = (box.topLeft.y + box.bottomLeft.y) / 2f
+                val line =
+                    when {
+                        centerY < 110f -> recognizedLine(repeatedText, NormalizedBounds(0.1f, 0.10f, 0.9f, 0.15f))
+                        centerY < 140f -> recognizedLine(repeatedText, NormalizedBounds(0.1f, 0.136f, 0.9f, 0.186f))
+                        else -> recognizedLine(lastText, NormalizedBounds(0.1f, 0.30f, 0.9f, 0.35f))
+                    }
+                listOf(line)
+            }
+
+        assertEquals(1, refined.count { line -> line.text == repeatedText })
+        assertEquals(1, refined.count { line -> line.text == lastText })
+    }
+
+    /** 稀疏与密集来源的相同号码属于两个不交叠物理行时，必须保留两注。 */
+    @Test
+    fun nonOverlappingSparseAndDenseReplacementsRemainIndependent() {
+        val repeatedText = "01 07 14 22 35 + 03 11"
+        val lastText = "03 09 16 24 33 + 05 09"
+        val regions =
+            buildList {
+                addAll(numberRegions(y = 100f, values = listOf("01", "07", "14", "22", "35", "03", "11")))
+                add(wideRegion("残缺 23 34 后段", x = 170f, y = 119f))
+                addAll(numberRegions(y = 160f, values = listOf("03", "09", "16", "24", "33", "05", "09")))
+            }
+
+        val refined =
+            PpOcrBetRowRefiner.refine(regions) { box ->
+                val centerY = (box.topLeft.y + box.bottomLeft.y) / 2f
+                val line =
+                    when {
+                        centerY < 110f -> recognizedLine(repeatedText, NormalizedBounds(0.1f, 0.10f, 0.9f, 0.15f))
+                        centerY < 140f -> recognizedLine(repeatedText, NormalizedBounds(0.1f, 0.16f, 0.9f, 0.21f))
+                        else -> recognizedLine(lastText, NormalizedBounds(0.1f, 0.30f, 0.9f, 0.35f))
+                    }
+                listOf(line)
+            }
+
+        assertEquals(2, refined.count { line -> line.text == repeatedText })
+        assertEquals(1, refined.count { line -> line.text == lastText })
+    }
+
     /** 同一重叠行出现不同合法号码时，只能由明确圆圈行标证明应保留的结果。 */
     @Test
     fun circledMarkerWinsConflictingOverlappingReplacement() {
@@ -1073,18 +1173,19 @@ class PpOcrBetRowRefinerTest {
         return PpOcrRecognizedRegion(box, recognizedLine(text))
     }
 
-    /** 创建一个模拟残缺整行检测结果的宽框。 */
+    /** 创建一个可指定检测框半高的模拟残缺整行结果。 */
     private fun wideRegion(
         text: String,
         x: Float,
         y: Float,
+        halfHeight: Float = HALF_BOX_HEIGHT,
     ): PpOcrRecognizedRegion {
         val box =
             SourceTextBox(
-                topLeft = FloatPoint(x - WIDE_HALF_BOX_WIDTH, y - HALF_BOX_HEIGHT),
-                topRight = FloatPoint(x + WIDE_HALF_BOX_WIDTH, y - HALF_BOX_HEIGHT),
-                bottomRight = FloatPoint(x + WIDE_HALF_BOX_WIDTH, y + HALF_BOX_HEIGHT),
-                bottomLeft = FloatPoint(x - WIDE_HALF_BOX_WIDTH, y + HALF_BOX_HEIGHT),
+                topLeft = FloatPoint(x - WIDE_HALF_BOX_WIDTH, y - halfHeight),
+                topRight = FloatPoint(x + WIDE_HALF_BOX_WIDTH, y - halfHeight),
+                bottomRight = FloatPoint(x + WIDE_HALF_BOX_WIDTH, y + halfHeight),
+                bottomLeft = FloatPoint(x - WIDE_HALF_BOX_WIDTH, y + halfHeight),
                 confidence = TEST_CONFIDENCE,
             )
         return PpOcrRecognizedRegion(box, recognizedLine(text))
