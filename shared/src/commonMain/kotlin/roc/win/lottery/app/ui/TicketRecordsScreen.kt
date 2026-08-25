@@ -52,6 +52,7 @@ import androidx.compose.ui.unit.dp
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 import roc.win.lottery.app.AppScreen
+import roc.win.lottery.app.MainDestination
 import roc.win.lottery.app.TicketRecordFilter
 import roc.win.lottery.app.filterTicketRecords
 import roc.win.lottery.domain.LotteryType
@@ -69,7 +70,8 @@ import kotlin.time.Instant
  * @param isLoading 是否仍在等待数据库首次返回。
  * @param loadError 数据库读取失败时的安全错误说明。
  * @param supportsFileExchange 当前平台是否接入逻辑包系统文件接口。
- * @param onBack 返回首页。
+ * @param availableMainDestinations 当前平台可进入的一级目的地。
+ * @param onMainDestinationSelected 一级目的地切换操作。
  * @param onFilterChange 修改彩种筛选。
  * @param onSearchChange 修改搜索文本。
  * @param onRename 保存新名称。
@@ -88,7 +90,8 @@ fun TicketRecordsScreen(
     isLoading: Boolean,
     loadError: String?,
     supportsFileExchange: Boolean,
-    onBack: () -> Unit,
+    availableMainDestinations: List<MainDestination>,
+    onMainDestinationSelected: (MainDestination) -> Unit,
     onFilterChange: (TicketRecordFilter) -> Unit,
     onSearchChange: (String) -> Unit,
     onRename: (String, String) -> Unit,
@@ -114,9 +117,7 @@ fun TicketRecordsScreen(
     val controlsEnabled = !isLoading && loadError == null && !screen.isOperationInProgress
 
     AppShell(
-        title = "本机记录",
-        navigationIcon = LotteryIcons.Back,
-        onNavigate = onBack,
+        title = "记录",
         actions = {
             TicketRecordManagementMenu(
                 expanded = isManagementMenuExpanded,
@@ -129,6 +130,9 @@ fun TicketRecordsScreen(
                 onRequestClear = { isClearConfirmationVisible = true },
             )
         },
+        mainDestination = MainDestination.RECORDS,
+        availableMainDestinations = availableMainDestinations,
+        onMainDestinationSelected = onMainDestinationSelected,
         scrollableContent = false,
     ) {
         Column(modifier = Modifier.fillMaxSize()) {

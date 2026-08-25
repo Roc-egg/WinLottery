@@ -1082,6 +1082,24 @@ class LotteryAppControllerTest {
             assertEquals(previousResult, assertIs<AppScreen.VerificationResult>(controller.uiState.value.screen))
         }
 
+    /** 切换到选号一级页面必须清理临时票图，系统返回再回到默认核对页面。 */
+    @Test
+    fun numberPickerIsAnIndependentMainDestination() =
+        runTest {
+            val paths = TrackingAppPaths()
+            val controller = createController(CountingDrawRepository(), paths)
+            controller.startAnalysis(ImageAcquisitionSource.SYSTEM_PICKER)
+
+            controller.showRandomNumberPicker()
+
+            assertEquals(AppScreen.NumberPicker, controller.uiState.value.screen)
+            assertEquals(listOf("b1-demo-ticket"), paths.deletedImageIds)
+
+            controller.navigateBack()
+
+            assertEquals(AppScreen.Home, controller.uiState.value.screen)
+        }
+
     /** 关于页返回应回到首页，首页内的返回调用不改变状态。 */
     @Test
     fun aboutBackReturnsHomeAndHomeBackIsNoOp() =

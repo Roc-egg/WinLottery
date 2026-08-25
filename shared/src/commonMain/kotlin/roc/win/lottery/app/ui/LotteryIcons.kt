@@ -4,6 +4,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import com.composables.icons.lucide.ArrowLeft
 import com.composables.icons.lucide.Camera
 import com.composables.icons.lucide.Check
+import com.composables.icons.lucide.ClipboardCheck
+import com.composables.icons.lucide.Dices
 import com.composables.icons.lucide.EllipsisVertical
 import com.composables.icons.lucide.FileDown
 import com.composables.icons.lucide.FileUp
@@ -38,6 +40,12 @@ object LotteryIcons {
 
     /** 本机记录图标。 */
     val History: ImageVector = Lucide.History
+
+    /** 彩票核对一级目的地图标。 */
+    val Verification: ImageVector = Lucide.ClipboardCheck
+
+    /** 随机选号一级目的地图标。 */
+    val NumberPicker: ImageVector = Lucide.Dices
 
     /** 查询和搜索图标。 */
     val Search: ImageVector = Lucide.Search

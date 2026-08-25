@@ -13,8 +13,11 @@ import roc.win.lottery.recognition.TicketFieldRegion
 
 /** 应用顶层页面。 */
 sealed interface AppScreen {
-    /** 首页。 */
+    /** 彩票核对一级页面。 */
     data object Home : AppScreen
+
+    /** 随机选号一级页面。 */
+    data object NumberPicker : AppScreen
 
     /**
      * 本机结构化票据记录页。

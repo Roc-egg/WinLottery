@@ -15,6 +15,7 @@ import kotlinx.coroutines.launch
 import roc.win.lottery.app.AppContainer
 import roc.win.lottery.app.AppScreen
 import roc.win.lottery.app.LotteryAppController
+import roc.win.lottery.app.MainDestination
 import roc.win.lottery.app.TicketReviewAction
 import roc.win.lottery.app.theme.LotteryTheme
 import roc.win.lottery.app.ui.AboutScreen
@@ -25,6 +26,7 @@ import roc.win.lottery.app.ui.DrawUnavailableScreen
 import roc.win.lottery.app.ui.ErrorScreen
 import roc.win.lottery.app.ui.HomeScreen
 import roc.win.lottery.app.ui.MultiPeriodVerificationScreen
+import roc.win.lottery.app.ui.RandomNumberScreen
 import roc.win.lottery.app.ui.ReviewScreen
 import roc.win.lottery.app.ui.TicketRecordsScreen
 import roc.win.lottery.app.ui.VerificationResultScreen
@@ -43,6 +45,21 @@ fun App(container: AppContainer = remember { AppContainer.createDemo(getPlatform
     val uiState by controller.uiState.collectAsState()
     val scope = rememberCoroutineScope()
     val ticketRecordStore = container.ticketRecordStore
+    val availableMainDestinations =
+        remember(ticketRecordStore) {
+            MainDestination.entries.filter { destination ->
+                destination != MainDestination.RECORDS || ticketRecordStore != null
+            }
+        }
+    val onMainDestinationSelected: (MainDestination) -> Unit = { destination ->
+        scope.launch {
+            when (destination) {
+                MainDestination.VERIFICATION -> controller.navigateHome()
+                MainDestination.NUMBER_PICKER -> controller.showRandomNumberPicker()
+                MainDestination.RECORDS -> controller.showTicketRecords()
+            }
+        }
+    }
     val recordCollection by
         produceState<TicketRecordCollectionState>(
             initialValue =
@@ -80,13 +97,13 @@ fun App(container: AppContainer = remember { AppContainer.createDemo(getPlatform
         when (val screen = uiState.screen) {
             AppScreen.Home -> {
                 HomeScreen(
-                    platformName = container.platform.name,
                     supportsCamera = container.imageAcquirer.supportsCamera,
                     isDemo = uiState.isDemo,
                     usesRealImageAcquisition = container.usesRealImageAcquisition,
                     usesRealRecognition = container.usesRealRecognition,
                     usesRealDrawData = container.usesRealDrawData,
-                    hasTicketRecords = ticketRecordStore != null,
+                    availableMainDestinations = availableMainDestinations,
+                    onMainDestinationSelected = onMainDestinationSelected,
                     onCamera = {
                         scope.launch { controller.startAnalysis(ImageAcquisitionSource.CAMERA) }
                     },
@@ -96,10 +113,14 @@ fun App(container: AppContainer = remember { AppContainer.createDemo(getPlatform
                     onManualEntry = {
                         scope.launch { controller.startManualEntry() }
                     },
-                    onRecords = {
-                        scope.launch { controller.showTicketRecords() }
-                    },
                     onAbout = controller::showAbout,
+                )
+            }
+
+            AppScreen.NumberPicker -> {
+                RandomNumberScreen(
+                    availableMainDestinations = availableMainDestinations,
+                    onMainDestinationSelected = onMainDestinationSelected,
                 )
             }
 
@@ -115,7 +136,8 @@ fun App(container: AppContainer = remember { AppContainer.createDemo(getPlatform
                         (recordCollection as? TicketRecordCollectionState.Failed)
                             ?.message,
                     supportsFileExchange = container.ticketRecordFileExchange != null,
-                    onBack = { scope.launch { controller.navigateBack() } },
+                    availableMainDestinations = availableMainDestinations,
+                    onMainDestinationSelected = onMainDestinationSelected,
                     onFilterChange = controller::updateTicketRecordFilter,
                     onSearchChange = controller::updateTicketRecordSearch,
                     onRename = { id, displayName ->

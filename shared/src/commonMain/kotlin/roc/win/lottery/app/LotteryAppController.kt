@@ -174,6 +174,7 @@ class LotteryAppController(
                 return
             }
 
+            AppScreen.NumberPicker,
             is AppScreen.Analysis,
             is AppScreen.Review,
             is AppScreen.Records,
@@ -195,6 +196,17 @@ class LotteryAppController(
                 restorePreviousScreen(lastQuerySourceScreen)
             }
         }
+    }
+
+    /** 打开随机选号一级页面并结束此前的临时票面流程。 */
+    suspend fun showRandomNumberPicker() {
+        flowGeneration += 1L
+        clearTemporaryImage()
+        lastQuerySourceScreen = null
+        queryReturnScreen = null
+        resetConfirmationPersistence()
+        resetTicketRecordManagement()
+        mutableUiState.update { it.copy(screen = AppScreen.NumberPicker) }
     }
 
     /** 打开本机记录列表并结束此前的临时确认流程。 */
