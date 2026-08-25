@@ -35,6 +35,44 @@ class LotteryPrizeCalculatorTest {
         assertEquals(listOf(3_600_000L, 1_333_200L), result.lineResults.map { it.estimatedPrizeFen })
     }
 
+    /** 合成十期票在第 26096 期命中 2+1 时应得到七等奖 7 元。 */
+    @Test
+    fun issue26096HighPoolSeventhPrizeIsSevenYuan() {
+        val ticket =
+            ticket(
+                lotteryType = LotteryType.SUPER_LOTTO,
+                issue = "26096",
+                lines = listOf(line(listOf(8, 9, 20, 21, 22), listOf(1, 4))),
+                multiplier = 1,
+                periodCount = 10,
+                paidAmountFen = 2_000L,
+            )
+        val draw =
+            drawResult(
+                lotteryType = LotteryType.SUPER_LOTTO,
+                issue = "26096",
+                primary = listOf(8, 9, 10, 11, 25),
+                secondary = listOf(4, 12),
+                ruleVersion = RuleVersion.DLT_2026_01,
+                tiers =
+                    listOf(
+                        tier(PrizeTierCodes.FIRST, 656_195_200L, 524_956_100L),
+                        tier(PrizeTierCodes.SECOND, 5_789_300L, 4_631_500L),
+                        tier(PrizeTierCodes.THIRD, 666_600L),
+                        tier(PrizeTierCodes.FOURTH, 38_000L),
+                        tier(PrizeTierCodes.FIFTH, 20_000L),
+                        tier(PrizeTierCodes.SIXTH, 1_800L),
+                        tier(PrizeTierCodes.SEVENTH, 700L),
+                    ),
+            )
+
+        val result = calculator.calculate(ticket, draw)
+
+        assertEquals(PrizeCheckStatus.WIN, result.status)
+        assertEquals(700L, result.estimatedPrizeFen)
+        assertEquals(PrizeTierCodes.SEVENTH, result.lineResults.single().prizeTierCode)
+    }
+
     /** 重复投注行是两注真实投注，汇总时不得去重。 */
     @Test
     fun duplicatedBetLinesAreBothCounted() {
@@ -405,6 +443,7 @@ class LotteryPrizeCalculatorTest {
         issue: String,
         lines: List<BetLine>,
         multiplier: Int,
+        periodCount: Int = 1,
         paidAmountFen: Long,
     ): ConfirmedTicket =
         ConfirmedTicket(
@@ -412,7 +451,7 @@ class LotteryPrizeCalculatorTest {
             issue = confirmed(Issue(issue)),
             betLines = lines,
             multiplier = confirmed(multiplier),
-            periodCount = confirmed(1),
+            periodCount = confirmed(periodCount),
             paidAmountFen = confirmed(paidAmountFen),
         )
 

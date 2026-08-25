@@ -236,6 +236,23 @@ class PrizeRulesTest {
         assertEquals(SuperLottoPrizeTierValidationStatus.INVALID, result.status)
     }
 
+    /** 追加金额超出 80% 相邻整数元范围时仍必须失败关闭。 */
+    @Test
+    fun additionalPrizeOutsideAdjacentYuanRangeIsRejected() {
+        val result =
+            SuperLottoPrizeTierValidator.validate(
+                superLottoTiers(
+                    firstPrizeFen = 1_000_100L,
+                    firstAdditionalPrizeFen = 800_200L,
+                    secondPrizeFen = 500_000L,
+                    secondAdditionalPrizeFen = 400_000L,
+                    fixedPrizes = highPoolFixedPrizes,
+                ),
+            )
+
+        assertEquals(SuperLottoPrizeTierValidationStatus.INVALID, result.status)
+    }
+
     /** 官网尚未给出追加单注奖金时应保留为金额未完整而不是伪造零元。 */
     @Test
     fun missingSuperLottoAdditionalPayoutIsIncomplete() {
