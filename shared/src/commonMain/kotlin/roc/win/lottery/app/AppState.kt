@@ -16,8 +16,14 @@ sealed interface AppScreen {
     /** 彩票核对一级页面。 */
     data object Home : AppScreen
 
-    /** 随机选号一级页面。 */
-    data object NumberPicker : AppScreen
+    /**
+     * 随机选号一级页面。
+     *
+     * @property picker 当前会话中的配置与生成结果。
+     */
+    data class NumberPicker(
+        val picker: RandomNumberPickerState,
+    ) : AppScreen
 
     /**
      * 本机结构化票据记录页。

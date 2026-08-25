@@ -11,6 +11,8 @@ import roc.win.lottery.domain.DrawStatus
 import roc.win.lottery.domain.Issue
 import roc.win.lottery.domain.IssueSequenceResolver
 import roc.win.lottery.domain.IssueSequenceResult
+import roc.win.lottery.domain.LotteryRandomNumberGenerator
+import roc.win.lottery.domain.RandomNumberGenerationResult
 import roc.win.lottery.persistence.TICKET_RECORD_EXPORT_EXTENSION
 import roc.win.lottery.persistence.TicketAcquisitionSource
 import roc.win.lottery.persistence.TicketRecordImportConflictPolicy
@@ -69,6 +71,12 @@ class LotteryAppController(
 
     /** 将多期票限制在已验证期号边界并展开为逐期查询。 */
     private val issueSequenceResolver = IssueSequenceResolver()
+
+    /** 使用领域冻结规则生成合法随机号码。 */
+    private val randomNumberGenerator = LotteryRandomNumberGenerator()
+
+    /** 只在当前控制器会话中保留的随机选号配置与结果。 */
+    private var randomNumberPickerState = RandomNumberPickerState()
 
     /**
      * 从拍照或导图开始一次全新的本地分析。
@@ -174,7 +182,7 @@ class LotteryAppController(
                 return
             }
 
-            AppScreen.NumberPicker,
+            is AppScreen.NumberPicker,
             is AppScreen.Analysis,
             is AppScreen.Review,
             is AppScreen.Records,
@@ -206,7 +214,38 @@ class LotteryAppController(
         queryReturnScreen = null
         resetConfirmationPersistence()
         resetTicketRecordManagement()
-        mutableUiState.update { it.copy(screen = AppScreen.NumberPicker) }
+        mutableUiState.update { it.copy(screen = AppScreen.NumberPicker(randomNumberPickerState)) }
+    }
+
+    /** 更新选号配置，或使用当前配置生成一套新的会话内号码。 */
+    fun updateRandomNumberPicker(action: RandomNumberPickerAction) {
+        val screen = mutableUiState.value.screen as? AppScreen.NumberPicker ?: return
+        val updatedPicker =
+            when (action) {
+                RandomNumberPickerAction.Generate -> {
+                    when (val result = randomNumberGenerator.generate(screen.picker.toGenerationRequest())) {
+                        is RandomNumberGenerationResult.Success -> {
+                            screen.picker.copy(plan = result.plan, errorMessage = null)
+                        }
+
+                        is RandomNumberGenerationResult.InvalidRequest -> {
+                            screen.picker.copy(plan = null, errorMessage = result.message)
+                        }
+                    }
+                }
+
+                else -> {
+                    screen.picker.applyConfiguration(action)
+                }
+            }
+        randomNumberPickerState = updatedPicker
+        mutableUiState.update { state ->
+            if (state.screen is AppScreen.NumberPicker) {
+                state.copy(screen = AppScreen.NumberPicker(updatedPicker))
+            } else {
+                state
+            }
+        }
     }
 
     /** 打开本机记录列表并结束此前的临时确认流程。 */

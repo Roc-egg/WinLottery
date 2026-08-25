@@ -11,6 +11,7 @@ import roc.win.lottery.data.DrawRepository
 import roc.win.lottery.data.FakeDrawRepository
 import roc.win.lottery.domain.BetLineDraft
 import roc.win.lottery.domain.ConfirmedTicket
+import roc.win.lottery.domain.CrossPeriodRandomMode
 import roc.win.lottery.domain.DrawPolicy
 import roc.win.lottery.domain.DrawResult
 import roc.win.lottery.domain.DrawStatus
@@ -1092,12 +1093,51 @@ class LotteryAppControllerTest {
 
             controller.showRandomNumberPicker()
 
-            assertEquals(AppScreen.NumberPicker, controller.uiState.value.screen)
+            assertIs<AppScreen.NumberPicker>(controller.uiState.value.screen)
             assertEquals(listOf("b1-demo-ticket"), paths.deletedImageIds)
 
             controller.navigateBack()
 
             assertEquals(AppScreen.Home, controller.uiState.value.screen)
+        }
+
+    /** 选号配置和结果在一级页面切换后仍应保留，但不得写入票据仓库。 */
+    @Test
+    fun randomNumberPlanStaysInCurrentControllerSession() =
+        runTest {
+            val ticketRecordStore = TrackingTicketRecordStore()
+            val controller =
+                createController(
+                    repository = CountingDrawRepository(),
+                    ticketRecordStore = ticketRecordStore,
+                )
+            controller.showRandomNumberPicker()
+            controller.updateRandomNumberPicker(
+                RandomNumberPickerAction.ChangeLotteryType(LotteryType.DOUBLE_COLOR_BALL),
+            )
+            controller.updateRandomNumberPicker(RandomNumberPickerAction.ChangePeriodCount(3))
+            controller.updateRandomNumberPicker(RandomNumberPickerAction.ChangeBetsPerPeriod(2))
+            controller.updateRandomNumberPicker(
+                RandomNumberPickerAction.ChangeCrossPeriodMode(
+                    CrossPeriodRandomMode.INDEPENDENT_PER_PERIOD,
+                ),
+            )
+            controller.updateRandomNumberPicker(RandomNumberPickerAction.Generate)
+
+            val generated = assertIs<AppScreen.NumberPicker>(controller.uiState.value.screen).picker
+            val plan = requireNotNull(generated.plan)
+            assertEquals(LotteryType.DOUBLE_COLOR_BALL, plan.lotteryType)
+            assertEquals(3, plan.periods.size)
+            assertEquals(2, plan.betsPerPeriod)
+            assertEquals(6, plan.totalBetCount)
+            assertTrue(ticketRecordStore.currentRecords.isEmpty())
+
+            controller.navigateHome()
+            controller.showRandomNumberPicker()
+
+            val restored = assertIs<AppScreen.NumberPicker>(controller.uiState.value.screen).picker
+            assertEquals(plan, restored.plan)
+            assertTrue(ticketRecordStore.currentRecords.isEmpty())
         }
 
     /** 关于页返回应回到首页，首页内的返回调用不改变状态。 */

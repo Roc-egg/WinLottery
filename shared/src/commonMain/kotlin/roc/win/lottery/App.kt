@@ -117,10 +117,12 @@ fun App(container: AppContainer = remember { AppContainer.createDemo(getPlatform
                 )
             }
 
-            AppScreen.NumberPicker -> {
+            is AppScreen.NumberPicker -> {
                 RandomNumberScreen(
+                    picker = screen.picker,
                     availableMainDestinations = availableMainDestinations,
                     onMainDestinationSelected = onMainDestinationSelected,
+                    onAction = controller::updateRandomNumberPicker,
                 )
             }
 
