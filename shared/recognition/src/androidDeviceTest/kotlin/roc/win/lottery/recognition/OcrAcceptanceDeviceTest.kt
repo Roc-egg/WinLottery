@@ -6,6 +6,7 @@ import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.coroutines.test.runTest
+import org.junit.Assume.assumeTrue
 import org.junit.runner.RunWith
 import java.io.File
 import java.io.FileInputStream
@@ -19,17 +20,24 @@ import kotlin.time.Duration.Companion.minutes
 class OcrAcceptanceDeviceTest {
     /** 逐张执行生产一致的图片归一化、质量检查、PP-OCRv5 和保守解析。 */
     @Test
-    fun explicitlyStagedSamplesProduceAnonymousAcceptanceReport() =
+    fun explicitlyStagedSamplesProduceAnonymousAcceptanceReport() {
+        val sampleCountArgument =
+            InstrumentationRegistry
+                .getArguments()
+                .getString(SAMPLE_COUNT_ARGUMENT)
+        if (sampleCountArgument == null) {
+            assumeTrue("未显式配置 Android OCR 验收样本，跳过真实票图专项", false)
+            return
+        }
+
         runTest(timeout = TEST_TIMEOUT) {
             val instrumentation = InstrumentationRegistry.getInstrumentation()
             val context = instrumentation.context
             val expectedSampleCount =
-                InstrumentationRegistry
-                    .getArguments()
-                    .getString(SAMPLE_COUNT_ARGUMENT)
-                    ?.toIntOrNull()
+                sampleCountArgument
+                    .toIntOrNull()
                     ?.takeIf { it in 1..MAXIMUM_SAMPLE_COUNT }
-                    ?: error("缺少 Android OCR 验收样本数")
+                    ?: error("Android OCR 验收样本数参数无效")
             val sampleOffset =
                 InstrumentationRegistry
                     .getArguments()
@@ -88,6 +96,7 @@ class OcrAcceptanceDeviceTest {
                 "Android 当前探索图存在质量拒绝或 OCR 失败，详见匿名验收报告",
             )
         }
+    }
 
     /** 按生产导图参数归一化方向、限制尺寸并重新编码 JPEG。 */
     private fun normalizeSample(
