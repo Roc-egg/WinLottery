@@ -35,6 +35,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import roc.win.lottery.app.MainDestination
@@ -59,6 +61,7 @@ private val MAX_CONTENT_WIDTH = 960.dp
  * @param availableMainDestinations 当前平台可进入的一级目的地。
  * @param onMainDestinationSelected 一级目的地切换操作。
  * @param scrollableContent 是否由外壳提供纵向滚动；惰性列表页面应设为 `false`。
+ * @param compactChrome 是否使用适合手机横屏的紧凑顶部导航与正文边距。
  * @param content 页面正文。
  */
 @Composable
@@ -74,6 +77,7 @@ fun AppShell(
     availableMainDestinations: List<MainDestination> = MainDestination.entries,
     onMainDestinationSelected: (MainDestination) -> Unit = {},
     scrollableContent: Boolean = true,
+    compactChrome: Boolean = false,
     content: @Composable () -> Unit,
 ) {
     Surface(
@@ -90,7 +94,15 @@ fun AppShell(
         ) {
             val usesSideNavigation =
                 mainDestination != null && maxWidth >= WIDE_NAVIGATION_THRESHOLD
-            if (usesSideNavigation) {
+            if (compactChrome && mainDestination != null) {
+                CompactMainAppShellBody(
+                    title = title,
+                    selectedDestination = mainDestination,
+                    destinations = availableMainDestinations,
+                    onDestinationSelected = onMainDestinationSelected,
+                    content = content,
+                )
+            } else if (usesSideNavigation) {
                 Row(modifier = Modifier.fillMaxSize()) {
                     MainNavigationRail(
                         selectedDestination = checkNotNull(mainDestination),
@@ -135,6 +147,74 @@ fun AppShell(
                         )
                     }
                 }
+            }
+        }
+    }
+}
+
+/**
+ * 绘制手机横屏专用的紧凑一级外壳，把导航收进顶部栏以释放图表空间。
+ *
+ * @param title 当前一级页面标题。
+ * @param selectedDestination 当前选中的一级目的地。
+ * @param destinations 当前平台可进入的一级目的地。
+ * @param onDestinationSelected 一级目的地切换操作。
+ * @param content 页面正文。
+ */
+@Composable
+private fun CompactMainAppShellBody(
+    title: String,
+    selectedDestination: MainDestination,
+    destinations: List<MainDestination>,
+    onDestinationSelected: (MainDestination) -> Unit,
+    content: @Composable () -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().height(48.dp).padding(horizontal = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = title,
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.titleMedium,
+            )
+            destinations.forEach { destination ->
+                val isSelected = destination == selectedDestination
+                IconButton(
+                    onClick = { onDestinationSelected(destination) },
+                    modifier = Modifier.semantics { selected = isSelected },
+                ) {
+                    Icon(
+                        imageVector = destination.icon(),
+                        contentDescription = destination.label(),
+                        tint =
+                            if (isSelected) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                    )
+                }
+            }
+        }
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        Box(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .background(MaterialTheme.colorScheme.background),
+            contentAlignment = Alignment.TopCenter,
+        ) {
+            Box(
+                modifier =
+                    Modifier
+                        .widthIn(max = MAX_CONTENT_WIDTH)
+                        .fillMaxSize()
+                        .padding(horizontal = 8.dp),
+            ) {
+                content()
             }
         }
     }

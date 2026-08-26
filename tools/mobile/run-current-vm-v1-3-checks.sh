@@ -115,5 +115,5 @@ run_appium_phase standard
 restart_apps_with_font_size "$ANDROID_MAXIMUM_FONT_SCALE" "$IOS_MAXIMUM_CONTENT_SIZE"
 run_appium_phase maximum
 
-print "双虚拟机 V1.3 标准与最大字号、四级导航、50 期边界、横向矩阵和固定期号列检查通过"
+print "双虚拟机 V1.3 标准与最大字号、竖横屏切换、四级导航、50 期边界、横屏 01 至 35 完整矩阵和固定期号列检查通过"
 print "截图证据：$SCREENSHOT_DIRECTORY"

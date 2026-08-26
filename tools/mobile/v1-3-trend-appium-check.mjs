@@ -36,6 +36,12 @@ const STANDARD_MODE = "standard";
 /** 最大字号验收模式。 */
 const MAXIMUM_MODE = "maximum";
 
+/** WebDriver 横屏方向值。 */
+const LANDSCAPE_ORIENTATION = "LANDSCAPE";
+
+/** WebDriver 竖屏方向值。 */
+const PORTRAIT_ORIENTATION = "PORTRAIT";
+
 /** 走势图必须持续展示的数据来源边界。 */
 const DEMONSTRATION_NOTICE = "受控演示快照，非实时官方开奖，不参与预测。";
 
@@ -101,6 +107,37 @@ function isSameRect(firstRect, secondRect) {
 /** 等待 Compose 页面完成一次状态更新。 */
 async function waitForPageUpdate(durationMillis = 500) {
   await new Promise((resolve) => setTimeout(resolve, durationMillis));
+}
+
+/** 切换设备方向，并等待应用窗口尺寸与目标方向一致。 */
+async function setOrientation(sessionId, orientation) {
+  await webdriverRequest(`/session/${sessionId}/orientation`, "POST", { orientation });
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const [actualOrientation, windowRect] = await Promise.all([
+      webdriverRequest(`/session/${sessionId}/orientation`),
+      webdriverRequest(`/session/${sessionId}/window/rect`),
+    ]);
+    const sizeMatches =
+      orientation === LANDSCAPE_ORIENTATION
+        ? windowRect.width > windowRect.height
+        : windowRect.height > windowRect.width;
+    if (actualOrientation === orientation && sizeMatches) {
+      await waitForPageUpdate(800);
+      return windowRect;
+    }
+    await waitForPageUpdate(300);
+  }
+  throw new Error(`设备未稳定切换到 ${orientation}`);
+}
+
+/** 尽力恢复竖屏，不覆盖原始验收异常。 */
+async function restorePortraitOrientation(sessionId) {
+  if (!sessionId) return;
+  try {
+    await setOrientation(sessionId, PORTRAIT_ORIENTATION);
+  } catch {
+    // 会话清理仍会继续，原始验收结论优先保留。
+  }
 }
 
 /** 创建指定平台的 Appium 会话。 */
@@ -317,18 +354,7 @@ async function selectOption(sessionId, accessibilityName, platformName, directio
   if (platformName === "iOS") {
     const selectableElement = await findIOSSelectableElement(sessionId, accessibilityName);
     const elementId = readElementId(selectableElement, accessibilityName);
-    const elementRect = await webdriverRequest(
-      `/session/${sessionId}/element/${elementId}/rect`,
-    );
-    await webdriverRequest(`/session/${sessionId}/execute/sync`, "POST", {
-      script: "mobile: tap",
-      args: [
-        {
-          x: Math.round(elementRect.x + elementRect.width * 0.85),
-          y: Math.round(elementRect.y + elementRect.height / 2),
-        },
-      ],
-    });
+    await webdriverRequest(`/session/${sessionId}/element/${elementId}/click`, "POST", {});
     await waitForPageUpdate();
   } else {
     await tapElementCenter(sessionId, element.elementRect);
@@ -339,7 +365,7 @@ async function selectOption(sessionId, accessibilityName, platformName, directio
 /** 从任意一级页面进入走势工作区。 */
 async function openTrends(sessionId) {
   const source = await readSource(sessionId);
-  if (source.includes("基本走势") && source.includes(DEMONSTRATION_NOTICE)) return;
+  if (source.includes("期号与01至35号码列") && source.includes(DEMONSTRATION_NOTICE)) return;
   await clickBottommostExactElement(sessionId, "走势");
   await waitForSourceText(sessionId, DEMONSTRATION_NOTICE);
 }
@@ -376,10 +402,81 @@ async function saveScreenshot(sessionId, platformName, label) {
   const bytes = Buffer.from(encoded, "base64");
   const fileName = `${platformName.toLowerCase()}-${acceptanceMode}-${label}.png`;
   await writeFile(join(screenshotDirectory, fileName), bytes);
+  if (bytes.length < 24 || bytes.toString("ascii", 1, 4) !== "PNG") {
+    throw new Error(`${platformName} 截图不是有效 PNG`);
+  }
   return {
     bytes,
+    width: bytes.readUInt32BE(16),
+    height: bytes.readUInt32BE(20),
     sha256: createHash("sha256").update(bytes).digest("hex"),
   };
+}
+
+/** 核对横屏顶部四项图标导航均可见且互不重叠。 */
+async function verifyCompactNavigationLayout(sessionId) {
+  const destinations = [];
+  for (const name of ["核对", "选号", "走势", "记录"]) {
+    const elements = await findVisibleExactElements(sessionId, name);
+    if (elements.length === 0) throw new Error(`横屏顶部导航缺少：${name}`);
+    elements.sort((first, second) => second.elementRect.x - first.elementRect.x);
+    destinations.push({ name, rect: elements[0].elementRect });
+  }
+  destinations.sort((first, second) => first.rect.x - second.rect.x);
+  for (let index = 1; index < destinations.length; index += 1) {
+    const previous = destinations[index - 1];
+    const current = destinations[index];
+    if (previous.rect.x + previous.rect.width > current.rect.x) {
+      throw new Error(`横屏顶部导航发生重叠：${previous.name} 与 ${current.name}`);
+    }
+  }
+}
+
+/** 核对最宽大乐透前区在横屏无需横向滑动即可完整预览。 */
+async function verifyLandscapeTrend(sessionId, platformName) {
+  const windowRect = await setOrientation(sessionId, LANDSCAPE_ORIENTATION);
+  await saveScreenshot(sessionId, platformName, "landscape-before-assertions");
+  const matrixDescription = "横屏完整号码矩阵，01至35全部可见";
+  await waitForSourceTexts(
+    sessionId,
+    [
+      matrixDescription,
+      "大乐透 · 前区",
+      "30 期 · 00021 至 00050",
+      "三区 25至35",
+      "号码 35",
+      "期号 00021",
+      DEMONSTRATION_NOTICE,
+    ],
+    40,
+  );
+  await verifyCompactNavigationLayout(sessionId);
+  const [matrix, lastZone, lastNumber, firstIssue] = await Promise.all([
+    findVisibleExactElement(sessionId, matrixDescription),
+    findVisibleExactElement(sessionId, "三区 25至35"),
+    findVisibleExactElement(sessionId, "号码 35"),
+    findVisibleExactElement(sessionId, "期号 00021"),
+  ]);
+  if (lastZone.elementRect.x <= firstIssue.elementRect.x + firstIssue.elementRect.width) {
+    throw new Error(`${platformName} 横屏最右号码分区没有位于固定期号列右侧`);
+  }
+  if (matrix.elementRect.width < windowRect.width * 0.7) {
+    throw new Error(`${platformName} 横屏走势图没有使用主要可用宽度`);
+  }
+  if (lastNumber.elementRect.x + lastNumber.elementRect.width > windowRect.x + windowRect.width) {
+    throw new Error(`${platformName} 横屏最右 35 号表头超出窗口`);
+  }
+  const screenshot = await saveScreenshot(sessionId, platformName, "landscape-full-matrix");
+  if (screenshot.width <= screenshot.height) {
+    throw new Error(`${platformName} 横屏证据截图宽高异常：${screenshot.width}x${screenshot.height}`);
+  }
+
+  await setOrientation(sessionId, PORTRAIT_ORIENTATION);
+  await waitForSourceTexts(
+    sessionId,
+    ["大乐透 · 前区", "30 期 · 00021 至 00050", DEMONSTRATION_NOTICE],
+    40,
+  );
 }
 
 /**
@@ -451,6 +548,7 @@ async function verifyCurrentMode(sessionId, platformName) {
   await openTrends(sessionId);
   await verifyBottomNavigationLayout(sessionId);
   await verifyDefaultTrendSnapshot(sessionId, platformName);
+  await verifyLandscapeTrend(sessionId, platformName);
   await verifyFiftyDrawWorkflow(sessionId, platformName);
   process.stdout.write(`${platformName} ${acceptanceMode} V1.3 走势图检查通过\n`);
 }
@@ -471,6 +569,7 @@ async function verifyAndroid() {
     });
     await verifyCurrentMode(sessionId, "Android");
   } finally {
+    await restorePortraitOrientation(sessionId);
     await deleteSession(sessionId);
   }
 }
@@ -494,6 +593,7 @@ async function verifyIOS() {
     });
     await verifyCurrentMode(sessionId, "iOS");
   } finally {
+    await restorePortraitOrientation(sessionId);
     await deleteSession(sessionId);
   }
 }
