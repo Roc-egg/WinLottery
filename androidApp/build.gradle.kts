@@ -36,8 +36,8 @@ android {
             libs.versions.android.targetSdk
                 .get()
                 .toInt()
-        versionCode = 4
-        versionName = "1.2.0"
+        versionCode = 5
+        versionName = "1.3.0"
     }
     signingConfigs {
         // 调试版和发布版统一使用的仓库签名。
