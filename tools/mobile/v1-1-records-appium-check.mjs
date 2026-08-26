@@ -676,10 +676,15 @@ async function verifyRecordLayout(sessionId, config, screenshotLabel) {
 }
 
 /** 核对真实记录从 Room 读取后的卡片字段，避免只凭标题判断升级成功。 */
-async function verifyStoredRecordFields(sessionId, config, screenshotLabel) {
-  await scrollElementIntoView(sessionId, config.recordName);
+async function verifyStoredRecordFields(
+  sessionId,
+  config,
+  screenshotLabel,
+  recordName = config.recordName,
+) {
+  await scrollElementIntoView(sessionId, recordName);
   const expectedTexts = [
-    config.recordName,
+    recordName,
     `超级大乐透 · ${config.issue}`,
     "1 期 · 1 倍 · 1 注 · 2.00 元",
     "手动录入 ·",
@@ -1069,16 +1074,15 @@ async function runUpgradePreparePhase(sessionId, config) {
   await deleteSyntheticRecords(sessionId, config);
   await leaveRecordPage(sessionId, config);
   await createSyntheticRecord(sessionId, config);
-  await renameSyntheticRecord(sessionId, config);
-  await verifyStoredRecordFields(sessionId, config, "upgrade-before");
+  await verifyStoredRecordFields(sessionId, config, "upgrade-before", config.defaultRecordName);
   process.stdout.write(`${config.platformName} 升级前真实 Room 记录创建通过\n`);
 }
 
 /** 在新版 Release 中通过记录页逐项读取覆盖安装前保存的 Room 记录。 */
 async function runUpgradeVerifyPhase(sessionId, config) {
   await openRecordPage(sessionId, config);
-  await waitForSourceText(sessionId, config.recordName, 30);
-  await verifyStoredRecordFields(sessionId, config, "upgrade-after");
+  await waitForSourceText(sessionId, config.defaultRecordName, 30);
+  await verifyStoredRecordFields(sessionId, config, "upgrade-after", config.defaultRecordName);
   process.stdout.write(`${config.platformName} 升级后真实 Room 记录读取通过\n`);
 }
 

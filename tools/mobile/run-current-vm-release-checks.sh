@@ -139,6 +139,17 @@ sign_android_acceptance_apk() {
   "$apksigner_command" verify --verbose "$signed_apk"
 }
 
+# 复制并校验 Gradle 已签名的 APK，避免覆盖升级过程中意外切换证书。
+copy_verified_android_apk() {
+  local source_apk="$1"
+  local target_apk="$2"
+
+  require_release_file "$source_apk"
+  "$apksigner_command" verify --verbose "$source_apk"
+  cp "$source_apk" "$target_apk"
+  "$apksigner_command" verify --verbose "$target_apk"
+}
+
 # 从 APK 清单读取纯数字构建号，供升级方向检查使用。
 read_android_version_code() {
   local apk="$1"
@@ -152,6 +163,14 @@ read_android_version_name() {
   local apk="$1"
   "$aapt_command" dump badging "$apk" |
     sed -n "s/^package: .*versionName='\([^']*\)'.*/\1/p" |
+    head -n 1
+}
+
+# 读取 APK 首个签名证书的 SHA-256 摘要，供覆盖升级前比较证书一致性。
+read_android_signer_digest() {
+  local apk="$1"
+  "$apksigner_command" verify --print-certs "$apk" |
+    sed -n 's/^Signer #1 certificate SHA-256 digest: //p' |
     head -n 1
 }
 
@@ -591,6 +610,14 @@ verify_android_version_upgrade() {
     current_vm_fail "Android 当前展示版本不是 $UPGRADE_EXPECTED_CURRENT_VERSION_NAME"
   (( current_version_code > base_version_code )) || current_vm_fail "Android 当前构建号没有高于升级基线"
 
+  local expected_signer_digest acceptance_apk
+  expected_signer_digest="$(read_android_signer_digest "$current_release_apk")"
+  [[ -n "$expected_signer_digest" ]] || current_vm_fail "Android 当前 Release 签名摘要为空"
+  for acceptance_apk in "$base_debug_apk" "$base_release_apk" "$current_debug_apk"; do
+    [[ "$(read_android_signer_digest "$acceptance_apk")" == "$expected_signer_digest" ]] ||
+      current_vm_fail "Android 覆盖升级 APK 签名证书不一致"
+  done
+
   android_restore_required=1
   # Android 用户版系统只允许已安装的可调试包降级，先用同版本同证书 Debug 包无损切换安装状态。
   adb -s "$CURRENT_ANDROID_SERIAL_ID" install --no-incremental -r -d "$current_debug_apk"
@@ -881,10 +908,8 @@ if [[ "$VERIFY_VERSION_UPGRADE" == "1" ]]; then
   upgrade_base_signed_apk="$release_check_directory/upgrade-base-release-test-signed.apk"
   require_release_file "$upgrade_base_debug_apk"
   if [[ -s "$upgrade_base_configured_signed_apk" ]]; then
-    "$apksigner_command" verify --verbose "$upgrade_base_configured_signed_apk"
-    sign_android_acceptance_apk \
+    copy_verified_android_apk \
       "$upgrade_base_configured_signed_apk" \
-      "$upgrade_base_aligned_apk" \
       "$upgrade_base_signed_apk"
   else
     require_release_file "$upgrade_base_unsigned_apk"
@@ -893,11 +918,9 @@ if [[ "$VERIFY_VERSION_UPGRADE" == "1" ]]; then
       "$upgrade_base_aligned_apk" \
       "$upgrade_base_signed_apk"
   fi
-  upgrade_base_aligned_debug_apk="$release_check_directory/upgrade-base-debug-aligned.apk"
   upgrade_base_signed_debug_apk="$release_check_directory/upgrade-base-debug-test-signed.apk"
-  sign_android_acceptance_apk \
+  copy_verified_android_apk \
     "$upgrade_base_debug_apk" \
-    "$upgrade_base_aligned_debug_apk" \
     "$upgrade_base_signed_debug_apk"
 
   upgrade_base_ios_derived_data="$release_check_directory/upgrade-base-ios-derived-data"
@@ -927,23 +950,19 @@ readonly unsigned_android_apk="$REPOSITORY_ROOT/androidApp/build/outputs/apk/rel
 readonly configured_signed_android_apk="$REPOSITORY_ROOT/androidApp/build/outputs/apk/release/androidApp-release.apk"
 readonly android_aab="$REPOSITORY_ROOT/androidApp/build/outputs/bundle/release/androidApp-release.aab"
 readonly android_debug_apk="$REPOSITORY_ROOT/androidApp/build/outputs/apk/debug/androidApp-debug.apk"
-readonly aligned_android_debug_apk="$release_check_directory/androidApp-debug-aligned.apk"
 readonly signed_android_debug_apk="$release_check_directory/androidApp-debug-test-signed.apk"
 readonly aligned_android_apk="$release_check_directory/androidApp-release-aligned.apk"
 readonly signed_android_apk="$release_check_directory/androidApp-release-test-signed.apk"
 require_release_file "$android_aab"
 if [[ "$VERIFY_INSTALL_LIFECYCLE" == "1" || "$VERIFY_PROCESS_RECOVERY" == "1" || "$VERIFY_ABRUPT_TERMINATION" == "1" || "$VERIFY_CRASH_RECOVERY" == "1" || "$VERIFY_MEMORY_PRESSURE" == "1" || "$VERIFY_VERSION_UPGRADE" == "1" ]]; then
   require_release_file "$android_debug_apk"
-  sign_android_acceptance_apk \
+  copy_verified_android_apk \
     "$android_debug_apk" \
-    "$aligned_android_debug_apk" \
     "$signed_android_debug_apk"
 fi
 
 if [[ -s "$configured_signed_android_apk" ]]; then
-  "$apksigner_command" verify --verbose "$configured_signed_android_apk"
-  cp "$configured_signed_android_apk" "$signed_android_apk"
-  "$apksigner_command" verify --verbose "$signed_android_apk"
+  copy_verified_android_apk "$configured_signed_android_apk" "$signed_android_apk"
 else
   require_release_file "$unsigned_android_apk"
   sign_android_acceptance_apk "$unsigned_android_apk" "$aligned_android_apk" "$signed_android_apk"
