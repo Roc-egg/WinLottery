@@ -287,6 +287,7 @@ private fun MainDestination.label(): String =
     when (this) {
         MainDestination.VERIFICATION -> "核对"
         MainDestination.NUMBER_PICKER -> "选号"
+        MainDestination.TRENDS -> "走势"
         MainDestination.RECORDS -> "记录"
     }
 
@@ -295,5 +296,6 @@ private fun MainDestination.icon(): ImageVector =
     when (this) {
         MainDestination.VERIFICATION -> LotteryIcons.Verification
         MainDestination.NUMBER_PICKER -> LotteryIcons.NumberPicker
+        MainDestination.TRENDS -> LotteryIcons.Trends
         MainDestination.RECORDS -> LotteryIcons.History
     }

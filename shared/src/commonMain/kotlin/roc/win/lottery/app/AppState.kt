@@ -26,6 +26,15 @@ sealed interface AppScreen {
     ) : AppScreen
 
     /**
+     * 历史开奖基本走势一级页面。
+     *
+     * @property chart 当前会话中的走势图配置与快照。
+     */
+    data class Trends(
+        val chart: TrendChartState,
+    ) : AppScreen
+
+    /**
      * 本机结构化票据记录页。
      *
      * @property filter 当前彩种筛选。

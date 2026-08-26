@@ -78,6 +78,9 @@ class LotteryAppController(
     /** 只在当前控制器会话中保留的随机选号配置与结果。 */
     private var randomNumberPickerState = RandomNumberPickerState()
 
+    /** 当前控制器会话内保留的走势图配置与演示快照。 */
+    private var trendChartState = TrendChartState.create()
+
     /**
      * 从拍照或导图开始一次全新的本地分析。
      *
@@ -183,6 +186,7 @@ class LotteryAppController(
             }
 
             is AppScreen.NumberPicker,
+            is AppScreen.Trends,
             is AppScreen.Analysis,
             is AppScreen.Review,
             is AppScreen.Records,
@@ -242,6 +246,31 @@ class LotteryAppController(
         mutableUiState.update { state ->
             if (state.screen is AppScreen.NumberPicker) {
                 state.copy(screen = AppScreen.NumberPicker(updatedPicker))
+            } else {
+                state
+            }
+        }
+    }
+
+    /** 打开基本走势图一级页面并结束此前的临时票面流程。 */
+    suspend fun showTrendChart() {
+        flowGeneration += 1L
+        clearTemporaryImage()
+        lastQuerySourceScreen = null
+        queryReturnScreen = null
+        resetConfirmationPersistence()
+        resetTicketRecordManagement()
+        mutableUiState.update { it.copy(screen = AppScreen.Trends(trendChartState)) }
+    }
+
+    /** 更新走势图的彩种、号码区域或样本范围。 */
+    fun updateTrendChart(action: TrendChartAction) {
+        val screen = mutableUiState.value.screen as? AppScreen.Trends ?: return
+        val updatedChart = screen.chart.apply(action)
+        trendChartState = updatedChart
+        mutableUiState.update { state ->
+            if (state.screen is AppScreen.Trends) {
+                state.copy(screen = AppScreen.Trends(updatedChart))
             } else {
                 state
             }

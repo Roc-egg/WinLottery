@@ -17,6 +17,7 @@ import roc.win.lottery.domain.DrawResult
 import roc.win.lottery.domain.DrawStatus
 import roc.win.lottery.domain.Issue
 import roc.win.lottery.domain.LotteryPrizeCalculator
+import roc.win.lottery.domain.LotteryTrendArea
 import roc.win.lottery.domain.LotteryType
 import roc.win.lottery.domain.PrizeCheckStatus
 import roc.win.lottery.domain.PrizeTier
@@ -25,6 +26,7 @@ import roc.win.lottery.domain.RuleVersion
 import roc.win.lottery.domain.SourceEvidence
 import roc.win.lottery.domain.TicketDraft
 import roc.win.lottery.domain.TicketValidator
+import roc.win.lottery.domain.TrendSampleSize
 import roc.win.lottery.persistence.CURRENT_TICKET_RECORD_DATA_VERSION
 import roc.win.lottery.persistence.StoredTicketRecord
 import roc.win.lottery.persistence.TicketAcquisitionSource
@@ -1095,6 +1097,38 @@ class LotteryAppControllerTest {
 
             assertIs<AppScreen.NumberPicker>(controller.uiState.value.screen)
             assertEquals(listOf("b1-demo-ticket"), paths.deletedImageIds)
+
+            controller.navigateBack()
+
+            assertEquals(AppScreen.Home, controller.uiState.value.screen)
+        }
+
+    /** 切换到走势一级页面必须清理临时票图，并在会话内保留筛选配置。 */
+    @Test
+    fun trendChartIsAnIndependentMainDestination() =
+        runTest {
+            val paths = TrackingAppPaths()
+            val controller = createController(CountingDrawRepository(), paths)
+            controller.startAnalysis(ImageAcquisitionSource.SYSTEM_PICKER)
+
+            controller.showTrendChart()
+
+            assertIs<AppScreen.Trends>(controller.uiState.value.screen)
+            assertEquals(listOf("b1-demo-ticket"), paths.deletedImageIds)
+            controller.updateTrendChart(
+                TrendChartAction.ChangeLotteryType(LotteryType.DOUBLE_COLOR_BALL),
+            )
+            controller.updateTrendChart(TrendChartAction.ChangeArea(LotteryTrendArea.SECONDARY))
+            controller.updateTrendChart(
+                TrendChartAction.ChangeSampleSize(TrendSampleSize.LAST_10),
+            )
+            controller.navigateHome()
+            controller.showTrendChart()
+
+            val restored = assertIs<AppScreen.Trends>(controller.uiState.value.screen).chart
+            assertEquals(LotteryType.DOUBLE_COLOR_BALL, restored.lotteryType)
+            assertEquals(LotteryTrendArea.SECONDARY, restored.area)
+            assertEquals(TrendSampleSize.LAST_10, restored.sampleSize)
 
             controller.navigateBack()
 

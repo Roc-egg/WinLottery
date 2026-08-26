@@ -3,6 +3,7 @@ package roc.win.lottery.app.ui
 import androidx.compose.ui.graphics.vector.ImageVector
 import com.composables.icons.lucide.ArrowLeft
 import com.composables.icons.lucide.Camera
+import com.composables.icons.lucide.ChartNoAxesCombined
 import com.composables.icons.lucide.Check
 import com.composables.icons.lucide.ClipboardCheck
 import com.composables.icons.lucide.Dices
@@ -46,6 +47,9 @@ object LotteryIcons {
 
     /** 随机选号一级目的地图标。 */
     val NumberPicker: ImageVector = Lucide.Dices
+
+    /** 基本走势图一级目的地图标。 */
+    val Trends: ImageVector = Lucide.ChartNoAxesCombined
 
     /** 查询和搜索图标。 */
     val Search: ImageVector = Lucide.Search

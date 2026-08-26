@@ -8,6 +8,9 @@ enum class MainDestination {
     /** 合法随机号码生成工作区。 */
     NUMBER_PICKER,
 
+    /** 历史开奖基本走势工作区。 */
+    TRENDS,
+
     /** 本机结构化票据记录工作区。 */
     RECORDS,
 }

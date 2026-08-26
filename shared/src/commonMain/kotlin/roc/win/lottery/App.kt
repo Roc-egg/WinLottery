@@ -29,6 +29,7 @@ import roc.win.lottery.app.ui.MultiPeriodVerificationScreen
 import roc.win.lottery.app.ui.RandomNumberScreen
 import roc.win.lottery.app.ui.ReviewScreen
 import roc.win.lottery.app.ui.TicketRecordsScreen
+import roc.win.lottery.app.ui.TrendScreen
 import roc.win.lottery.app.ui.VerificationResultScreen
 import roc.win.lottery.persistence.StoredTicketRecord
 import roc.win.lottery.recognition.ImageAcquisitionSource
@@ -56,6 +57,7 @@ fun App(container: AppContainer = remember { AppContainer.createDemo(getPlatform
             when (destination) {
                 MainDestination.VERIFICATION -> controller.navigateHome()
                 MainDestination.NUMBER_PICKER -> controller.showRandomNumberPicker()
+                MainDestination.TRENDS -> controller.showTrendChart()
                 MainDestination.RECORDS -> controller.showTicketRecords()
             }
         }
@@ -123,6 +125,15 @@ fun App(container: AppContainer = remember { AppContainer.createDemo(getPlatform
                     availableMainDestinations = availableMainDestinations,
                     onMainDestinationSelected = onMainDestinationSelected,
                     onAction = controller::updateRandomNumberPicker,
+                )
+            }
+
+            is AppScreen.Trends -> {
+                TrendScreen(
+                    chart = screen.chart,
+                    availableMainDestinations = availableMainDestinations,
+                    onMainDestinationSelected = onMainDestinationSelected,
+                    onAction = controller::updateTrendChart,
                 )
             }
 
