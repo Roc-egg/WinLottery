@@ -496,7 +496,7 @@ class LotteryTrendCalculator {
 }
 
 /** 返回单期指定区域的开奖号码。 */
-private fun HistoricalDraw.numbers(area: LotteryTrendArea): List<Int> =
+internal fun HistoricalDraw.numbers(area: LotteryTrendArea): List<Int> =
     when (area) {
         LotteryTrendArea.PRIMARY -> primaryNumbers
         LotteryTrendArea.SECONDARY -> secondaryNumbers
