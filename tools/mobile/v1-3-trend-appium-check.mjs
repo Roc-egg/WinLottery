@@ -42,11 +42,20 @@ const LANDSCAPE_ORIENTATION = "LANDSCAPE";
 /** WebDriver 竖屏方向值。 */
 const PORTRAIT_ORIENTATION = "PORTRAIT";
 
-/** 走势图必须持续展示的数据来源边界。 */
-const DEMONSTRATION_NOTICE = "受控演示快照，非实时官方开奖，不参与预测。";
+/** 走势图必须持续展示的真实数据来源标记。 */
+const OFFICIAL_HISTORY_NOTICE = "官方历史开奖";
+
+/** 走势图加载失败标记。 */
+const HISTORY_LOAD_FAILURE_NOTICE = "历史开奖暂时不可用";
+
+/** 产品冻结的真实开奖样本档位。 */
+const TREND_SAMPLE_SIZES = [50, 80, 120, 300, 500];
 
 /** 走势图必须持续展示的责任边界。 */
 const RESPONSIBLE_USE_NOTICE = "历史分布不代表未来规律，不构成购彩建议。";
+
+/** Android UiAutomation 瞬态未连接时允许的会话创建总次数。 */
+const SESSION_CREATION_ATTEMPT_COUNT = 3;
 
 if (![STANDARD_MODE, MAXIMUM_MODE].includes(acceptanceMode)) {
   throw new Error(`未知 V1.3 验收模式：${acceptanceMode}`);
@@ -142,11 +151,27 @@ async function restorePortraitOrientation(sessionId) {
 
 /** 创建指定平台的 Appium 会话。 */
 async function createSession(capabilities) {
-  const value = await webdriverRequest("/session", "POST", {
-    capabilities: { alwaysMatch: capabilities },
-  });
-  if (!value?.sessionId) throw new Error("Appium 未返回会话标识");
-  return value.sessionId;
+  for (let attempt = 1; attempt <= SESSION_CREATION_ATTEMPT_COUNT; attempt += 1) {
+    try {
+      const value = await webdriverRequest("/session", "POST", {
+        capabilities: { alwaysMatch: capabilities },
+      });
+      if (!value?.sessionId) throw new Error("Appium 未返回会话标识");
+      return value.sessionId;
+    } catch (error) {
+      const isTransientUiAutomationFailure = error.message.includes(
+        "UiAutomation not connected",
+      );
+      if (!isTransientUiAutomationFailure || attempt === SESSION_CREATION_ATTEMPT_COUNT) {
+        throw error;
+      }
+      process.stderr.write(
+        `Android UiAutomation 尚未就绪，等待后重试会话（${attempt}/${SESSION_CREATION_ATTEMPT_COUNT}）\n`,
+      );
+      await waitForPageUpdate(3000);
+    }
+  }
+  throw new Error("Appium 会话创建重试次数耗尽");
 }
 
 /** 删除会话，失败时不覆盖原始验收错误。 */
@@ -185,6 +210,77 @@ async function waitForSourceTexts(sessionId, expectedTexts, attemptCount = 24) {
   }
   const missingTexts = expectedTexts.filter((text) => !source.includes(text));
   throw new Error(`等待页面文案超时：${missingTexts.join("、")}`);
+}
+
+/** 等待真实历史开奖状态条，并动态返回当前样本首末期号。 */
+async function waitForTrendRange(
+  sessionId,
+  sampleSize,
+  issueLength,
+  expectedLatestIssue,
+  attemptCount = 80,
+) {
+  const rangePattern = new RegExp(
+    `${sampleSize} 期 · (\\d{${issueLength}}) 至 (\\d{${issueLength}})`,
+  );
+  let source = "";
+  for (let attempt = 0; attempt < attemptCount; attempt += 1) {
+    source = await readSource(sessionId);
+    if (source.includes(HISTORY_LOAD_FAILURE_NOTICE)) {
+      throw new Error(`页面未能加载官方历史开奖：${HISTORY_LOAD_FAILURE_NOTICE}`);
+    }
+    const match = source.match(rangePattern);
+    if (source.includes(OFFICIAL_HISTORY_NOTICE) && match) {
+      const [, firstIssue, lastIssue] = match;
+      if (lastIssue !== expectedLatestIssue) {
+        throw new Error(
+          `页面最新期 ${lastIssue} 与官网当前最新期 ${expectedLatestIssue} 不一致`,
+        );
+      }
+      if (firstIssue >= lastIssue) {
+        throw new Error(`历史样本首末期号顺序异常：${firstIssue} 至 ${lastIssue}`);
+      }
+      return { source, firstIssue, lastIssue };
+    }
+    await waitForPageUpdate(500);
+  }
+  throw new Error(`等待 ${sampleSize} 期真实历史开奖超时`);
+}
+
+/** 从两家官网读取验收时刻的最新已发布期号。 */
+async function fetchOfficialLatestIssues() {
+  const [superLottoResponse, doubleColorBallResponse] = await Promise.all([
+    fetch(
+      "https://webapi.sporttery.cn/gateway/lottery/getHistoryPageListV1.qry" +
+        "?gameNo=85&provinceId=0&pageSize=1&pageNo=1&isVerify=1",
+      { headers: { "User-Agent": "WinLottery-V1.3-Acceptance/1.0" } },
+    ),
+    fetch(
+      "https://www.cwl.gov.cn/cwl_admin/front/cwlkj/search/kjxx/findDrawNotice" +
+        "?name=ssq&pageNo=1&pageSize=1&systemType=PC",
+      {
+        headers: {
+          Referer: "https://www.cwl.gov.cn/",
+          "User-Agent": "WinLottery-V1.3-Acceptance/1.0",
+        },
+      },
+    ),
+  ]);
+  if (!superLottoResponse.ok || !doubleColorBallResponse.ok) {
+    throw new Error(
+      `无法读取官网最新期：体彩 HTTP ${superLottoResponse.status}，福彩 HTTP ${doubleColorBallResponse.status}`,
+    );
+  }
+  const [superLottoPayload, doubleColorBallPayload] = await Promise.all([
+    superLottoResponse.json(),
+    doubleColorBallResponse.json(),
+  ]);
+  const superLotto = superLottoPayload?.value?.list?.[0]?.lotteryDrawNum;
+  const doubleColorBall = doubleColorBallPayload?.result?.[0]?.code;
+  if (!/^\d{5}$/.test(superLotto) || !/^\d{7}$/.test(doubleColorBall)) {
+    throw new Error("官网最新期号响应结构异常");
+  }
+  return { superLotto, doubleColorBall };
 }
 
 /** 精确查找所有同名辅助功能元素。 */
@@ -362,12 +458,60 @@ async function selectOption(sessionId, accessibilityName, platformName, directio
   await waitForElementSelected(sessionId, accessibilityName, platformName);
 }
 
+/** 在横向样本筛选条中找到并选择指定期数。 */
+async function selectSampleSize(sessionId, sampleSize, platformName) {
+  const targetName = `${sampleSize} 期`;
+  const targetIndex = TREND_SAMPLE_SIZES.indexOf(sampleSize);
+  if (targetIndex < 0) throw new Error(`未知样本期数：${sampleSize}`);
+  await scrollElementIntoView(sessionId, "期数", "down");
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const targets = await findVisibleExactElements(sessionId, targetName);
+    if (targets.length > 0) {
+      if (platformName === "iOS") {
+        const selectableElement = await findIOSSelectableElement(sessionId, targetName);
+        const elementId = readElementId(selectableElement, targetName);
+        await webdriverRequest(`/session/${sessionId}/element/${elementId}/click`, "POST", {});
+      } else {
+        await tapElementCenter(sessionId, targets[0].elementRect);
+      }
+      await waitForElementSelected(sessionId, targetName, platformName);
+      return;
+    }
+
+    const visibleOptions = [];
+    for (const value of TREND_SAMPLE_SIZES) {
+      const elements = await findVisibleExactElements(sessionId, `${value} 期`);
+      if (elements.length > 0) {
+        visibleOptions.push({ index: TREND_SAMPLE_SIZES.indexOf(value), rect: elements[0].elementRect });
+      }
+    }
+    if (visibleOptions.length === 0) throw new Error("当前窗口无法定位样本筛选条");
+    visibleOptions.sort((first, second) => first.index - second.index);
+    const rowRect = visibleOptions[0].rect;
+    const windowRect = await webdriverRequest(`/session/${sessionId}/window/rect`);
+    const centerY = Math.round(rowRect.y + rowRect.height / 2);
+    const movesTowardLargerSamples = targetIndex > visibleOptions.at(-1).index;
+    const leftX = Math.round(windowRect.x + windowRect.width * 0.28);
+    const rightX = Math.round(windowRect.x + windowRect.width * 0.88);
+    await performTouchSwipe(
+      sessionId,
+      movesTowardLargerSamples ? rightX : leftX,
+      centerY,
+      movesTowardLargerSamples ? leftX : rightX,
+      centerY,
+      520,
+    );
+    await waitForPageUpdate(350);
+  }
+  throw new Error(`横向滚动后仍无法选择：${targetName}`);
+}
+
 /** 从任意一级页面进入走势工作区。 */
 async function openTrends(sessionId) {
   const source = await readSource(sessionId);
-  if (source.includes("期号与01至35号码列") && source.includes(DEMONSTRATION_NOTICE)) return;
+  if (source.includes("期号与01至35号码列") && source.includes(OFFICIAL_HISTORY_NOTICE)) return;
   await clickBottommostExactElement(sessionId, "走势");
-  await waitForSourceText(sessionId, DEMONSTRATION_NOTICE);
+  await waitForSourceText(sessionId, OFFICIAL_HISTORY_NOTICE, 80);
 }
 
 /** 从任意一级页面进入核对工作区。 */
@@ -433,20 +577,23 @@ async function verifyCompactNavigationLayout(sessionId) {
 }
 
 /** 核对最宽大乐透前区在横屏无需横向滑动即可完整预览。 */
-async function verifyLandscapeTrend(sessionId, platformName) {
+async function verifyLandscapeTrend(sessionId, platformName, portraitRange, latestIssue) {
   const windowRect = await setOrientation(sessionId, LANDSCAPE_ORIENTATION);
   await saveScreenshot(sessionId, platformName, "landscape-before-assertions");
+  const landscapeRange = await waitForTrendRange(sessionId, 50, 5, latestIssue);
+  if (landscapeRange.firstIssue !== portraitRange.firstIssue) {
+    throw new Error(`${platformName} 旋转后 50 期样本起点发生变化`);
+  }
   const matrixDescription = "横屏完整号码矩阵，01至35全部可见";
   await waitForSourceTexts(
     sessionId,
     [
       matrixDescription,
       "大乐透 · 前区",
-      "30 期 · 00021 至 00050",
       "三区 25至35",
       "号码 35",
-      "期号 00021",
-      DEMONSTRATION_NOTICE,
+      `期号 ${portraitRange.firstIssue}`,
+      OFFICIAL_HISTORY_NOTICE,
     ],
     40,
   );
@@ -455,7 +602,7 @@ async function verifyLandscapeTrend(sessionId, platformName) {
     findVisibleExactElement(sessionId, matrixDescription),
     findVisibleExactElement(sessionId, "三区 25至35"),
     findVisibleExactElement(sessionId, "号码 35"),
-    findVisibleExactElement(sessionId, "期号 00021"),
+    findVisibleExactElement(sessionId, `期号 ${portraitRange.firstIssue}`),
   ]);
   if (lastZone.elementRect.x <= firstIssue.elementRect.x + firstIssue.elementRect.width) {
     throw new Error(`${platformName} 横屏最右号码分区没有位于固定期号列右侧`);
@@ -472,11 +619,10 @@ async function verifyLandscapeTrend(sessionId, platformName) {
   }
 
   await setOrientation(sessionId, PORTRAIT_ORIENTATION);
-  await waitForSourceTexts(
-    sessionId,
-    ["大乐透 · 前区", "30 期 · 00021 至 00050", DEMONSTRATION_NOTICE],
-    40,
-  );
+  const restoredRange = await waitForTrendRange(sessionId, 50, 5, latestIssue);
+  if (restoredRange.firstIssue !== portraitRange.firstIssue) {
+    throw new Error(`${platformName} 恢复竖屏后 50 期样本起点发生变化`);
+  }
 }
 
 /**
@@ -510,27 +656,46 @@ async function verifyHorizontalMatrixScroll(sessionId, platformName, issueValue)
   }
 }
 
-/** 核对默认大乐透前区 30 期样本。 */
-async function verifyDefaultTrendSnapshot(sessionId, platformName) {
-  await waitForSourceText(sessionId, DEMONSTRATION_NOTICE);
+/** 核对默认大乐透前区 50 期真实样本。 */
+async function verifyDefaultTrendSnapshot(sessionId, platformName, latestIssue) {
+  const range = await waitForTrendRange(sessionId, 50, 5, latestIssue);
   await scrollElementIntoView(sessionId, "大乐透 · 前区", "up");
-  await scrollElementIntoView(sessionId, "30 期 · 00021 至 00050", "up");
-  await scrollElementIntoView(sessionId, "样本内期号连续", "up");
-  await scrollElementIntoView(sessionId, "期号 00021", "up");
+  await scrollElementIntoView(
+    sessionId,
+    `50 期 · ${range.firstIssue} 至 ${range.lastIssue}`,
+    "up",
+  );
+  await scrollElementIntoView(sessionId, `期号 ${range.firstIssue}`, "up");
   await waitForSourceText(sessionId, "期号与01至35号码列");
   await saveScreenshot(sessionId, platformName, "default-trend");
+  return range;
 }
 
-/** 核对双色球蓝球最近 50 期、矩阵滚动、统计和会话保留。 */
-async function verifyFiftyDrawWorkflow(sessionId, platformName) {
+/** 核对 50/80/120/300/500 五档均从同一官方最新期向前采样。 */
+async function verifySampleSizeWorkflow(sessionId, platformName, latestIssue) {
+  for (const sampleSize of [80, 120, 300, 500]) {
+    await selectSampleSize(sessionId, sampleSize, platformName);
+    await waitForTrendRange(sessionId, sampleSize, 5, latestIssue);
+  }
+  await saveScreenshot(sessionId, platformName, "five-hundred-draw-range");
+  await selectSampleSize(sessionId, 50, platformName);
+  return waitForTrendRange(sessionId, 50, 5, latestIssue);
+}
+
+/** 核对双色球蓝球真实 50 期、矩阵滚动、统计和会话保留。 */
+async function verifyDoubleColorBallWorkflow(sessionId, platformName, latestIssue) {
   await selectOption(sessionId, "双色球", platformName, "down");
   await selectOption(sessionId, "蓝球", platformName, "up");
-  await selectOption(sessionId, "50 期", platformName, "up");
+  const range = await waitForTrendRange(sessionId, 50, 7, latestIssue);
   await scrollElementIntoView(sessionId, "双色球 · 蓝球", "up");
-  await scrollElementIntoView(sessionId, "50 期 · 0000001 至 0000050", "up");
+  await scrollElementIntoView(
+    sessionId,
+    `50 期 · ${range.firstIssue} 至 ${range.lastIssue}`,
+    "up",
+  );
   await scrollElementIntoView(sessionId, "期号与01至16号码列", "up");
-  await verifyHorizontalMatrixScroll(sessionId, platformName, "0000001");
-  await scrollElementIntoView(sessionId, "期号 0000050", "up");
+  await verifyHorizontalMatrixScroll(sessionId, platformName, range.firstIssue);
+  await scrollElementIntoView(sessionId, `期号 ${range.lastIssue}`, "up");
   await scrollElementIntoView(sessionId, "最大遗漏", "up");
   await findVisibleExactElement(sessionId, RESPONSIBLE_USE_NOTICE);
   await swipeVertically(sessionId, "up");
@@ -540,16 +705,30 @@ async function verifyFiftyDrawWorkflow(sessionId, platformName) {
   await openVerification(sessionId);
   await openTrends(sessionId);
   await scrollElementIntoView(sessionId, "双色球 · 蓝球", "up");
-  await waitForSourceText(sessionId, "50 期 · 0000001 至 0000050");
+  const restoredRange = await waitForTrendRange(sessionId, 50, 7, latestIssue);
+  if (restoredRange.firstIssue !== range.firstIssue) {
+    throw new Error(`${platformName} 一级页面往返后双色球会话样本发生变化`);
+  }
 }
 
 /** 执行当前字号的完整 V1.3 走势图交互验收。 */
 async function verifyCurrentMode(sessionId, platformName) {
   await openTrends(sessionId);
   await verifyBottomNavigationLayout(sessionId);
-  await verifyDefaultTrendSnapshot(sessionId, platformName);
-  await verifyLandscapeTrend(sessionId, platformName);
-  await verifyFiftyDrawWorkflow(sessionId, platformName);
+  const defaultRange =
+    await verifyDefaultTrendSnapshot(sessionId, platformName, officialLatestIssues.superLotto);
+  await verifyLandscapeTrend(
+    sessionId,
+    platformName,
+    defaultRange,
+    officialLatestIssues.superLotto,
+  );
+  await verifySampleSizeWorkflow(sessionId, platformName, officialLatestIssues.superLotto);
+  await verifyDoubleColorBallWorkflow(
+    sessionId,
+    platformName,
+    officialLatestIssues.doubleColorBall,
+  );
   process.stdout.write(`${platformName} ${acceptanceMode} V1.3 走势图检查通过\n`);
 }
 
@@ -597,6 +776,13 @@ async function verifyIOS() {
     await deleteSession(sessionId);
   }
 }
+
+/** 本次验收启动时两家官网的最新已发布期号。 */
+const officialLatestIssues = await fetchOfficialLatestIssues();
+process.stdout.write(
+  `官网当前最新期：大乐透 ${officialLatestIssues.superLotto}，` +
+    `双色球 ${officialLatestIssues.doubleColorBall}\n`,
+);
 
 if (targetPlatform === "both" || targetPlatform === "android") await verifyAndroid();
 if (targetPlatform === "both" || targetPlatform === "ios") await verifyIOS();

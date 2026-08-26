@@ -20,7 +20,7 @@ readonly SCREENSHOT_DIRECTORY="$REPOSITORY_ROOT/build/reports/v1-3-trends"
 source "$SCRIPT_DIRECTORY/current-vm-guard.sh"
 verify_current_mobile_vms
 
-for required_command in appium curl node tail; do
+for required_command in appium curl node rg tail; do
   command -v "$required_command" >/dev/null || current_vm_fail "缺少命令 $required_command"
 done
 [[ -f "$APPIUM_CHECK_SCRIPT" ]] || current_vm_fail "缺少 V1.3 Appium 检查脚本"
@@ -61,9 +61,31 @@ restart_apps_with_font_size() {
   xcrun simctl launch "$CURRENT_IOS_SIMULATOR_UDID" "$IOS_APPLICATION_ID" >/dev/null
 }
 
+# 等待其他测试释放 Android UiAutomation，避免干扰同一虚拟机上的既有任务。
+wait_for_android_instrumentation_slot() {
+  local attempt
+  local activity_snapshot
+  for attempt in {1..180}; do
+    activity_snapshot="$(adb -s "$CURRENT_ANDROID_SERIAL_ID" shell dumpsys activity)"
+    if ! print -r -- "$activity_snapshot" | rg \
+      --count-matches \
+      --ignore-case \
+      'Active instrumentation|ActiveInstrumentation' \
+      >/dev/null; then
+      return
+    fi
+    if (( attempt == 1 )); then
+      print "检测到其他 Android instrumentation，等待其释放 UiAutomation"
+    fi
+    sleep 1
+  done
+  current_vm_fail "等待其他 Android instrumentation 释放 UiAutomation 超时"
+}
+
 # 调用双端 Appium 专项，并在失败时输出服务端诊断和证据目录。
 run_appium_phase() {
   local phase="$1"
+  wait_for_android_instrumentation_slot
   if ! node \
     "$APPIUM_CHECK_SCRIPT" \
     "$APPIUM_BASE_URL" \
@@ -115,5 +137,5 @@ run_appium_phase standard
 restart_apps_with_font_size "$ANDROID_MAXIMUM_FONT_SCALE" "$IOS_MAXIMUM_CONTENT_SIZE"
 run_appium_phase maximum
 
-print "双虚拟机 V1.3 标准与最大字号、竖横屏切换、四级导航、50 期边界、横屏 01 至 35 完整矩阵和固定期号列检查通过"
+print "双虚拟机 V1.3 标准与最大字号、竖横屏切换、四级导航、50/80/120/300/500 期真实样本、官网最新期锚点、横屏 01 至 35 完整矩阵和固定期号列检查通过"
 print "截图证据：$SCREENSHOT_DIRECTORY"
