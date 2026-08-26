@@ -910,10 +910,8 @@ fi
 
 if [[ -s "$configured_signed_android_apk" ]]; then
   "$apksigner_command" verify --verbose "$configured_signed_android_apk"
-  sign_android_acceptance_apk \
-    "$configured_signed_android_apk" \
-    "$aligned_android_apk" \
-    "$signed_android_apk"
+  cp "$configured_signed_android_apk" "$signed_android_apk"
+  "$apksigner_command" verify --verbose "$signed_android_apk"
 else
   require_release_file "$unsigned_android_apk"
   sign_android_acceptance_apk "$unsigned_android_apk" "$aligned_android_apk" "$signed_android_apk"
