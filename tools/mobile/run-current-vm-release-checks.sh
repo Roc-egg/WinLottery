@@ -13,7 +13,11 @@ readonly IOS_EXPECTED_BUNDLE_ID="roc.win.lottery.WinLottery"
 readonly IOS_DEBUG_CRASH_ENVIRONMENT="WINLOTTERY_DEBUG_CRASH_ON_LAUNCH"
 readonly CONTROLLED_CRASH_MARKER="WinLotteryControlledCrashAcceptance"
 readonly MEMORY_PRESSURE_MARKER="WinLotteryMemoryPressureAcceptance"
-readonly UPGRADE_BASE_REVISION="2ec6791"
+readonly UPGRADE_BASE_REVISION="724adec"
+readonly UPGRADE_EXPECTED_BASE_BUILD_NUMBER="4"
+readonly UPGRADE_EXPECTED_BASE_VERSION_NAME="1.2.0"
+readonly UPGRADE_EXPECTED_CURRENT_BUILD_NUMBER="5"
+readonly UPGRADE_EXPECTED_CURRENT_VERSION_NAME="1.3.0"
 readonly UPGRADE_RECORDS_CHECK_SCRIPT="$SCRIPT_DIRECTORY/v1-1-records-appium-check.mjs"
 readonly UPGRADE_APPIUM_PORT=4727
 readonly UPGRADE_APPIUM_BASE_URL="http://127.0.0.1:$UPGRADE_APPIUM_PORT"
@@ -61,7 +65,7 @@ cleanup_release_check() {
 
 # 启动只服务于真实 Room 覆盖升级阶段的本机 Appium，并保留截图与日志供复核。
 start_upgrade_appium() {
-  upgrade_evidence_directory="$(mktemp -d "${TMPDIR:-/tmp}/winlottery-v1-1-upgrade.XXXXXX")"
+  upgrade_evidence_directory="$(mktemp -d "${TMPDIR:-/tmp}/winlottery-version-upgrade.XXXXXX")"
   upgrade_screenshot_directory="$upgrade_evidence_directory/screenshots"
   upgrade_appium_log="$upgrade_evidence_directory/appium.log"
   mkdir -p "$upgrade_screenshot_directory"
@@ -106,7 +110,7 @@ run_upgrade_record_phase() {
     "$UPGRADE_IOS_PLATFORM_VERSION" \
     "$IOS_EXPECTED_BUNDLE_ID" \
     "$target_platform"; then
-    print -u2 "V1.1 $phase/$target_platform 真实 Room 升级验收失败"
+    print -u2 "版本 $phase/$target_platform 真实 Room 升级验收失败"
     tail -n 120 "$upgrade_appium_log" >&2 || true
     print -u2 "升级验收证据保留于：$upgrade_evidence_directory"
     exit 1
@@ -140,6 +144,14 @@ read_android_version_code() {
   local apk="$1"
   "$aapt_command" dump badging "$apk" |
     sed -n "s/^package: .*versionCode='\([^']*\)'.*/\1/p" |
+    head -n 1
+}
+
+# 从 APK 清单读取展示版本，供升级方向检查使用。
+read_android_version_name() {
+  local apk="$1"
+  "$aapt_command" dump badging "$apk" |
+    sed -n "s/^package: .*versionName='\([^']*\)'.*/\1/p" |
     head -n 1
 }
 
@@ -562,11 +574,21 @@ verify_android_version_upgrade() {
   local persistent_marker="files/upgrade-acceptance/persistent-marker"
   local ticket_marker="cache/ticket-images/upgrade-marker.jpg"
   local camera_marker="cache/camera-captures/upgrade-marker.jpg"
-  local base_version_code current_version_code
+  local base_version_code current_version_code base_version_name current_version_name
   base_version_code="$(read_android_version_code "$base_release_apk")"
   current_version_code="$(read_android_version_code "$current_release_apk")"
+  base_version_name="$(read_android_version_name "$base_release_apk")"
+  current_version_name="$(read_android_version_name "$current_release_apk")"
   print -r -- "$base_version_code" | rg -q '^[0-9]+$' || current_vm_fail "Android 基线构建号不是纯数字"
   print -r -- "$current_version_code" | rg -q '^[0-9]+$' || current_vm_fail "Android 当前构建号不是纯数字"
+  [[ "$base_version_code" == "$UPGRADE_EXPECTED_BASE_BUILD_NUMBER" ]] ||
+    current_vm_fail "Android 基线构建号不是 $UPGRADE_EXPECTED_BASE_BUILD_NUMBER"
+  [[ "$base_version_name" == "$UPGRADE_EXPECTED_BASE_VERSION_NAME" ]] ||
+    current_vm_fail "Android 基线展示版本不是 $UPGRADE_EXPECTED_BASE_VERSION_NAME"
+  [[ "$current_version_code" == "$UPGRADE_EXPECTED_CURRENT_BUILD_NUMBER" ]] ||
+    current_vm_fail "Android 当前构建号不是 $UPGRADE_EXPECTED_CURRENT_BUILD_NUMBER"
+  [[ "$current_version_name" == "$UPGRADE_EXPECTED_CURRENT_VERSION_NAME" ]] ||
+    current_vm_fail "Android 当前展示版本不是 $UPGRADE_EXPECTED_CURRENT_VERSION_NAME"
   (( current_version_code > base_version_code )) || current_vm_fail "Android 当前构建号没有高于升级基线"
 
   android_restore_required=1
@@ -632,11 +654,21 @@ verify_ios_version_upgrade() {
   local current_release_app="$2"
   local base_info_plist="$base_release_app/Info.plist"
   local current_info_plist="$current_release_app/Info.plist"
-  local base_bundle_version current_bundle_version
+  local base_bundle_version current_bundle_version base_marketing_version current_marketing_version
   base_bundle_version="$(plutil -extract CFBundleVersion raw "$base_info_plist")"
   current_bundle_version="$(plutil -extract CFBundleVersion raw "$current_info_plist")"
+  base_marketing_version="$(plutil -extract CFBundleShortVersionString raw "$base_info_plist")"
+  current_marketing_version="$(plutil -extract CFBundleShortVersionString raw "$current_info_plist")"
   print -r -- "$base_bundle_version" | rg -q '^[0-9]+$' || current_vm_fail "iOS 基线构建号不是纯数字"
   print -r -- "$current_bundle_version" | rg -q '^[0-9]+$' || current_vm_fail "iOS 当前构建号不是纯数字"
+  [[ "$base_bundle_version" == "$UPGRADE_EXPECTED_BASE_BUILD_NUMBER" ]] ||
+    current_vm_fail "iOS 基线构建号不是 $UPGRADE_EXPECTED_BASE_BUILD_NUMBER"
+  [[ "$base_marketing_version" == "$UPGRADE_EXPECTED_BASE_VERSION_NAME" ]] ||
+    current_vm_fail "iOS 基线展示版本不是 $UPGRADE_EXPECTED_BASE_VERSION_NAME"
+  [[ "$current_bundle_version" == "$UPGRADE_EXPECTED_CURRENT_BUILD_NUMBER" ]] ||
+    current_vm_fail "iOS 当前构建号不是 $UPGRADE_EXPECTED_CURRENT_BUILD_NUMBER"
+  [[ "$current_marketing_version" == "$UPGRADE_EXPECTED_CURRENT_VERSION_NAME" ]] ||
+    current_vm_fail "iOS 当前展示版本不是 $UPGRADE_EXPECTED_CURRENT_VERSION_NAME"
   (( current_bundle_version > base_bundle_version )) || current_vm_fail "iOS 当前构建号没有高于升级基线"
   local expected_data_prefix="$HOME/Library/Developer/CoreSimulator/Devices/$CURRENT_IOS_SIMULATOR_UDID/data/Containers/Data/Application/"
   local expected_app_prefix="$HOME/Library/Developer/CoreSimulator/Devices/$CURRENT_IOS_SIMULATOR_UDID/data/Containers/Bundle/Application/"
@@ -1068,7 +1100,7 @@ if [[ "$VERIFY_MEMORY_PRESSURE" == "1" ]]; then
   print "Android 内存收紧回调、iOS Debug 模拟内存警告和 Release 隔离检查通过"
 fi
 if [[ "$VERIFY_VERSION_UPGRADE" == "1" ]]; then
-  print "双虚拟机构建号 3 到 4 的 Release 覆盖升级、真实 Room 记录与匿名数据保留、临时票图清扫检查通过"
+  print "双虚拟机 $UPGRADE_EXPECTED_BASE_VERSION_NAME ($UPGRADE_EXPECTED_BASE_BUILD_NUMBER) 到 $UPGRADE_EXPECTED_CURRENT_VERSION_NAME ($UPGRADE_EXPECTED_CURRENT_BUILD_NUMBER) 的 Release 覆盖升级、真实 Room 记录与匿名数据保留、临时票图清扫检查通过"
   print "升级验收截图与日志：$upgrade_evidence_directory"
 fi
 print "Android APK SHA-256：$(shasum -a 256 "$signed_android_apk" | awk '{print $1}')"
