@@ -20,6 +20,7 @@ import kotlinx.io.IOException
 import kotlinx.io.readByteArray
 import roc.win.lottery.domain.DrawResult
 import roc.win.lottery.domain.DrawStatus
+import roc.win.lottery.domain.HistoricalDraw
 import roc.win.lottery.domain.Issue
 import roc.win.lottery.domain.LotteryType
 import roc.win.lottery.domain.PrizeTier
@@ -44,7 +45,8 @@ class OfficialDrawRepository(
     private val clock: Clock = Clock.System,
     private val ruleVersionSelector: RuleVersionSelector = RuleVersionSelector(),
     private val superLottoPdfTextExtractor: SuperLottoPdfTextExtractor? = null,
-) : DrawRepository {
+) : DrawRepository,
+    HistoricalDrawRepository {
     /** 当前进程内每个精确期号的规范化观察状态。 */
     private val observations = mutableMapOf<DrawKey, DrawObservation>()
 
@@ -233,6 +235,141 @@ class OfficialDrawRepository(
         )
     }
 
+    /**
+     * 以官网最新已发布期为锚点，向前取得指定数量的规范化历史开奖。
+     *
+     * 体彩接口每页最多返回 100 条，因此大乐透按需分页；福彩接口可在单页返回 500 条。
+     */
+    override suspend fun getLatestDraws(
+        lotteryType: LotteryType,
+        count: Int,
+    ): HistoricalDrawQueryResult {
+        if (count !in 1..HistoricalDrawRepository.MAXIMUM_DRAW_COUNT) {
+            return historicalUnavailable(
+                HistoricalDrawFailureReason.SOURCE_UNAVAILABLE,
+                "历史开奖查询期数必须在 1 至 ${HistoricalDrawRepository.MAXIMUM_DRAW_COUNT} 之间",
+            )
+        }
+        val drawsNewestFirst =
+            when (lotteryType) {
+                LotteryType.SUPER_LOTTO -> loadSuperLottoHistory(count)
+                LotteryType.DOUBLE_COLOR_BALL -> loadDoubleColorBallHistory(count)
+            }
+        val loaded =
+            when (drawsNewestFirst) {
+                is HistoricalDrawLoadResult.Success -> drawsNewestFirst.drawsNewestFirst
+                is HistoricalDrawLoadResult.Unavailable -> return drawsNewestFirst.result
+            }
+        if (loaded.size < count) {
+            return historicalUnavailable(
+                HistoricalDrawFailureReason.SOURCE_UNAVAILABLE,
+                "官网可用历史开奖不足 $count 期",
+            )
+        }
+        val selected = loaded.take(count)
+        if (
+            selected.map { it.issue.value }.distinct().size != selected.size ||
+            !selected.isStrictlyNewestFirst()
+        ) {
+            return historicalUnavailable(
+                HistoricalDrawFailureReason.SOURCE_UNAVAILABLE,
+                "官网历史开奖存在重复期号或排序异常",
+            )
+        }
+        val fetchedAtMillis = clock.now().toEpochMilliseconds()
+        if (selected.any { !isDrawDateReasonable(it.drawDate, fetchedAtMillis) }) {
+            return historicalUnavailable(
+                HistoricalDrawFailureReason.SOURCE_UNAVAILABLE,
+                "官网历史开奖包含晚于当前北京时间的日期",
+            )
+        }
+        return HistoricalDrawQueryResult.Success(
+            draws = selected.asReversed(),
+            sourceName = lotteryType.historicalSourceName(),
+            fetchedAtEpochMillis = fetchedAtMillis,
+        )
+    }
+
+    /** 按体彩每页最多 100 条的契约加载大乐透历史开奖。 */
+    private suspend fun loadSuperLottoHistory(count: Int): HistoricalDrawLoadResult {
+        val collected = mutableListOf<HistoricalDraw>()
+        var pageNo = 1
+        while (collected.size < count) {
+            val url = HistoricalDrawEndpoints.superLotto(pageNo)
+            val rawJson =
+                when (val fetched = fetch(url, "大乐透历史")) {
+                    is FetchResult.Success -> {
+                        fetched.body
+                    }
+
+                    is FetchResult.NetworkUnavailable -> {
+                        return historicalLoadUnavailable(
+                            HistoricalDrawFailureReason.NETWORK_UNAVAILABLE,
+                            fetched.message,
+                        )
+                    }
+
+                    is FetchResult.SourceUnavailable -> {
+                        return historicalLoadUnavailable(
+                            HistoricalDrawFailureReason.SOURCE_UNAVAILABLE,
+                            fetched.message,
+                        )
+                    }
+                }
+            val page =
+                when (val parsed = HistoricalDrawSourceAdapter.parseSuperLottoPage(rawJson, pageNo)) {
+                    is HistoricalPageParseResult.Success -> {
+                        parsed
+                    }
+
+                    is HistoricalPageParseResult.Failure -> {
+                        return historicalLoadUnavailable(
+                            HistoricalDrawFailureReason.SOURCE_UNAVAILABLE,
+                            parsed.message,
+                        )
+                    }
+                }
+            collected += page.drawsNewestFirst
+            if (collected.size >= page.total || page.drawsNewestFirst.size < page.pageSize) break
+            pageNo += 1
+        }
+        return HistoricalDrawLoadResult.Success(collected)
+    }
+
+    /** 使用福彩单页能力加载双色球历史开奖。 */
+    private suspend fun loadDoubleColorBallHistory(count: Int): HistoricalDrawLoadResult {
+        val url = HistoricalDrawEndpoints.doubleColorBall(pageSize = count)
+        val rawJson =
+            when (val fetched = fetch(url, "双色球历史", referer = CHINA_WELFARE_LOTTERY_REFERER)) {
+                is FetchResult.Success -> {
+                    fetched.body
+                }
+
+                is FetchResult.NetworkUnavailable -> {
+                    return historicalLoadUnavailable(
+                        HistoricalDrawFailureReason.NETWORK_UNAVAILABLE,
+                        fetched.message,
+                    )
+                }
+
+                is FetchResult.SourceUnavailable -> {
+                    return historicalLoadUnavailable(
+                        HistoricalDrawFailureReason.SOURCE_UNAVAILABLE,
+                        fetched.message,
+                    )
+                }
+            }
+        return when (val parsed = HistoricalDrawSourceAdapter.parseDoubleColorBallPage(rawJson, expectedPageNo = 1)) {
+            is HistoricalPageParseResult.Success -> {
+                HistoricalDrawLoadResult.Success(parsed.drawsNewestFirst)
+            }
+
+            is HistoricalPageParseResult.Failure -> {
+                historicalLoadUnavailable(HistoricalDrawFailureReason.SOURCE_UNAVAILABLE, parsed.message)
+            }
+        }
+    }
+
     /** 使用指定彩票适配器解析主响应。 */
     private fun parseMain(
         lotteryType: LotteryType,
@@ -266,6 +403,7 @@ class OfficialDrawRepository(
     private suspend fun fetch(
         url: String,
         sourceLabel: String,
+        referer: String? = null,
     ): FetchResult =
         try {
             val response =
@@ -273,6 +411,7 @@ class OfficialDrawRepository(
                     header(HttpHeaders.Accept, "application/json")
                     header(HttpHeaders.CacheControl, "no-cache, no-store")
                     header(HttpHeaders.UserAgent, USER_AGENT)
+                    referer?.let { header(HttpHeaders.Referrer, it) }
                 }
             if (!response.status.isSuccess()) {
                 FetchResult.SourceUnavailable("官网数据源返回 HTTP ${response.status.value}")
@@ -581,6 +720,19 @@ class OfficialDrawRepository(
         message: String,
     ): DrawQueryResult.Unavailable = DrawQueryResult.Unavailable(status, message)
 
+    /** 创建历史开奖查询不可用结果。 */
+    private fun historicalUnavailable(
+        reason: HistoricalDrawFailureReason,
+        message: String,
+    ): HistoricalDrawQueryResult.Unavailable = HistoricalDrawQueryResult.Unavailable(reason, message)
+
+    /** 创建历史开奖内部加载不可用结果。 */
+    private fun historicalLoadUnavailable(
+        reason: HistoricalDrawFailureReason,
+        message: String,
+    ): HistoricalDrawLoadResult.Unavailable =
+        HistoricalDrawLoadResult.Unavailable(historicalUnavailable(reason, message))
+
     /** 将规范化证据草稿补充本次获取时间和 SHA-256。 */
     private fun EvidenceDraft.toSourceEvidence(fetchedAtMillis: Long): SourceEvidence =
         SourceEvidence(
@@ -773,6 +925,27 @@ class OfficialDrawRepository(
         ) : FetchResult
     }
 
+    /** 历史开奖多页加载结果。 */
+    private sealed interface HistoricalDrawLoadResult {
+        /**
+         * 已加载并完成单页校验的开奖记录。
+         *
+         * @property drawsNewestFirst 所有页面按最新期在前拼接的记录。
+         */
+        data class Success(
+            val drawsNewestFirst: List<HistoricalDraw>,
+        ) : HistoricalDrawLoadResult
+
+        /**
+         * 加载过程中发生网络或来源错误。
+         *
+         * @property result 对外的封闭不可用结果。
+         */
+        data class Unavailable(
+            val result: HistoricalDrawQueryResult.Unavailable,
+        ) : HistoricalDrawLoadResult
+    }
+
     /** 单次受限二进制 HTTP 获取结果。 */
     private sealed interface BinaryFetchResult {
         /** HTTP、类型和受限响应正文均已取得。 */
@@ -874,6 +1047,34 @@ class OfficialDrawRepository(
         }
     }
 
+    /** 历史开奖分页端点。 */
+    private object HistoricalDrawEndpoints {
+        /** 构建中国体彩网大乐透历史开奖地址。 */
+        fun superLotto(pageNo: Int): String =
+            buildUrl(SUPER_LOTTO_MAIN_URL) {
+                append("gameNo", "85")
+                append("provinceId", "0")
+                append("pageSize", SUPER_LOTTO_HISTORY_PAGE_SIZE.toString())
+                append("pageNo", pageNo.toString())
+                append("isVerify", "1")
+            }
+
+        /** 构建中国福彩网双色球历史开奖地址。 */
+        fun doubleColorBall(pageSize: Int): String =
+            buildUrl(DOUBLE_COLOR_BALL_MAIN_URL) {
+                append("name", "ssq")
+                append("pageNo", "1")
+                append("pageSize", pageSize.toString())
+                append("systemType", "PC")
+            }
+
+        /** 使用 Ktor URL 构建器追加查询参数。 */
+        private fun buildUrl(
+            baseUrl: String,
+            configure: io.ktor.http.ParametersBuilder.() -> Unit,
+        ): String = URLBuilder(baseUrl).apply { parameters.apply(configure) }.buildString()
+    }
+
     /** 官网地址和格式常量。 */
     private companion object {
         /** 大乐透精确历史期主接口。 */
@@ -891,6 +1092,12 @@ class OfficialDrawRepository(
         /** 双色球详情辅助接口。 */
         const val DOUBLE_COLOR_BALL_SUPPORTING_URL =
             "https://www.cwl.gov.cn/cwl_admin/front/cwlkj/search/kjxx/findKjxx/forIssue"
+
+        /** 中国福彩网接口需要的官方站点来源页。 */
+        const val CHINA_WELFARE_LOTTERY_REFERER = "https://www.cwl.gov.cn/"
+
+        /** 中国体彩网历史接口实际允许的最大页大小。 */
+        const val SUPER_LOTTO_HISTORY_PAGE_SIZE = 100
 
         /** 大乐透期号长度。 */
         const val SUPER_LOTTO_ISSUE_LENGTH = 5
@@ -918,3 +1125,10 @@ internal fun isDrawDateReasonable(
 
 /** 北京时区用于开奖发布窗口判断。 */
 private val CHINA_TIME_ZONE = TimeZone.of("Asia/Shanghai")
+
+/** 返回走势图使用的官方历史开奖来源名称。 */
+private fun LotteryType.historicalSourceName(): String =
+    when (this) {
+        LotteryType.SUPER_LOTTO -> "中国体彩网历史开奖"
+        LotteryType.DOUBLE_COLOR_BALL -> "中国福彩网开奖公告"
+    }
