@@ -183,6 +183,15 @@ fun TrendScreen(
             mainDestination = MainDestination.TRENDS,
             availableMainDestinations = availableMainDestinations,
             onMainDestinationSelected = onMainDestinationSelected,
+            actions = {
+                if (isLandscape) {
+                    TrendWorkspaceViewSelector(
+                        modifier = Modifier.widthIn(max = 400.dp).fillMaxWidth(),
+                        selected = chart.view,
+                        onSelected = { view -> onAction(TrendChartAction.ChangeView(view)) },
+                    )
+                }
+            },
             scrollableContent = false,
             compactChrome = isLandscape,
         ) {
@@ -209,16 +218,18 @@ private fun TrendWorkspace(
     onAction: (TrendChartAction) -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
-        TrendWorkspaceViewSelector(
-            modifier =
-                Modifier
-                    .widthIn(max = 460.dp)
-                    .fillMaxWidth()
-                    .align(Alignment.CenterHorizontally)
-                    .padding(bottom = 6.dp),
-            selected = chart.view,
-            onSelected = { view -> onAction(TrendChartAction.ChangeView(view)) },
-        )
+        if (!isLandscape) {
+            TrendWorkspaceViewSelector(
+                modifier =
+                    Modifier
+                        .widthIn(max = 460.dp)
+                        .fillMaxWidth()
+                        .align(Alignment.CenterHorizontally)
+                        .padding(bottom = 6.dp),
+                selected = chart.view,
+                onSelected = { view -> onAction(TrendChartAction.ChangeView(view)) },
+            )
+        }
         Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
             when (chart.view) {
                 TrendWorkspaceView.BASIC_TREND -> {

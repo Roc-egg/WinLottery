@@ -56,7 +56,7 @@ private val MAX_CONTENT_WIDTH = 960.dp
  * @param actionIcon 可选的右侧操作图标。
  * @param actionDescription 右侧图标的无障碍说明。
  * @param onAction 右侧操作。
- * @param actions 可选的自定义右侧操作区。
+ * @param actions 可选的自定义操作区；普通顶部栏位于右侧，紧凑顶部栏位于中部。
  * @param mainDestination 一级页面当前选中的目的地；次级流程保持为 `null`。
  * @param availableMainDestinations 当前平台可进入的一级目的地。
  * @param onMainDestinationSelected 一级目的地切换操作。
@@ -100,6 +100,7 @@ fun AppShell(
                     selectedDestination = mainDestination,
                     destinations = availableMainDestinations,
                     onDestinationSelected = onMainDestinationSelected,
+                    actions = actions,
                     content = content,
                 )
             } else if (usesSideNavigation) {
@@ -159,6 +160,7 @@ fun AppShell(
  * @param selectedDestination 当前选中的一级目的地。
  * @param destinations 当前平台可进入的一级目的地。
  * @param onDestinationSelected 一级目的地切换操作。
+ * @param actions 紧凑顶部栏中央的自定义操作区。
  * @param content 页面正文。
  */
 @Composable
@@ -167,6 +169,7 @@ private fun CompactMainAppShellBody(
     selectedDestination: MainDestination,
     destinations: List<MainDestination>,
     onDestinationSelected: (MainDestination) -> Unit,
+    actions: @Composable RowScope.() -> Unit,
     content: @Composable () -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
@@ -176,8 +179,14 @@ private fun CompactMainAppShellBody(
         ) {
             Text(
                 text = title,
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.padding(end = 8.dp),
                 style = MaterialTheme.typography.titleMedium,
+            )
+            Row(
+                modifier = Modifier.weight(1f),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically,
+                content = actions,
             )
             destinations.forEach { destination ->
                 val isSelected = destination == selectedDestination
