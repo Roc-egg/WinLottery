@@ -1107,7 +1107,7 @@ class LotteryAppControllerTest {
             assertEquals(AppScreen.Home, controller.uiState.value.screen)
         }
 
-    /** 走势图必须加载真实 500 期，并在切档、切区和再次进入时复用会话缓存。 */
+    /** 走势与数学研究必须共享真实 500 期，并在配置切换和再次进入时复用会话缓存。 */
     @Test
     fun trendChartIsAnIndependentMainDestination() =
         runTest {
@@ -1125,10 +1125,14 @@ class LotteryAppControllerTest {
 
             val initial = assertIs<AppScreen.Trends>(controller.uiState.value.screen).chart
             val initialReady = assertIs<TrendChartContent.Ready>(initial.content)
+            val initialResearch = assertIs<TrendResearchContent.Ready>(initial.researchContent)
             assertEquals(listOf("b1-demo-ticket"), paths.deletedImageIds)
             assertEquals(50, initialReady.snapshot.actualSampleCount)
             assertEquals("26451", initialReady.snapshot.firstIssue.value)
             assertEquals("26500", initialReady.snapshot.lastIssue.value)
+            assertEquals(450, initialResearch.analysis.backtest.targetCount)
+            assertEquals("26451", initialResearch.analysis.candidate.trainingFirstIssue.value)
+            assertEquals("26500", initialResearch.analysis.candidate.trainingLastIssue.value)
             assertEquals(1, historyRepository.queryCount(LotteryType.SUPER_LOTTO))
             controller.updateTrendChart(
                 TrendChartAction.ChangeSampleSize(TrendSampleSize.LAST_500),
@@ -1146,14 +1150,27 @@ class LotteryAppControllerTest {
             controller.updateTrendChart(
                 TrendChartAction.ChangeSampleSize(TrendSampleSize.LAST_80),
             )
+            controller.updateTrendChart(
+                TrendChartAction.ChangeView(TrendWorkspaceView.MATHEMATICAL_RESEARCH),
+            )
+
+            val researchView = assertIs<AppScreen.Trends>(controller.uiState.value.screen).chart
+            assertEquals(TrendWorkspaceView.MATHEMATICAL_RESEARCH, researchView.view)
+            assertIs<TrendResearchContent.Ready>(researchView.researchContent)
+            assertEquals(1, historyRepository.queryCount(LotteryType.DOUBLE_COLOR_BALL))
             controller.navigateHome()
             controller.showTrendChart()
 
             val restored = assertIs<AppScreen.Trends>(controller.uiState.value.screen).chart
             assertEquals(LotteryType.DOUBLE_COLOR_BALL, restored.lotteryType)
+            assertEquals(TrendWorkspaceView.MATHEMATICAL_RESEARCH, restored.view)
             assertEquals(LotteryTrendArea.SECONDARY, restored.area)
             assertEquals(TrendSampleSize.LAST_80, restored.sampleSize)
             assertEquals(80, assertIs<TrendChartContent.Ready>(restored.content).snapshot.actualSampleCount)
+            assertEquals(
+                450,
+                assertIs<TrendResearchContent.Ready>(restored.researchContent).analysis.backtest.targetCount,
+            )
             assertEquals(1, historyRepository.queryCount(LotteryType.DOUBLE_COLOR_BALL))
 
             controller.navigateBack()
@@ -1176,12 +1193,20 @@ class LotteryAppControllerTest {
 
             val failed = assertIs<AppScreen.Trends>(controller.uiState.value.screen).chart
             assertEquals("测试网络不可用", assertIs<TrendChartContent.Failed>(failed.content).message)
+            assertEquals(
+                "测试网络不可用",
+                assertIs<TrendResearchContent.Failed>(failed.researchContent).message,
+            )
             assertEquals(1, historyRepository.queryCount(LotteryType.SUPER_LOTTO))
             historyRepository.failureMessage = null
             controller.updateTrendChart(TrendChartAction.Retry)
 
             val retried = assertIs<AppScreen.Trends>(controller.uiState.value.screen).chart
             assertEquals(50, assertIs<TrendChartContent.Ready>(retried.content).snapshot.actualSampleCount)
+            assertEquals(
+                450,
+                assertIs<TrendResearchContent.Ready>(retried.researchContent).analysis.backtest.targetCount,
+            )
             assertEquals(2, historyRepository.queryCount(LotteryType.SUPER_LOTTO))
         }
 

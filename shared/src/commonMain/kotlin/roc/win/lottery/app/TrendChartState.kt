@@ -1,12 +1,31 @@
 package roc.win.lottery.app
 
+import roc.win.lottery.domain.LotteryPredictionAnalysis
 import roc.win.lottery.domain.LotteryTrendArea
 import roc.win.lottery.domain.LotteryTrendSnapshot
 import roc.win.lottery.domain.LotteryType
 import roc.win.lottery.domain.TrendSampleSize
 
-/** 用户在基本走势图页发起的单一操作。 */
+/** 走势一级页面内部的两个共享视图。 */
+enum class TrendWorkspaceView {
+    /** 官方常见基本走势矩阵。 */
+    BASIC_TREND,
+
+    /** 固定策略候选与时间前推回测。 */
+    MATHEMATICAL_RESEARCH,
+}
+
+/** 用户在走势与数学研究页发起的单一操作。 */
 sealed interface TrendChartAction {
+    /**
+     * 修改走势工作区视图。
+     *
+     * @property view 用户选择的基本走势或数学研究。
+     */
+    data class ChangeView(
+        val view: TrendWorkspaceView,
+    ) : TrendChartAction
+
     /**
      * 修改彩种。
      *
@@ -66,19 +85,47 @@ sealed interface TrendChartContent {
     ) : TrendChartContent
 }
 
+/** 当前彩种的数学研究状态。 */
+sealed interface TrendResearchContent {
+    /** 正在等待官方历史开奖或共享领域计算。 */
+    data object Loading : TrendResearchContent
+
+    /**
+     * 已形成候选号码和时间前推回测。
+     *
+     * @property analysis 共享领域引擎生成的完整研究结果。
+     */
+    data class Ready(
+        val analysis: LotteryPredictionAnalysis,
+    ) : TrendResearchContent
+
+    /**
+     * 当前历史数据不能形成数学研究。
+     *
+     * @property message 不包含官网原始响应的恢复说明。
+     */
+    data class Failed(
+        val message: String,
+    ) : TrendResearchContent
+}
+
 /**
- * 当前应用会话中的基本走势图状态。
+ * 当前应用会话中的走势与数学研究状态。
  *
+ * @property view 当前基本走势或数学研究视图。
  * @property lotteryType 当前彩种。
  * @property area 当前号码区域。
  * @property sampleSize 当前样本范围。
  * @property content 当前真实历史开奖加载状态。
+ * @property researchContent 当前数学研究计算状态。
  */
 data class TrendChartState(
+    val view: TrendWorkspaceView,
     val lotteryType: LotteryType,
     val area: LotteryTrendArea,
     val sampleSize: TrendSampleSize,
     val content: TrendChartContent,
+    val researchContent: TrendResearchContent,
 ) {
     /** 加载成功时返回可绘制快照，否则返回 `null`。 */
     val snapshot: LotteryTrendSnapshot?
@@ -93,10 +140,12 @@ data class TrendChartState(
          */
         fun create(): TrendChartState =
             TrendChartState(
+                view = TrendWorkspaceView.BASIC_TREND,
                 lotteryType = LotteryType.SUPER_LOTTO,
                 area = LotteryTrendArea.PRIMARY,
                 sampleSize = TrendSampleSize.LAST_50,
                 content = TrendChartContent.Loading,
+                researchContent = TrendResearchContent.Loading,
             )
     }
 }

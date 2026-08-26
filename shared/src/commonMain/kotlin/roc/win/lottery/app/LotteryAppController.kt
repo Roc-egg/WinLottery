@@ -14,6 +14,8 @@ import roc.win.lottery.domain.HistoricalDraw
 import roc.win.lottery.domain.Issue
 import roc.win.lottery.domain.IssueSequenceResolver
 import roc.win.lottery.domain.IssueSequenceResult
+import roc.win.lottery.domain.LotteryPredictionEngine
+import roc.win.lottery.domain.LotteryPredictionResult
 import roc.win.lottery.domain.LotteryRandomNumberGenerator
 import roc.win.lottery.domain.LotteryTrendCalculationResult
 import roc.win.lottery.domain.LotteryTrendCalculator
@@ -86,6 +88,9 @@ class LotteryAppController(
 
     /** 使用领域规则从规范化历史开奖生成走势矩阵。 */
     private val trendCalculator = LotteryTrendCalculator()
+
+    /** 使用冻结策略生成候选并执行时间前推回测。 */
+    private val predictionEngine = LotteryPredictionEngine()
 
     /** 当前控制器会话按彩种保留的最多 500 期规范化历史开奖。 */
     private val trendHistoryCache = mutableMapOf<LotteryType, TrendHistoryCacheEntry>()
@@ -264,7 +269,7 @@ class LotteryAppController(
         }
     }
 
-    /** 打开基本走势图一级页面并结束此前的临时票面流程。 */
+    /** 打开走势与数学研究一级页面并结束此前的临时票面流程。 */
     suspend fun showTrendChart() {
         val generation = ++flowGeneration
         clearTemporaryImage()
@@ -278,10 +283,15 @@ class LotteryAppController(
         }
     }
 
-    /** 更新走势图的彩种、号码区域、样本范围或失败重试。 */
+    /** 更新走势内部视图、彩种、号码区域、样本范围或失败重试。 */
     suspend fun updateTrendChart(action: TrendChartAction) {
         val screen = mutableUiState.value.screen as? AppScreen.Trends ?: return
         when (action) {
+            is TrendChartAction.ChangeView -> {
+                if (action.view == screen.chart.view) return
+                publishTrendChart(screen.chart.copy(view = action.view))
+            }
+
             is TrendChartAction.ChangeLotteryType -> {
                 if (action.lotteryType == screen.chart.lotteryType) return
                 val generation = ++flowGeneration
@@ -289,6 +299,7 @@ class LotteryAppController(
                     screen.chart.copy(
                         lotteryType = action.lotteryType,
                         content = TrendChartContent.Loading,
+                        researchContent = TrendResearchContent.Loading,
                     )
                 val cached = trendHistoryCache[action.lotteryType]
                 if (cached == null) {
@@ -312,10 +323,20 @@ class LotteryAppController(
             }
 
             TrendChartAction.Retry -> {
-                if (screen.chart.content !is TrendChartContent.Failed) return
+                if (
+                    screen.chart.content !is TrendChartContent.Failed &&
+                    screen.chart.researchContent !is TrendResearchContent.Failed
+                ) {
+                    return
+                }
                 val generation = ++flowGeneration
                 trendHistoryCache.remove(screen.chart.lotteryType)
-                publishTrendChart(screen.chart.copy(content = TrendChartContent.Loading))
+                publishTrendChart(
+                    screen.chart.copy(
+                        content = TrendChartContent.Loading,
+                        researchContent = TrendResearchContent.Loading,
+                    ),
+                )
                 loadTrendHistory(screen.chart.lotteryType, generation)
             }
         }
@@ -379,40 +400,58 @@ class LotteryAppController(
         }
     }
 
-    /** 使用当前筛选配置从会话缓存生成可绘制快照。 */
+    /** 使用当前配置从会话缓存生成走势图与数学研究结果。 */
     private fun calculateTrendChart(
         configured: TrendChartState,
         cache: TrendHistoryCacheEntry,
-    ): TrendChartState =
-        when (
-            val result =
-                trendCalculator.calculate(
-                    lotteryType = configured.lotteryType,
-                    area = configured.area,
-                    sampleSize = configured.sampleSize,
-                    draws = cache.draws,
-                )
-        ) {
-            is LotteryTrendCalculationResult.Success -> {
-                configured.copy(
-                    content =
-                        TrendChartContent.Ready(
-                            snapshot = result.snapshot,
-                            sourceName = cache.sourceName,
-                            fetchedAtEpochMillis = cache.fetchedAtEpochMillis,
-                        ),
-                )
-            }
+    ): TrendChartState {
+        val trendContent =
+            when (
+                val result =
+                    trendCalculator.calculate(
+                        lotteryType = configured.lotteryType,
+                        area = configured.area,
+                        sampleSize = configured.sampleSize,
+                        draws = cache.draws,
+                    )
+            ) {
+                is LotteryTrendCalculationResult.Success -> {
+                    TrendChartContent.Ready(
+                        snapshot = result.snapshot,
+                        sourceName = cache.sourceName,
+                        fetchedAtEpochMillis = cache.fetchedAtEpochMillis,
+                    )
+                }
 
-            is LotteryTrendCalculationResult.InvalidData -> {
-                configured.copy(
-                    content =
-                        TrendChartContent.Failed(
-                            "官方历史开奖未通过完整性校验，请主动重试",
-                        ),
-                )
+                is LotteryTrendCalculationResult.InvalidData -> {
+                    return configured.copy(
+                        content =
+                            TrendChartContent.Failed(
+                                "官方历史开奖未通过完整性校验，请主动重试",
+                            ),
+                        researchContent =
+                            TrendResearchContent.Failed(
+                                "官方历史开奖未通过完整性校验，请主动重试",
+                            ),
+                    )
+                }
             }
-        }
+        val researchContent =
+            if (configured.researchContent is TrendResearchContent.Loading) {
+                when (val result = predictionEngine.analyze(configured.lotteryType, cache.draws)) {
+                    is LotteryPredictionResult.Success -> {
+                        TrendResearchContent.Ready(result.analysis)
+                    }
+
+                    is LotteryPredictionResult.Unavailable -> {
+                        TrendResearchContent.Failed(result.message)
+                    }
+                }
+            } else {
+                configured.researchContent
+            }
+        return configured.copy(content = trendContent, researchContent = researchContent)
+    }
 
     /** 只在当前走势加载仍有效时发布失败状态。 */
     private fun publishTrendFailureIfCurrent(
@@ -421,7 +460,12 @@ class LotteryAppController(
         message: String,
     ) {
         if (!isCurrentTrendLoad(lotteryType, generation)) return
-        publishTrendChart(trendChartState.copy(content = TrendChartContent.Failed(message)))
+        publishTrendChart(
+            trendChartState.copy(
+                content = TrendChartContent.Failed(message),
+                researchContent = TrendResearchContent.Failed(message),
+            ),
+        )
     }
 
     /** 判断迟到的历史开奖响应是否仍属于当前走势图。 */

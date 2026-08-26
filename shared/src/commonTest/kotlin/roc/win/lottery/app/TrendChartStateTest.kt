@@ -15,10 +15,12 @@ class TrendChartStateTest {
     fun defaultStateWaitsForFiftyOfficialDraws() {
         val state = TrendChartState.create()
 
+        assertEquals(TrendWorkspaceView.BASIC_TREND, state.view)
         assertEquals(LotteryType.SUPER_LOTTO, state.lotteryType)
         assertEquals(LotteryTrendArea.PRIMARY, state.area)
         assertEquals(TrendSampleSize.LAST_50, state.sampleSize)
         assertIs<TrendChartContent.Loading>(state.content)
+        assertIs<TrendResearchContent.Loading>(state.researchContent)
         assertNull(state.snapshot)
     }
 

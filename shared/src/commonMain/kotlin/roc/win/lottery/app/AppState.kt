@@ -26,9 +26,9 @@ sealed interface AppScreen {
     ) : AppScreen
 
     /**
-     * 历史开奖基本走势一级页面。
+     * 历史开奖走势与数学研究一级页面。
      *
-     * @property chart 当前会话中的走势图配置与真实历史开奖加载状态。
+     * @property chart 当前会话中的视图配置、真实历史开奖和数学研究状态。
      */
     data class Trends(
         val chart: TrendChartState,

@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyRow
@@ -60,6 +61,7 @@ import roc.win.lottery.app.MainDestination
 import roc.win.lottery.app.TrendChartAction
 import roc.win.lottery.app.TrendChartContent
 import roc.win.lottery.app.TrendChartState
+import roc.win.lottery.app.TrendWorkspaceView
 import roc.win.lottery.domain.LotteryTrendArea
 import roc.win.lottery.domain.LotteryTrendSnapshot
 import roc.win.lottery.domain.LotteryType
@@ -160,7 +162,7 @@ private data class TrendNumberZone(
 }
 
 /**
- * V1.3 跨平台基本走势图一级工作区。
+ * V1.3 跨平台走势与数学研究一级工作区。
  *
  * @param chart 当前会话中的走势图配置与快照。
  * @param availableMainDestinations 当前平台可进入的一级目的地。
@@ -202,6 +204,84 @@ fun TrendScreen(
  */
 @Composable
 private fun TrendWorkspace(
+    chart: TrendChartState,
+    isLandscape: Boolean,
+    onAction: (TrendChartAction) -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxSize()) {
+        TrendWorkspaceViewSelector(
+            modifier =
+                Modifier
+                    .widthIn(max = 460.dp)
+                    .fillMaxWidth()
+                    .align(Alignment.CenterHorizontally)
+                    .padding(bottom = 6.dp),
+            selected = chart.view,
+            onSelected = { view -> onAction(TrendChartAction.ChangeView(view)) },
+        )
+        Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
+            when (chart.view) {
+                TrendWorkspaceView.BASIC_TREND -> {
+                    BasicTrendWorkspace(chart = chart, isLandscape = isLandscape, onAction = onAction)
+                }
+
+                TrendWorkspaceView.MATHEMATICAL_RESEARCH -> {
+                    MathematicalResearchWorkspace(
+                        chart = chart,
+                        isLandscape = isLandscape,
+                        onLotteryTypeSelected = { lotteryType ->
+                            onAction(TrendChartAction.ChangeLotteryType(lotteryType))
+                        },
+                        onRetry = { onAction(TrendChartAction.Retry) },
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 使用分段控件切换基本走势与数学研究。
+ *
+ * @param modifier 当前控件布局修饰符。
+ * @param selected 当前工作区视图。
+ * @param onSelected 视图切换操作。
+ */
+@Composable
+private fun TrendWorkspaceViewSelector(
+    modifier: Modifier,
+    selected: TrendWorkspaceView,
+    onSelected: (TrendWorkspaceView) -> Unit,
+) {
+    val options = listOf(TrendWorkspaceView.BASIC_TREND, TrendWorkspaceView.MATHEMATICAL_RESEARCH)
+    SingleChoiceSegmentedButtonRow(modifier = modifier) {
+        options.forEachIndexed { index, view ->
+            SegmentedButton(
+                selected = view == selected,
+                onClick = { onSelected(view) },
+                shape = SegmentedButtonDefaults.itemShape(index, options.size),
+                label = {
+                    Text(
+                        when (view) {
+                            TrendWorkspaceView.BASIC_TREND -> "基本走势"
+                            TrendWorkspaceView.MATHEMATICAL_RESEARCH -> "数学研究"
+                        },
+                    )
+                },
+            )
+        }
+    }
+}
+
+/**
+ * 根据可用正文宽度构建竖屏浏览或横屏专注走势图。
+ *
+ * @param chart 当前走势图配置与快照。
+ * @param isLandscape 当前是否为横屏视口。
+ * @param onAction 修改走势图配置。
+ */
+@Composable
+private fun BasicTrendWorkspace(
     chart: TrendChartState,
     isLandscape: Boolean,
     onAction: (TrendChartAction) -> Unit,
@@ -544,7 +624,7 @@ private fun TrendControlGroup(
  * @param onSelected 彩种切换操作。
  */
 @Composable
-private fun LotteryTypeTrendSelector(
+internal fun LotteryTypeTrendSelector(
     modifier: Modifier,
     selected: LotteryType,
     onSelected: (LotteryType) -> Unit,
@@ -1243,7 +1323,7 @@ private fun trendNumberZones(
     }
 
 /** 返回彩种和号码区域对应的命中颜色。 */
-private fun trendHitColor(
+internal fun trendHitColor(
     lotteryType: LotteryType,
     area: LotteryTrendArea,
 ): Color =
@@ -1264,7 +1344,7 @@ private fun trendHitColor(
     }
 
 /** 返回命中圆点上的高对比文字颜色。 */
-private fun trendHitContentColor(
+internal fun trendHitContentColor(
     lotteryType: LotteryType,
     area: LotteryTrendArea,
 ): Color =
@@ -1303,7 +1383,7 @@ private fun LotteryType.displayName(): String =
     }
 
 /** 返回当前彩种下号码区域的官方常用名称。 */
-private fun LotteryTrendArea.displayName(lotteryType: LotteryType): String =
+internal fun LotteryTrendArea.displayName(lotteryType: LotteryType): String =
     when (lotteryType) {
         LotteryType.SUPER_LOTTO -> {
             when (this) {
