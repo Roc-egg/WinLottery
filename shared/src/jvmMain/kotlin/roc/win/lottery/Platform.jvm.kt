@@ -38,6 +38,7 @@ fun createDesktopImportContainer(ownerProvider: () -> Frame?): AppContainer {
         ticketRecognizer = DesktopOcrUnavailableRecognizer(),
         ticketParser = ConservativeTicketParser(),
         drawRepository = FakeDrawRepository(),
+        historicalDrawRepository = null,
         prizeCalculator = LotteryPrizeCalculator(),
         appPaths = appPaths,
         ticketValidator = TicketValidator(),

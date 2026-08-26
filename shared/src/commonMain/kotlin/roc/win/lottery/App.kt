@@ -133,7 +133,7 @@ fun App(container: AppContainer = remember { AppContainer.createDemo(getPlatform
                     chart = screen.chart,
                     availableMainDestinations = availableMainDestinations,
                     onMainDestinationSelected = onMainDestinationSelected,
-                    onAction = controller::updateTrendChart,
+                    onAction = { action -> scope.launch { controller.updateTrendChart(action) } },
                 )
             }
 

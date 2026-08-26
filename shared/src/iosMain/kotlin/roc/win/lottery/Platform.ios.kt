@@ -75,6 +75,7 @@ fun createIOSRecognitionContainer(
                         NSProcessInfo.processInfo.environment[DEBUG_CONFLICT_ISSUE_ENVIRONMENT] as? String,
                     isDebugEnabled = isDebugBinary,
                 ),
+            historicalDrawRepository = officialDrawRepository,
             prizeCalculator = LotteryPrizeCalculator(),
             appPaths = appPaths,
             ticketValidator = TicketValidator(),

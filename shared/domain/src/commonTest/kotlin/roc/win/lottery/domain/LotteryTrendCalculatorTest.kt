@@ -36,15 +36,15 @@ class LotteryTrendCalculatorTest {
     @Test
     fun sortsDrawsAndKeepsOnlyLatestRequestedRange() {
         val draws =
-            (1..12)
+            (1..60)
                 .map { ordinal -> superLottoDraw("26${ordinal.toString().padStart(3, '0')}") }
                 .reversed()
 
         val snapshot = success(draws)
 
-        assertEquals(10, snapshot.actualSampleCount)
-        assertEquals("26003", snapshot.firstIssue.value)
-        assertEquals("26012", snapshot.lastIssue.value)
+        assertEquals(50, snapshot.actualSampleCount)
+        assertEquals("26011", snapshot.firstIssue.value)
+        assertEquals("26060", snapshot.lastIssue.value)
     }
 
     /** 次号码区域必须使用对应彩种的独立范围与遗漏统计。 */
@@ -54,7 +54,7 @@ class LotteryTrendCalculatorTest {
             calculator.calculate(
                 lotteryType = LotteryType.DOUBLE_COLOR_BALL,
                 area = LotteryTrendArea.SECONDARY,
-                sampleSize = TrendSampleSize.LAST_10,
+                sampleSize = TrendSampleSize.LAST_50,
                 draws =
                     listOf(
                         doubleColorBallDraw("2026001", secondary = listOf(1)),
@@ -102,7 +102,7 @@ class LotteryTrendCalculatorTest {
             calculator.calculate(
                 lotteryType = LotteryType.SUPER_LOTTO,
                 area = LotteryTrendArea.PRIMARY,
-                sampleSize = TrendSampleSize.LAST_10,
+                sampleSize = TrendSampleSize.LAST_50,
                 draws =
                     listOf(
                         superLottoDraw(
@@ -131,7 +131,7 @@ class LotteryTrendCalculatorTest {
             calculator.calculate(
                 lotteryType = LotteryType.SUPER_LOTTO,
                 area = LotteryTrendArea.PRIMARY,
-                sampleSize = TrendSampleSize.LAST_10,
+                sampleSize = TrendSampleSize.LAST_50,
                 draws = listOf(superLottoDraw("26001"), doubleColorBallDraw("2026002")),
             )
 
@@ -192,7 +192,7 @@ class LotteryTrendCalculatorTest {
             calculator.calculate(
                 lotteryType = LotteryType.SUPER_LOTTO,
                 area = LotteryTrendArea.PRIMARY,
-                sampleSize = TrendSampleSize.LAST_10,
+                sampleSize = TrendSampleSize.LAST_50,
                 draws = draws,
             ),
         ).snapshot
@@ -203,7 +203,7 @@ class LotteryTrendCalculatorTest {
             calculator.calculate(
                 lotteryType = LotteryType.SUPER_LOTTO,
                 area = LotteryTrendArea.PRIMARY,
-                sampleSize = TrendSampleSize.LAST_10,
+                sampleSize = TrendSampleSize.LAST_50,
                 draws = draws,
             ),
         )

@@ -26,6 +26,8 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -52,8 +54,11 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.toLocalDateTime
 import roc.win.lottery.app.MainDestination
 import roc.win.lottery.app.TrendChartAction
+import roc.win.lottery.app.TrendChartContent
 import roc.win.lottery.app.TrendChartState
 import roc.win.lottery.domain.LotteryTrendArea
 import roc.win.lottery.domain.LotteryTrendSnapshot
@@ -61,6 +66,7 @@ import roc.win.lottery.domain.LotteryType
 import roc.win.lottery.domain.TrendDrawRow
 import roc.win.lottery.domain.TrendNumberStatistics
 import roc.win.lottery.domain.TrendSampleSize
+import kotlin.time.Instant
 
 /** 竖屏固定期号列宽度。 */
 private val PORTRAIT_ISSUE_COLUMN_WIDTH = 80.dp
@@ -79,6 +85,15 @@ private val LANDSCAPE_MAX_CELL_WIDTH = 32.dp
 
 /** 允许判断完整矩阵已经铺满可用宽度的浮点误差。 */
 private val TREND_LAYOUT_TOLERANCE = 0.5.dp
+
+/** 官方历史开奖加载时间使用的北京时间。 */
+private val CHINA_TIME_ZONE = TimeZone.of("Asia/Shanghai")
+
+/** 完整加载时间文本长度。 */
+private const val FETCHED_TIME_TEXT_LENGTH = 16
+
+/** 横屏时间文本省略年份和连字符的前缀长度。 */
+private const val COMPACT_FETCHED_TIME_PREFIX_LENGTH = 5
 
 /** 大乐透前区命中颜色，对齐体彩常见蓝色语义。 */
 private val SuperLottoPrimaryBlue = Color(0xFF2F75B5)
@@ -103,12 +118,6 @@ private val DoubleColorBallPrimaryTint = Color(0xFFFFEEEE)
 
 /** 双色球蓝球表格底色。 */
 private val DoubleColorBallSecondaryTint = Color(0xFFEAF3FA)
-
-/** 演示数据状态条底色。 */
-private val DemonstrationNoticeBackground = Color(0xFFFFF1C7)
-
-/** 演示数据状态条前景色。 */
-private val DemonstrationNoticeForeground = Color(0xFF5F4300)
 
 /**
  * 当前视口下号码矩阵使用的稳定尺寸。
@@ -198,7 +207,20 @@ private fun TrendWorkspace(
     onAction: (TrendChartAction) -> Unit,
 ) {
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-        val snapshot = chart.snapshot
+        val ready = chart.content as? TrendChartContent.Ready
+        if (ready == null) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                TrendControls(chart = chart, isLandscape = isLandscape, onAction = onAction)
+                TrendLoadStatus(
+                    modifier = Modifier.weight(1f),
+                    content = chart.content,
+                    isLandscape = isLandscape,
+                    onRetry = { onAction(TrendChartAction.Retry) },
+                )
+            }
+            return@BoxWithConstraints
+        }
+        val snapshot = ready.snapshot
         val horizontalScrollState = rememberScrollState()
         val layout = trendTableLayout(maxWidth, snapshot.statistics.size, isLandscape)
         LaunchedEffect(isLandscape, snapshot.lotteryType, snapshot.area) {
@@ -223,6 +245,76 @@ private fun TrendWorkspace(
 }
 
 /**
+ * 在保留筛选控件的同时展示官方历史开奖加载或失败状态。
+ *
+ * @param modifier 加载状态区域布局修饰符。
+ * @param content 当前加载状态。
+ * @param isLandscape 当前是否为横屏视口。
+ * @param onRetry 用户明确发起重试的操作。
+ */
+@Composable
+private fun TrendLoadStatus(
+    modifier: Modifier,
+    content: TrendChartContent,
+    isLandscape: Boolean,
+    onRetry: () -> Unit,
+) {
+    Box(
+        modifier = modifier.fillMaxWidth(),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp, vertical = if (isLandscape) 12.dp else 32.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
+            when (content) {
+                TrendChartContent.Loading -> {
+                    CircularProgressIndicator(modifier = Modifier.size(if (isLandscape) 28.dp else 40.dp))
+                    Spacer(Modifier.height(if (isLandscape) 10.dp else 18.dp))
+                    Text("正在加载官方历史开奖", style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "以最新已发布期为起点，向前读取 500 期",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                    )
+                }
+
+                is TrendChartContent.Failed -> {
+                    Text(
+                        "历史开奖暂时不可用",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        content.message,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                    )
+                    Spacer(Modifier.height(if (isLandscape) 10.dp else 18.dp))
+                    Button(onClick = onRetry, shape = MaterialTheme.shapes.small) {
+                        Icon(LotteryIcons.Refresh, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("重试")
+                    }
+                }
+
+                is TrendChartContent.Ready -> {
+                    return@Column
+                }
+            }
+        }
+    }
+}
+
+/**
  * 竖屏使用紧凑筛选区并继续支持矩阵横向浏览。
  *
  * @param chart 当前走势图配置与快照。
@@ -237,7 +329,7 @@ private fun PortraitTrendContent(
     horizontalScrollState: ScrollState,
     onAction: (TrendChartAction) -> Unit,
 ) {
-    val snapshot = chart.snapshot
+    val snapshot = requireNotNull(chart.snapshot)
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp),
@@ -288,7 +380,7 @@ private fun LandscapeTrendContent(
     horizontalScrollState: ScrollState,
     onAction: (TrendChartAction) -> Unit,
 ) {
-    val snapshot = chart.snapshot
+    val snapshot = requireNotNull(chart.snapshot)
     val lastNumber =
         snapshot.statistics
             .last()
@@ -535,7 +627,7 @@ private fun TrendSampleSizeSelector(
 }
 
 /**
- * 使用不占首屏的大色块展示样本范围、连续性和演示数据边界。
+ * 使用紧凑状态条展示官方来源、样本范围、连续性和加载时间。
  *
  * @param chart 当前走势图配置与快照。
  * @param isLandscape 当前是否为横屏视口。
@@ -545,13 +637,16 @@ private fun TrendSnapshotStatus(
     chart: TrendChartState,
     isLandscape: Boolean,
 ) {
-    val snapshot = chart.snapshot
+    val ready = chart.content as? TrendChartContent.Ready ?: return
+    val snapshot = ready.snapshot
     val missingIssueCount = snapshot.issueGaps.sumOf { it.missingCount }
     val title = "${snapshot.lotteryType.displayName()} · ${snapshot.area.displayName(snapshot.lotteryType)}"
     val range =
         "${snapshot.actualSampleCount} 期 · ${snapshot.firstIssue.value} 至 ${snapshot.lastIssue.value}"
     val continuity =
         if (missingIssueCount == 0) "样本内期号连续" else "样本内缺少 $missingIssueCount 期"
+    val source =
+        "官方历史开奖 · ${ready.sourceName} · ${formatTrendFetchedTime(ready.fetchedAtEpochMillis, isLandscape)}"
     Surface(
         modifier = Modifier.fillMaxWidth(),
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f),
@@ -561,10 +656,42 @@ private fun TrendSnapshotStatus(
                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(title, style = MaterialTheme.typography.titleSmall)
-                Spacer(Modifier.width(12.dp))
-                Text(range, style = MaterialTheme.typography.bodySmall)
-                Spacer(Modifier.width(12.dp))
+                val summary =
+                    if (missingIssueCount == 0) {
+                        "$title · $range"
+                    } else {
+                        "$title · $range · $continuity"
+                    }
+                Text(
+                    summary,
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.bodySmall,
+                    color =
+                        if (missingIssueCount == 0) {
+                            MaterialTheme.colorScheme.onSurface
+                        } else {
+                            MaterialTheme.colorScheme.error
+                        },
+                    maxLines = 1,
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    source,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                )
+            }
+        } else {
+            Column(
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+            ) {
+                Text(title, style = MaterialTheme.typography.titleMedium)
+                Text(
+                    range,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 Text(
                     continuity,
                     style = MaterialTheme.typography.bodySmall,
@@ -575,63 +702,24 @@ private fun TrendSnapshotStatus(
                             MaterialTheme.colorScheme.error
                         },
                 )
-                Spacer(Modifier.weight(1f))
-                if (chart.isDemonstration) DemonstrationBadge()
-            }
-        } else {
-            Row(
-                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(title, style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        range,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Text(
-                        continuity,
-                        style = MaterialTheme.typography.bodySmall,
-                        color =
-                            if (missingIssueCount == 0) {
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                            } else {
-                                MaterialTheme.colorScheme.error
-                            },
-                    )
-                }
-                if (chart.isDemonstration) DemonstrationBadge()
+                Text(
+                    source,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
     }
 }
 
-/** 用紧凑标记持续声明演示快照不属于实时官方开奖。 */
-@Composable
-private fun DemonstrationBadge() {
-    Surface(
-        modifier =
-            Modifier.clearAndSetSemantics {
-                contentDescription = "受控演示快照，非实时官方开奖，不参与预测。"
-            },
-        shape = MaterialTheme.shapes.small,
-        color = DemonstrationNoticeBackground,
-        contentColor = DemonstrationNoticeForeground,
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(
-                imageVector = LotteryIcons.Info,
-                contentDescription = null,
-                modifier = Modifier.size(15.dp),
-            )
-            Spacer(Modifier.width(5.dp))
-            Text("演示数据", style = MaterialTheme.typography.labelSmall)
-        }
-    }
+/** 将会话抓取时间格式化为北京时间。 */
+private fun formatTrendFetchedTime(
+    epochMillis: Long,
+    isCompact: Boolean,
+): String {
+    val dateTime = Instant.fromEpochMilliseconds(epochMillis).toLocalDateTime(CHINA_TIME_ZONE)
+    val value = dateTime.toString().replace('T', ' ').take(FETCHED_TIME_TEXT_LENGTH)
+    return if (isCompact) value.drop(COMPACT_FETCHED_TIME_PREFIX_LENGTH) else value
 }
 
 /** 展示走势图必须保留的理性使用边界。 */

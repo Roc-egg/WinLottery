@@ -6,12 +6,18 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import roc.win.lottery.data.DrawQueryResult
+import roc.win.lottery.data.HistoricalDrawQueryResult
+import roc.win.lottery.data.HistoricalDrawRepository
 import roc.win.lottery.domain.ConfirmedTicket
 import roc.win.lottery.domain.DrawStatus
+import roc.win.lottery.domain.HistoricalDraw
 import roc.win.lottery.domain.Issue
 import roc.win.lottery.domain.IssueSequenceResolver
 import roc.win.lottery.domain.IssueSequenceResult
 import roc.win.lottery.domain.LotteryRandomNumberGenerator
+import roc.win.lottery.domain.LotteryTrendCalculationResult
+import roc.win.lottery.domain.LotteryTrendCalculator
+import roc.win.lottery.domain.LotteryType
 import roc.win.lottery.domain.RandomNumberGenerationResult
 import roc.win.lottery.persistence.TICKET_RECORD_EXPORT_EXTENSION
 import roc.win.lottery.persistence.TicketAcquisitionSource
@@ -78,7 +84,13 @@ class LotteryAppController(
     /** 只在当前控制器会话中保留的随机选号配置与结果。 */
     private var randomNumberPickerState = RandomNumberPickerState()
 
-    /** 当前控制器会话内保留的走势图配置与演示快照。 */
+    /** 使用领域规则从规范化历史开奖生成走势矩阵。 */
+    private val trendCalculator = LotteryTrendCalculator()
+
+    /** 当前控制器会话按彩种保留的最多 500 期规范化历史开奖。 */
+    private val trendHistoryCache = mutableMapOf<LotteryType, TrendHistoryCacheEntry>()
+
+    /** 当前控制器会话内保留的走势图配置与加载状态。 */
     private var trendChartState = TrendChartState.create()
 
     /**
@@ -254,23 +266,181 @@ class LotteryAppController(
 
     /** 打开基本走势图一级页面并结束此前的临时票面流程。 */
     suspend fun showTrendChart() {
-        flowGeneration += 1L
+        val generation = ++flowGeneration
         clearTemporaryImage()
         lastQuerySourceScreen = null
         queryReturnScreen = null
         resetConfirmationPersistence()
         resetTicketRecordManagement()
         mutableUiState.update { it.copy(screen = AppScreen.Trends(trendChartState)) }
+        if (trendChartState.content is TrendChartContent.Loading) {
+            loadTrendHistory(trendChartState.lotteryType, generation)
+        }
     }
 
-    /** 更新走势图的彩种、号码区域或样本范围。 */
-    fun updateTrendChart(action: TrendChartAction) {
+    /** 更新走势图的彩种、号码区域、样本范围或失败重试。 */
+    suspend fun updateTrendChart(action: TrendChartAction) {
         val screen = mutableUiState.value.screen as? AppScreen.Trends ?: return
-        val updatedChart = screen.chart.apply(action)
-        trendChartState = updatedChart
+        when (action) {
+            is TrendChartAction.ChangeLotteryType -> {
+                if (action.lotteryType == screen.chart.lotteryType) return
+                val generation = ++flowGeneration
+                val configured =
+                    screen.chart.copy(
+                        lotteryType = action.lotteryType,
+                        content = TrendChartContent.Loading,
+                    )
+                val cached = trendHistoryCache[action.lotteryType]
+                if (cached == null) {
+                    publishTrendChart(configured)
+                    loadTrendHistory(action.lotteryType, generation)
+                } else {
+                    publishTrendChart(calculateTrendChart(configured, cached))
+                }
+            }
+
+            is TrendChartAction.ChangeArea -> {
+                if (action.area == screen.chart.area) return
+                val configured = screen.chart.copy(area = action.area)
+                publishTrendChart(recalculateTrendChartIfCached(configured))
+            }
+
+            is TrendChartAction.ChangeSampleSize -> {
+                if (action.sampleSize == screen.chart.sampleSize) return
+                val configured = screen.chart.copy(sampleSize = action.sampleSize)
+                publishTrendChart(recalculateTrendChartIfCached(configured))
+            }
+
+            TrendChartAction.Retry -> {
+                if (screen.chart.content !is TrendChartContent.Failed) return
+                val generation = ++flowGeneration
+                trendHistoryCache.remove(screen.chart.lotteryType)
+                publishTrendChart(screen.chart.copy(content = TrendChartContent.Loading))
+                loadTrendHistory(screen.chart.lotteryType, generation)
+            }
+        }
+    }
+
+    /** 当前彩种有会话缓存时立即重算，否则只保留新的筛选配置。 */
+    private fun recalculateTrendChartIfCached(configured: TrendChartState): TrendChartState {
+        val cached = trendHistoryCache[configured.lotteryType] ?: return configured
+        return calculateTrendChart(configured, cached)
+    }
+
+    /**
+     * 在一次用户操作中加载当前彩种最多 500 期历史开奖。
+     *
+     * 迟到结果只有在页面、彩种和流程代次仍匹配时才会进入会话缓存。
+     */
+    private suspend fun loadTrendHistory(
+        lotteryType: LotteryType,
+        generation: Long,
+    ) {
+        val repository = container.historicalDrawRepository
+        if (repository == null) {
+            publishTrendFailureIfCurrent(lotteryType, generation, "当前平台尚未接入官方历史开奖查询")
+            return
+        }
+        when (
+            val result =
+                repository.getLatestDraws(
+                    lotteryType = lotteryType,
+                    count = HistoricalDrawRepository.MAXIMUM_DRAW_COUNT,
+                )
+        ) {
+            is HistoricalDrawQueryResult.Success -> {
+                if (!isCurrentTrendLoad(lotteryType, generation)) return
+                val cache =
+                    TrendHistoryCacheEntry(
+                        draws = result.draws,
+                        sourceName = result.sourceName,
+                        fetchedAtEpochMillis = result.fetchedAtEpochMillis,
+                    )
+                if (cache.draws.size != HistoricalDrawRepository.MAXIMUM_DRAW_COUNT) {
+                    publishTrendFailureIfCurrent(
+                        lotteryType,
+                        generation,
+                        "官网未返回完整的 500 期历史开奖，请主动重试",
+                    )
+                    return
+                }
+                trendHistoryCache[lotteryType] = cache
+                val configured = trendChartState
+                val calculated = calculateTrendChart(configured, cache)
+                if (calculated.content is TrendChartContent.Failed) {
+                    trendHistoryCache.remove(lotteryType)
+                }
+                publishTrendChart(calculated)
+            }
+
+            is HistoricalDrawQueryResult.Unavailable -> {
+                publishTrendFailureIfCurrent(lotteryType, generation, result.message)
+            }
+        }
+    }
+
+    /** 使用当前筛选配置从会话缓存生成可绘制快照。 */
+    private fun calculateTrendChart(
+        configured: TrendChartState,
+        cache: TrendHistoryCacheEntry,
+    ): TrendChartState =
+        when (
+            val result =
+                trendCalculator.calculate(
+                    lotteryType = configured.lotteryType,
+                    area = configured.area,
+                    sampleSize = configured.sampleSize,
+                    draws = cache.draws,
+                )
+        ) {
+            is LotteryTrendCalculationResult.Success -> {
+                configured.copy(
+                    content =
+                        TrendChartContent.Ready(
+                            snapshot = result.snapshot,
+                            sourceName = cache.sourceName,
+                            fetchedAtEpochMillis = cache.fetchedAtEpochMillis,
+                        ),
+                )
+            }
+
+            is LotteryTrendCalculationResult.InvalidData -> {
+                configured.copy(
+                    content =
+                        TrendChartContent.Failed(
+                            "官方历史开奖未通过完整性校验，请主动重试",
+                        ),
+                )
+            }
+        }
+
+    /** 只在当前走势加载仍有效时发布失败状态。 */
+    private fun publishTrendFailureIfCurrent(
+        lotteryType: LotteryType,
+        generation: Long,
+        message: String,
+    ) {
+        if (!isCurrentTrendLoad(lotteryType, generation)) return
+        publishTrendChart(trendChartState.copy(content = TrendChartContent.Failed(message)))
+    }
+
+    /** 判断迟到的历史开奖响应是否仍属于当前走势图。 */
+    private fun isCurrentTrendLoad(
+        lotteryType: LotteryType,
+        generation: Long,
+    ): Boolean {
+        val screen = mutableUiState.value.screen as? AppScreen.Trends ?: return false
+        return generation == flowGeneration &&
+            screen.chart.lotteryType == lotteryType &&
+            trendChartState.lotteryType == lotteryType
+    }
+
+    /** 保存走势图会话状态，并在页面仍可见时同步发布。 */
+    private fun publishTrendChart(chart: TrendChartState) {
+        trendChartState = chart
         mutableUiState.update { state ->
             if (state.screen is AppScreen.Trends) {
-                state.copy(screen = AppScreen.Trends(updatedChart))
+                state.copy(screen = AppScreen.Trends(chart))
             } else {
                 state
             }
@@ -1134,6 +1304,16 @@ class LotteryAppController(
         activeImageRef?.let { container.appPaths.deleteTemporaryImage(it) }
         activeImageRef = null
     }
+
+    /** 当前控制器会话内一个彩种的规范化历史开奖缓存。 */
+    private data class TrendHistoryCacheEntry(
+        /** 按开奖时间正序排列的完整 500 期历史开奖。 */
+        val draws: List<HistoricalDraw>,
+        /** 官方来源展示名称。 */
+        val sourceName: String,
+        /** 本次用户操作完成抓取的时间。 */
+        val fetchedAtEpochMillis: Long,
+    )
 
     /** 多期查询和重试使用的状态集合。 */
     private companion object {

@@ -55,22 +55,25 @@ fun LotteryType.trendAreaSpec(area: LotteryTrendArea): LotteryTrendAreaSpec =
         }
     }
 
-/** V1.3 首批冻结的走势样本范围。 */
+/** V1.3 真实历史开奖走势样本范围。 */
 enum class TrendSampleSize(
     /** 最近开奖期数。 */
     val count: Int,
 ) {
-    /** 最近 10 期。 */
-    LAST_10(10),
-
-    /** 最近 20 期。 */
-    LAST_20(20),
-
-    /** 最近 30 期。 */
-    LAST_30(30),
-
     /** 最近 50 期。 */
     LAST_50(50),
+
+    /** 最近 80 期。 */
+    LAST_80(80),
+
+    /** 最近 120 期。 */
+    LAST_120(120),
+
+    /** 最近 300 期。 */
+    LAST_300(300),
+
+    /** 最近 500 期。 */
+    LAST_500(500),
 }
 
 /**

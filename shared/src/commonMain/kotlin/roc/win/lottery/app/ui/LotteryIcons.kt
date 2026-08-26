@@ -17,6 +17,7 @@ import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Minus
 import com.composables.icons.lucide.Pencil
 import com.composables.icons.lucide.Plus
+import com.composables.icons.lucide.RefreshCw
 import com.composables.icons.lucide.Search
 import com.composables.icons.lucide.ShieldCheck
 import com.composables.icons.lucide.Trash2
@@ -80,4 +81,7 @@ object LotteryIcons {
 
     /** 完成输入图标。 */
     val Done: ImageVector = Lucide.Check
+
+    /** 重新加载图标。 */
+    val Refresh: ImageVector = Lucide.RefreshCw
 }

@@ -9,12 +9,16 @@ import roc.win.lottery.Platform
 import roc.win.lottery.data.DrawQueryResult
 import roc.win.lottery.data.DrawRepository
 import roc.win.lottery.data.FakeDrawRepository
+import roc.win.lottery.data.HistoricalDrawFailureReason
+import roc.win.lottery.data.HistoricalDrawQueryResult
+import roc.win.lottery.data.HistoricalDrawRepository
 import roc.win.lottery.domain.BetLineDraft
 import roc.win.lottery.domain.ConfirmedTicket
 import roc.win.lottery.domain.CrossPeriodRandomMode
 import roc.win.lottery.domain.DrawPolicy
 import roc.win.lottery.domain.DrawResult
 import roc.win.lottery.domain.DrawStatus
+import roc.win.lottery.domain.HistoricalDraw
 import roc.win.lottery.domain.Issue
 import roc.win.lottery.domain.LotteryPrizeCalculator
 import roc.win.lottery.domain.LotteryTrendArea
@@ -1103,24 +1107,44 @@ class LotteryAppControllerTest {
             assertEquals(AppScreen.Home, controller.uiState.value.screen)
         }
 
-    /** 切换到走势一级页面必须清理临时票图，并在会话内保留筛选配置。 */
+    /** 走势图必须加载真实 500 期，并在切档、切区和再次进入时复用会话缓存。 */
     @Test
     fun trendChartIsAnIndependentMainDestination() =
         runTest {
             val paths = TrackingAppPaths()
-            val controller = createController(CountingDrawRepository(), paths)
+            val historyRepository = CountingHistoricalDrawRepository()
+            val controller =
+                createController(
+                    repository = CountingDrawRepository(),
+                    appPaths = paths,
+                    historicalDrawRepository = historyRepository,
+                )
             controller.startAnalysis(ImageAcquisitionSource.SYSTEM_PICKER)
 
             controller.showTrendChart()
 
-            assertIs<AppScreen.Trends>(controller.uiState.value.screen)
+            val initial = assertIs<AppScreen.Trends>(controller.uiState.value.screen).chart
+            val initialReady = assertIs<TrendChartContent.Ready>(initial.content)
             assertEquals(listOf("b1-demo-ticket"), paths.deletedImageIds)
+            assertEquals(50, initialReady.snapshot.actualSampleCount)
+            assertEquals("26451", initialReady.snapshot.firstIssue.value)
+            assertEquals("26500", initialReady.snapshot.lastIssue.value)
+            assertEquals(1, historyRepository.queryCount(LotteryType.SUPER_LOTTO))
+            controller.updateTrendChart(
+                TrendChartAction.ChangeSampleSize(TrendSampleSize.LAST_500),
+            )
+            controller.updateTrendChart(TrendChartAction.ChangeArea(LotteryTrendArea.SECONDARY))
+
+            val expanded = assertIs<AppScreen.Trends>(controller.uiState.value.screen).chart
+            val expandedReady = assertIs<TrendChartContent.Ready>(expanded.content)
+            assertEquals(500, expandedReady.snapshot.actualSampleCount)
+            assertEquals(12, expandedReady.snapshot.statistics.size)
+            assertEquals(1, historyRepository.queryCount(LotteryType.SUPER_LOTTO))
             controller.updateTrendChart(
                 TrendChartAction.ChangeLotteryType(LotteryType.DOUBLE_COLOR_BALL),
             )
-            controller.updateTrendChart(TrendChartAction.ChangeArea(LotteryTrendArea.SECONDARY))
             controller.updateTrendChart(
-                TrendChartAction.ChangeSampleSize(TrendSampleSize.LAST_10),
+                TrendChartAction.ChangeSampleSize(TrendSampleSize.LAST_80),
             )
             controller.navigateHome()
             controller.showTrendChart()
@@ -1128,11 +1152,37 @@ class LotteryAppControllerTest {
             val restored = assertIs<AppScreen.Trends>(controller.uiState.value.screen).chart
             assertEquals(LotteryType.DOUBLE_COLOR_BALL, restored.lotteryType)
             assertEquals(LotteryTrendArea.SECONDARY, restored.area)
-            assertEquals(TrendSampleSize.LAST_10, restored.sampleSize)
+            assertEquals(TrendSampleSize.LAST_80, restored.sampleSize)
+            assertEquals(80, assertIs<TrendChartContent.Ready>(restored.content).snapshot.actualSampleCount)
+            assertEquals(1, historyRepository.queryCount(LotteryType.DOUBLE_COLOR_BALL))
 
             controller.navigateBack()
 
             assertEquals(AppScreen.Home, controller.uiState.value.screen)
+        }
+
+    /** 官方历史开奖失败后必须保留失败状态，并只在用户重试时再次联网。 */
+    @Test
+    fun trendChartRetriesOnlyAfterExplicitAction() =
+        runTest {
+            val historyRepository = CountingHistoricalDrawRepository(failureMessage = "测试网络不可用")
+            val controller =
+                createController(
+                    repository = CountingDrawRepository(),
+                    historicalDrawRepository = historyRepository,
+                )
+
+            controller.showTrendChart()
+
+            val failed = assertIs<AppScreen.Trends>(controller.uiState.value.screen).chart
+            assertEquals("测试网络不可用", assertIs<TrendChartContent.Failed>(failed.content).message)
+            assertEquals(1, historyRepository.queryCount(LotteryType.SUPER_LOTTO))
+            historyRepository.failureMessage = null
+            controller.updateTrendChart(TrendChartAction.Retry)
+
+            val retried = assertIs<AppScreen.Trends>(controller.uiState.value.screen).chart
+            assertEquals(50, assertIs<TrendChartContent.Ready>(retried.content).snapshot.actualSampleCount)
+            assertEquals(2, historyRepository.queryCount(LotteryType.SUPER_LOTTO))
         }
 
     /** 选号配置和结果在一级页面切换后仍应保留，但不得写入票据仓库。 */
@@ -1437,6 +1487,7 @@ class LotteryAppControllerTest {
         ticketRecordStore: TicketRecordStore? = null,
         ticketRecordFileExchange: TicketRecordFileExchange? = null,
         ocrConfidenceDiagnostics: OcrConfidenceDiagnostics = OcrConfidenceDiagnostics.Disabled,
+        historicalDrawRepository: HistoricalDrawRepository? = null,
     ): LotteryAppController {
         val platform =
             object : Platform {
@@ -1454,6 +1505,7 @@ class LotteryAppControllerTest {
                 ticketRecognizer = ticketRecognizer,
                 ticketParser = ticketParser,
                 drawRepository = repository,
+                historicalDrawRepository = historicalDrawRepository,
                 prizeCalculator = LotteryPrizeCalculator(),
                 appPaths = appPaths,
                 ticketValidator = TicketValidator(),
@@ -1968,6 +2020,64 @@ class LotteryAppControllerTest {
             queryCount += 1
             return delegate.getDraw(lotteryType, issue)
         }
+    }
+
+    /** 按彩种返回 500 期规范化开奖并记录查询次数的走势图测试仓库。 */
+    private class CountingHistoricalDrawRepository(
+        /** 非空时让所有查询返回该测试错误。 */
+        var failureMessage: String? = null,
+    ) : HistoricalDrawRepository {
+        /** 每个彩种在当前测试中的查询次数。 */
+        private val queryCounts = mutableMapOf<LotteryType, Int>()
+
+        /** 返回测试用完整历史开奖或当前指定错误。 */
+        override suspend fun getLatestDraws(
+            lotteryType: LotteryType,
+            count: Int,
+        ): HistoricalDrawQueryResult {
+            queryCounts[lotteryType] = queryCount(lotteryType) + 1
+            val message = failureMessage
+            if (message != null) {
+                return HistoricalDrawQueryResult.Unavailable(
+                    reason = HistoricalDrawFailureReason.NETWORK_UNAVAILABLE,
+                    message = message,
+                )
+            }
+            return HistoricalDrawQueryResult.Success(
+                draws = historicalDraws(lotteryType).takeLast(count),
+                sourceName = "测试官网",
+                fetchedAtEpochMillis = 1_787_689_800_000L,
+            )
+        }
+
+        /** 返回指定彩种已经触发的查询次数。 */
+        fun queryCount(lotteryType: LotteryType): Int = queryCounts[lotteryType] ?: 0
+
+        /** 创建按开奖时间正序排列的 500 期合法测试数据。 */
+        private fun historicalDraws(lotteryType: LotteryType): List<HistoricalDraw> =
+            (1..HistoricalDrawRepository.MAXIMUM_DRAW_COUNT).map { ordinal ->
+                when (lotteryType) {
+                    LotteryType.SUPER_LOTTO -> {
+                        HistoricalDraw(
+                            lotteryType = lotteryType,
+                            issue = Issue("26${ordinal.toString().padStart(3, '0')}"),
+                            drawDate = "2026-01-01",
+                            primaryNumbers = listOf(1, 2, 3, 4, 5),
+                            secondaryNumbers = listOf(1, 2),
+                        )
+                    }
+
+                    LotteryType.DOUBLE_COLOR_BALL -> {
+                        HistoricalDraw(
+                            lotteryType = lotteryType,
+                            issue = Issue("2026${ordinal.toString().padStart(3, '0')}"),
+                            drawDate = "2026-01-01",
+                            primaryNumbers = listOf(1, 2, 3, 4, 5, 6),
+                            secondaryNumbers = listOf(1),
+                        )
+                    }
+                }
+            }
     }
 
     /** 记录是否意外进入图片采集流程。 */

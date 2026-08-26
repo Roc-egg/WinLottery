@@ -66,6 +66,7 @@ fun createAndroidRecognitionContainer(activity: ComponentActivity): AppContainer
                 rawIssue = activity.intent.getStringExtra(DEBUG_CONFLICT_ISSUE_EXTRA),
                 isDebugEnabled = isDebuggable,
             ),
+        historicalDrawRepository = officialDrawRepository,
         prizeCalculator = LotteryPrizeCalculator(),
         appPaths = appPaths,
         ticketValidator = TicketValidator(),

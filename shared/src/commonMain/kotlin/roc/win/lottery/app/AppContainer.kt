@@ -3,6 +3,7 @@ package roc.win.lottery.app
 import roc.win.lottery.Platform
 import roc.win.lottery.data.DrawRepository
 import roc.win.lottery.data.FakeDrawRepository
+import roc.win.lottery.data.HistoricalDrawRepository
 import roc.win.lottery.domain.LotteryPrizeCalculator
 import roc.win.lottery.domain.PrizeCalculator
 import roc.win.lottery.domain.TicketValidator
@@ -27,6 +28,7 @@ import roc.win.lottery.recognition.TicketRecognizer
  * @property ticketRecognizer 本地 OCR 能力。
  * @property ticketParser 票面结构解析能力。
  * @property drawRepository 开奖查询能力。
+ * @property historicalDrawRepository 官方历史开奖查询能力；未接入的平台为 `null`。
  * @property prizeCalculator 本地中奖规则计算能力。
  * @property appPaths 临时文件管理能力。
  * @property ticketValidator 票面领域校验器。
@@ -45,6 +47,7 @@ class AppContainer(
     val ticketRecognizer: TicketRecognizer,
     val ticketParser: TicketParser,
     val drawRepository: DrawRepository,
+    val historicalDrawRepository: HistoricalDrawRepository?,
     val prizeCalculator: PrizeCalculator,
     val appPaths: AppPaths,
     val ticketValidator: TicketValidator,
@@ -77,6 +80,7 @@ class AppContainer(
                 ticketRecognizer = FakeTicketRecognizer(),
                 ticketParser = ConservativeTicketParser(),
                 drawRepository = FakeDrawRepository(),
+                historicalDrawRepository = null,
                 prizeCalculator = LotteryPrizeCalculator(),
                 appPaths = FakeAppPaths(),
                 ticketValidator = TicketValidator(),
