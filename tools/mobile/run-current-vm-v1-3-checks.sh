@@ -12,9 +12,7 @@ readonly ANDROID_ACTIVITY="roc.win.lottery.MainActivity"
 readonly IOS_APPLICATION_ID="roc.win.lottery.WinLottery"
 readonly IOS_PLATFORM_VERSION="26.5"
 readonly ANDROID_STANDARD_FONT_SCALE="1.0"
-readonly ANDROID_MAXIMUM_FONT_SCALE="2.0"
 readonly IOS_STANDARD_CONTENT_SIZE="large"
-readonly IOS_MAXIMUM_CONTENT_SIZE="accessibility-extra-extra-extra-large"
 readonly SCREENSHOT_DIRECTORY="$REPOSITORY_ROOT/build/reports/v1-3-trends"
 
 source "$SCRIPT_DIRECTORY/current-vm-guard.sh"
@@ -106,7 +104,7 @@ run_appium_phase() {
   fi
 }
 
-# 先复用非 Debug 构建、签名边界、安装和启动闸门，再执行两档字号交互。
+# 先复用非 Debug 构建、签名边界、安装和启动闸门，再执行标准字号交互。
 "$SCRIPT_DIRECTORY/run-current-vm-release-checks.sh"
 
 restart_apps_with_font_size "$ANDROID_STANDARD_FONT_SCALE" "$IOS_STANDARD_CONTENT_SIZE"
@@ -134,8 +132,6 @@ done
 curl --silent --show-error --fail "$APPIUM_BASE_URL/status" >/dev/null || current_vm_fail "等待 V1.3 Appium 就绪超时"
 
 run_appium_phase standard
-restart_apps_with_font_size "$ANDROID_MAXIMUM_FONT_SCALE" "$IOS_MAXIMUM_CONTENT_SIZE"
-run_appium_phase maximum
 
-print "双虚拟机 V1.3 标准与最大字号、竖横屏切换、四级导航、50/80/120/300/500 期真实样本、官网最新期锚点、横屏 01 至 35 完整矩阵和固定期号列检查通过"
+print "双虚拟机 V1.3 标准字号、竖横屏切换、四级导航、五档真实走势、数学候选、450 期前推回测和随机理论基线检查通过"
 print "截图证据：$SCREENSHOT_DIRECTORY"

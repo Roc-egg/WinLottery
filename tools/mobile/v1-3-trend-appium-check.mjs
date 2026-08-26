@@ -54,6 +54,63 @@ const TREND_SAMPLE_SIZES = [50, 80, 120, 300, 500];
 /** 走势图必须持续展示的责任边界。 */
 const RESPONSIBLE_USE_NOTICE = "历史分布不代表未来规律，不构成购彩建议。";
 
+/** 数学研究固定策略标题。 */
+const RESEARCH_STRATEGY_TITLE = "频次遗漏排序 · v1";
+
+/** 数学研究固定策略标识。 */
+const RESEARCH_STRATEGY_ID_NOTICE = "策略标识：frequency-omission-ranking-v1";
+
+/** 数学研究回测基线标题。 */
+const RESEARCH_BASELINE_TITLE = "均匀随机理论基线";
+
+/** 数学研究必须持续展示的样本结论。 */
+const RESEARCH_UNPROVEN_NOTICE = "当前前推样本尚未证明稳定优于均匀随机";
+
+/** 数学研究必须持续展示的责任边界。 */
+const RESEARCH_RESPONSIBILITY_NOTICE =
+  "历史排序不会改变下一期各号码概率，仅供娱乐和研究，不构成购彩建议。";
+
+/**
+ * 两个彩种的数学研究验收口径。
+ *
+ * @property key 截图文件使用的稳定短名。
+ * @property displayName 页面展示的彩种名称。
+ * @property sourceName 页面展示的官方历史来源名称。
+ * @property issueLength 当前彩种期号长度。
+ * @property primaryArea 主号码区域名称。
+ * @property secondaryArea 次号码区域名称。
+ * @property primaryCount 一注候选的主号码数量。
+ * @property secondaryCount 一注候选的次号码数量。
+ * @property primaryBaseline 主号码区域的精确随机理论基线。
+ * @property secondaryBaseline 次号码区域的精确随机理论基线。
+ */
+const RESEARCH_CONFIGS = {
+  superLotto: {
+    key: "super-lotto",
+    displayName: "大乐透",
+    sourceName: "中国体彩网历史开奖",
+    issueLength: 5,
+    primaryArea: "前区",
+    secondaryArea: "后区",
+    primaryCount: 5,
+    secondaryCount: 2,
+    primaryBaseline: "0.714",
+    secondaryBaseline: "0.333",
+  },
+  doubleColorBall: {
+    key: "double-color-ball",
+    displayName: "双色球",
+    sourceName: "中国福彩网开奖公告",
+    issueLength: 7,
+    primaryArea: "红球",
+    secondaryArea: "蓝球",
+    primaryCount: 6,
+    secondaryCount: 1,
+    primaryBaseline: "1.091",
+    secondaryBaseline: "0.063",
+  },
+};
+
 /** Android UiAutomation 瞬态未连接时允许的会话创建总次数。 */
 const SESSION_CREATION_ATTEMPT_COUNT = 3;
 
@@ -210,6 +267,18 @@ async function waitForSourceTexts(sessionId, expectedTexts, attemptCount = 24) {
   }
   const missingTexts = expectedTexts.filter((text) => !source.includes(text));
   throw new Error(`等待页面文案超时：${missingTexts.join("、")}`);
+}
+
+/** 等待辅助功能树出现符合指定规则的动态文案。 */
+async function waitForSourcePattern(sessionId, expectedPattern, attemptCount = 24) {
+  let source = "";
+  for (let attempt = 0; attempt < attemptCount; attempt += 1) {
+    source = await readSource(sessionId);
+    const match = source.match(expectedPattern);
+    if (match) return { source, match };
+    await waitForPageUpdate(300);
+  }
+  throw new Error(`等待页面动态文案超时：${expectedPattern}`);
 }
 
 /** 等待真实历史开奖状态条，并动态返回当前样本首末期号。 */
@@ -637,10 +706,7 @@ async function verifyHorizontalMatrixScroll(sessionId, platformName, issueValue)
   const beforeScreenshot = await saveScreenshot(sessionId, platformName, "matrix-start");
   const startX = Math.round(windowRect.x + windowRect.width * 0.88);
   const endX = Math.round(windowRect.x + windowRect.width * 0.34);
-  const centerY =
-    platformName === "iOS" && acceptanceMode === MAXIMUM_MODE
-      ? Math.round(windowRect.y + windowRect.height * 0.62)
-      : Math.round(issueBefore.elementRect.y + issueBefore.elementRect.height / 2);
+  const centerY = Math.round(issueBefore.elementRect.y + issueBefore.elementRect.height / 2);
   if (endX >= startX) throw new Error(`${platformName} 号码矩阵没有可滑动的水平区域`);
 
   await performTouchSwipe(sessionId, startX, centerY, endX, centerY, 650);
@@ -766,9 +832,189 @@ async function verifyDoubleColorBallWorkflow(sessionId, platformName, latestIssu
   if (restoredRange.firstIssue !== range.firstIssue) {
     throw new Error(`${platformName} 一级页面往返后双色球会话样本发生变化`);
   }
+  return restoredRange;
 }
 
-/** 执行当前字号的完整 V1.3 走势图交互验收。 */
+/** 返回当前彩种一注候选的完整无障碍文案规则。 */
+function researchCandidatePattern(config) {
+  const numberPattern = "[0-9]{2}";
+  const primaryNumbers = Array.from(
+    { length: config.primaryCount },
+    () => numberPattern,
+  ).join("，");
+  const secondaryNumbers = Array.from(
+    { length: config.secondaryCount },
+    () => numberPattern,
+  ).join("，");
+  return new RegExp(
+    `${config.displayName}下一期候选，${config.primaryArea}${primaryNumbers}，` +
+      `${config.secondaryArea}${secondaryNumbers}`,
+  );
+}
+
+/** 返回一个号码区域完整回测指标的无障碍文案规则。 */
+function researchMetricPattern(areaName, baseline) {
+  const escapedBaseline = baseline.replaceAll(".", "\\.");
+  return new RegExp(
+    `${areaName}，策略平均命中 [0-9]+\\.[0-9]{3}，` +
+      `随机理论 ${escapedBaseline}，差值 [+-][0-9]+\\.[0-9]{3}`,
+  );
+}
+
+/** 核对 450 期前推范围最后一期与当前官网最新期一致。 */
+async function verifyResearchBacktestRange(sessionId, config, expectedLatestIssue) {
+  const rangePattern = new RegExp(
+    `450 个样本外目标期 · ([0-9]{${config.issueLength}}) 至 ` +
+      `([0-9]{${config.issueLength}})`,
+  );
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const source = await readSource(sessionId);
+    const match = source.match(rangePattern);
+    if (match) {
+      const [, firstIssue, lastIssue] = match;
+      if (lastIssue !== expectedLatestIssue) {
+        throw new Error(
+          `${config.displayName}数学回测最后一期 ${lastIssue} 与官网最新期 ` +
+            `${expectedLatestIssue} 不一致`,
+        );
+      }
+      if (firstIssue >= lastIssue) {
+        throw new Error(`${config.displayName}数学回测首末期号顺序异常`);
+      }
+      return { firstIssue, lastIssue };
+    }
+    await swipeVertically(sessionId, "up");
+  }
+  throw new Error(`${config.displayName}未展示 450 个样本外目标期`);
+}
+
+/** 核对主次号码区域均展示策略均值、精确随机理论值和差值。 */
+async function verifyResearchMetricRows(sessionId, config) {
+  const expectations = [
+    {
+      areaName: config.primaryArea,
+      pattern: researchMetricPattern(config.primaryArea, config.primaryBaseline),
+    },
+    {
+      areaName: config.secondaryArea,
+      pattern: researchMetricPattern(config.secondaryArea, config.secondaryBaseline),
+    },
+  ];
+  const matchedAreas = new Set();
+  for (let attempt = 0; attempt < 14; attempt += 1) {
+    const source = await readSource(sessionId);
+    for (const expectation of expectations) {
+      if (expectation.pattern.test(source)) matchedAreas.add(expectation.areaName);
+    }
+    if (matchedAreas.size === expectations.length) return;
+    await swipeVertically(sessionId, "up");
+  }
+  const missingAreas = expectations
+    .filter((expectation) => !matchedAreas.has(expectation.areaName))
+    .map((expectation) => expectation.areaName);
+  throw new Error(`${config.displayName}数学回测指标缺少：${missingAreas.join("、")}`);
+}
+
+/** 核对一个彩种在竖屏下的策略、候选、前推基线与责任说明。 */
+async function verifyResearchSnapshot(
+  sessionId,
+  platformName,
+  config,
+  trainingRange,
+  expectedLatestIssue,
+) {
+  await waitForElementSelected(sessionId, "数学研究", platformName);
+  const trainingNotice =
+    `固定窗口 50 期 · ${trainingRange.firstIssue} 至 ${trainingRange.lastIssue}`;
+  const sourceNotice = `官方历史开奖 · ${config.sourceName} · 仅当前会话内计算`;
+  await scrollElementIntoView(sessionId, RESEARCH_STRATEGY_TITLE, "down");
+  await scrollElementIntoView(sessionId, trainingNotice, "up");
+  await scrollElementIntoView(sessionId, RESEARCH_STRATEGY_ID_NOTICE, "up");
+  await scrollElementIntoView(sessionId, sourceNotice, "up");
+
+  await scrollElementIntoView(sessionId, "下一期候选", "up");
+  await waitForSourcePattern(sessionId, researchCandidatePattern(config));
+  await saveScreenshot(sessionId, platformName, `${config.key}-research-candidate`);
+
+  await scrollElementIntoView(sessionId, "时间前推回测", "up");
+  await verifyResearchBacktestRange(sessionId, config, expectedLatestIssue);
+  await scrollElementIntoView(sessionId, RESEARCH_BASELINE_TITLE, "up");
+  await verifyResearchMetricRows(sessionId, config);
+  await saveScreenshot(sessionId, platformName, `${config.key}-research-backtest`);
+
+  await scrollElementIntoView(sessionId, RESEARCH_UNPROVEN_NOTICE, "up");
+  await scrollElementIntoView(sessionId, RESEARCH_RESPONSIBILITY_NOTICE, "up");
+  await saveScreenshot(sessionId, platformName, `${config.key}-research-responsibility`);
+}
+
+/** 核对横屏候选与回测双列可同时完整访问且互不重叠。 */
+async function verifyLandscapeResearch(sessionId, platformName, config) {
+  const windowRect = await setOrientation(sessionId, LANDSCAPE_ORIENTATION);
+  await waitForElementSelected(sessionId, "数学研究", platformName);
+  await scrollElementIntoView(sessionId, "下一期候选", "down");
+  await waitForSourcePattern(sessionId, researchCandidatePattern(config));
+  const [candidateTitle, backtestTitle] = await Promise.all([
+    findVisibleExactElement(sessionId, "下一期候选"),
+    findVisibleExactElement(sessionId, "时间前推回测"),
+  ]);
+  if (
+    candidateTitle.elementRect.x + candidateTitle.elementRect.width >
+    backtestTitle.elementRect.x
+  ) {
+    throw new Error(`${platformName} 横屏数学研究候选与回测标题发生重叠`);
+  }
+  await verifyCompactNavigationLayout(sessionId);
+  const screenshot = await saveScreenshot(
+    sessionId,
+    platformName,
+    "landscape-mathematical-research",
+  );
+  if (screenshot.width <= screenshot.height || windowRect.width <= windowRect.height) {
+    throw new Error(`${platformName} 数学研究横屏证据宽高异常`);
+  }
+
+  await setOrientation(sessionId, PORTRAIT_ORIENTATION);
+  await waitForElementSelected(sessionId, "数学研究", platformName);
+}
+
+/** 核对数学研究内部视图在一级页面往返后保持不变。 */
+async function verifyResearchStatePreserved(sessionId, platformName) {
+  await openVerification(sessionId);
+  await openTrends(sessionId);
+  await waitForElementSelected(sessionId, "数学研究", platformName);
+  await scrollElementIntoView(sessionId, RESEARCH_STRATEGY_TITLE, "down");
+  await findVisibleExactElement(sessionId, RESEARCH_STRATEGY_TITLE);
+}
+
+/** 核对双色球和大乐透共用的数学研究完整工作流。 */
+async function verifyMathematicalResearchWorkflow(
+  sessionId,
+  platformName,
+  superLottoRange,
+  doubleColorBallRange,
+) {
+  await selectOption(sessionId, "数学研究", platformName, "down");
+  await verifyResearchSnapshot(
+    sessionId,
+    platformName,
+    RESEARCH_CONFIGS.doubleColorBall,
+    doubleColorBallRange,
+    officialLatestIssues.doubleColorBall,
+  );
+
+  await selectOption(sessionId, "大乐透", platformName, "down");
+  await verifyResearchSnapshot(
+    sessionId,
+    platformName,
+    RESEARCH_CONFIGS.superLotto,
+    superLottoRange,
+    officialLatestIssues.superLotto,
+  );
+  await verifyLandscapeResearch(sessionId, platformName, RESEARCH_CONFIGS.superLotto);
+  await verifyResearchStatePreserved(sessionId, platformName);
+}
+
+/** 执行当前字号的完整 V1.3 走势与数学研究交互验收。 */
 async function verifyCurrentMode(sessionId, platformName) {
   await openTrends(sessionId);
   await verifyBottomNavigationLayout(sessionId);
@@ -781,12 +1027,18 @@ async function verifyCurrentMode(sessionId, platformName) {
     officialLatestIssues.superLotto,
   );
   await verifySampleSizeWorkflow(sessionId, platformName, officialLatestIssues.superLotto);
-  await verifyDoubleColorBallWorkflow(
+  const doubleColorBallRange = await verifyDoubleColorBallWorkflow(
     sessionId,
     platformName,
     officialLatestIssues.doubleColorBall,
   );
-  process.stdout.write(`${platformName} ${acceptanceMode} V1.3 走势图检查通过\n`);
+  await verifyMathematicalResearchWorkflow(
+    sessionId,
+    platformName,
+    defaultRange,
+    doubleColorBallRange,
+  );
+  process.stdout.write(`${platformName} ${acceptanceMode} V1.3 走势与数学研究检查通过\n`);
 }
 
 /** 创建 Android 会话并执行当前字号模式。 */
