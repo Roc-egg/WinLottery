@@ -656,6 +656,50 @@ async function verifyHorizontalMatrixScroll(sessionId, platformName, issueValue)
   }
 }
 
+/** 核对三行统计完整可见、顺序正确，并位于首期开奖行之前。 */
+async function verifyStatisticsBeforeFirstDraw(
+  sessionId,
+  platformName,
+  firstIssue,
+  screenshotLabel,
+) {
+  const rowNames = ["出现次数", "当前遗漏", "最大遗漏", `期号 ${firstIssue}`];
+  await scrollElementIntoView(sessionId, rowNames[0], "up");
+
+  let rows = [];
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const visibleRows = await Promise.all(
+      rowNames.map((rowName) => findVisibleExactElements(sessionId, rowName)),
+    );
+    if (visibleRows.every((elements) => elements.length > 0)) {
+      rows = visibleRows.map((elements, index) => ({
+        name: rowNames[index],
+        rect: elements[0].elementRect,
+      }));
+      break;
+    }
+
+    const windowRect = await webdriverRequest(`/session/${sessionId}/window/rect`);
+    const x = Math.round(windowRect.x + windowRect.width / 2);
+    const startY = Math.round(windowRect.y + windowRect.height * 0.7);
+    const endY = Math.round(windowRect.y + windowRect.height * 0.6);
+    await performTouchSwipe(sessionId, x, startY, x, endY, 280);
+    await waitForPageUpdate(300);
+  }
+  if (rows.length !== rowNames.length) {
+    throw new Error(`${platformName} 无法同时查看前置统计与首期开奖行`);
+  }
+
+  for (let index = 1; index < rows.length; index += 1) {
+    const previous = rows[index - 1];
+    const current = rows[index];
+    if (previous.rect.y + previous.rect.height > current.rect.y) {
+      throw new Error(`${platformName} 走势图行顺序或布局异常：${previous.name} 与 ${current.name}`);
+    }
+  }
+  await saveScreenshot(sessionId, platformName, screenshotLabel);
+}
+
 /** 核对默认大乐透前区 50 期真实样本。 */
 async function verifyDefaultTrendSnapshot(sessionId, platformName, latestIssue) {
   const range = await waitForTrendRange(sessionId, 50, 5, latestIssue);
@@ -675,9 +719,17 @@ async function verifyDefaultTrendSnapshot(sessionId, platformName, latestIssue) 
 async function verifySampleSizeWorkflow(sessionId, platformName, latestIssue) {
   for (const sampleSize of [80, 120, 300, 500]) {
     await selectSampleSize(sessionId, sampleSize, platformName);
-    await waitForTrendRange(sessionId, sampleSize, 5, latestIssue);
+    const range = await waitForTrendRange(sessionId, sampleSize, 5, latestIssue);
+    if (sampleSize === 500) {
+      await saveScreenshot(sessionId, platformName, "five-hundred-draw-range");
+      await verifyStatisticsBeforeFirstDraw(
+        sessionId,
+        platformName,
+        range.firstIssue,
+        "five-hundred-draw-statistics",
+      );
+    }
   }
-  await saveScreenshot(sessionId, platformName, "five-hundred-draw-range");
   await selectSampleSize(sessionId, 50, platformName);
   return waitForTrendRange(sessionId, 50, 5, latestIssue);
 }
@@ -694,13 +746,18 @@ async function verifyDoubleColorBallWorkflow(sessionId, platformName, latestIssu
     "up",
   );
   await scrollElementIntoView(sessionId, "期号与01至16号码列", "up");
+  await verifyStatisticsBeforeFirstDraw(
+    sessionId,
+    platformName,
+    range.firstIssue,
+    "fifty-draw-statistics",
+  );
   await verifyHorizontalMatrixScroll(sessionId, platformName, range.firstIssue);
   await scrollElementIntoView(sessionId, `期号 ${range.lastIssue}`, "up");
-  await scrollElementIntoView(sessionId, "最大遗漏", "up");
   await findVisibleExactElement(sessionId, RESPONSIBLE_USE_NOTICE);
   await swipeVertically(sessionId, "up");
   await findVisibleExactElement(sessionId, RESPONSIBLE_USE_NOTICE);
-  await saveScreenshot(sessionId, platformName, "fifty-draw-statistics");
+  await saveScreenshot(sessionId, platformName, "fifty-draw-end");
 
   await openVerification(sessionId);
   await openTrends(sessionId);

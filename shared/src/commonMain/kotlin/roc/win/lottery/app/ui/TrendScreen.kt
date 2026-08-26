@@ -347,11 +347,6 @@ private fun PortraitTrendContent(
                 horizontalScrollState = horizontalScrollState,
             )
         }
-        trendDrawItems(
-            snapshot = snapshot,
-            layout = layout,
-            horizontalScrollState = horizontalScrollState,
-        )
         item(key = "statistics") {
             TrendStatisticsTable(
                 lotteryType = snapshot.lotteryType,
@@ -361,6 +356,11 @@ private fun PortraitTrendContent(
                 horizontalScrollState = horizontalScrollState,
             )
         }
+        trendDrawItems(
+            snapshot = snapshot,
+            layout = layout,
+            horizontalScrollState = horizontalScrollState,
+        )
         item(key = "responsible-use") { ResponsibleTrendNotice() }
     }
 }
@@ -407,11 +407,6 @@ private fun LandscapeTrendContent(
             horizontalScrollState = horizontalScrollState,
         )
         LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
-            trendDrawItems(
-                snapshot = snapshot,
-                layout = layout,
-                horizontalScrollState = horizontalScrollState,
-            )
             item(key = "statistics") {
                 TrendStatisticsTable(
                     lotteryType = snapshot.lotteryType,
@@ -421,6 +416,11 @@ private fun LandscapeTrendContent(
                     horizontalScrollState = horizontalScrollState,
                 )
             }
+            trendDrawItems(
+                snapshot = snapshot,
+                layout = layout,
+                horizontalScrollState = horizontalScrollState,
+            )
             item(key = "responsible-use") { ResponsibleTrendNotice() }
         }
     }
