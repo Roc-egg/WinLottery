@@ -8,9 +8,13 @@ import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.http.HttpMethod
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.json.Json
+import roc.win.lottery.domain.AiAnalysisProtocol
 
 /** 创建使用当前平台系统 TLS 和网络栈的 HTTP 客户端。 */
 expect fun createPlatformHttpClient(): HttpClient
+
+/** 创建不重定向、不重试且不记录请求内容的 AI 专用 HTTP 客户端。 */
+internal expect fun createPlatformAiHttpClient(): HttpClient
 
 /** 为各平台引擎安装统一且保守的客户端策略。 */
 internal fun HttpClientConfig<*>.configureLotteryHttpClient() {
@@ -34,6 +38,16 @@ internal fun HttpClientConfig<*>.configureLotteryHttpClient() {
         }
         retryOnExceptionIf { request, _ -> request.method == HttpMethod.Get }
         exponentialDelay()
+    }
+}
+
+/** 为 AI POST 请求安装冻结的超时和禁止重定向策略。 */
+internal fun HttpClientConfig<*>.configureAiHttpClient() {
+    followRedirects = false
+    install(HttpTimeout) {
+        connectTimeoutMillis = AI_CONNECT_TIMEOUT_MILLIS
+        requestTimeoutMillis = AI_REQUEST_TIMEOUT_MILLIS
+        socketTimeoutMillis = AI_REQUEST_TIMEOUT_MILLIS
     }
 }
 
@@ -69,3 +83,9 @@ private const val MAX_RETRIES = NetworkPolicy.MAX_RETRIES
 
 /** 服务端错误状态码起点。 */
 private const val SERVER_ERROR_STATUS = NetworkPolicy.SERVER_ERROR_STATUS
+
+/** AI 请求建连超时毫秒数。 */
+private const val AI_CONNECT_TIMEOUT_MILLIS = 10_000L
+
+/** AI 请求和套接字超时毫秒数。 */
+private const val AI_REQUEST_TIMEOUT_MILLIS = AiAnalysisProtocol.REQUEST_TIMEOUT_SECONDS * 1_000L

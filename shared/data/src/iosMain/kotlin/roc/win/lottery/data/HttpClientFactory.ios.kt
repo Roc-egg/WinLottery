@@ -8,7 +8,13 @@ import kotlin.experimental.ExperimentalNativeApi
 import kotlin.native.Platform
 
 /** 使用 iOS Darwin 引擎创建统一配置的客户端。 */
-actual fun createPlatformHttpClient(): HttpClient {
+actual fun createPlatformHttpClient(): HttpClient = createDarwinHttpClient(isAiClient = false)
+
+/** 使用 iOS Darwin 引擎创建禁止重定向和重试的 AI 客户端。 */
+internal actual fun createPlatformAiHttpClient(): HttpClient = createDarwinHttpClient(isAiClient = true)
+
+/** 创建共用验收代理边界的 Darwin 客户端。 */
+private fun createDarwinHttpClient(isAiClient: Boolean): HttpClient {
     val debugBinary = isDebugBinary()
     val acceptanceProxyUrl =
         buildIosAcceptanceProxyUrl(
@@ -21,7 +27,11 @@ actual fun createPlatformHttpClient(): HttpClient {
             isDebugBinary = debugBinary,
         )
     return HttpClient(Darwin) {
-        configureLotteryHttpClient()
+        if (isAiClient) {
+            configureAiHttpClient()
+        } else {
+            configureLotteryHttpClient()
+        }
         engine {
             acceptanceProxyUrl?.let { proxyUrl ->
                 configureSession {
