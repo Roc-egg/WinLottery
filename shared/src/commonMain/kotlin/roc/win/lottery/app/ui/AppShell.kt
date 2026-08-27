@@ -44,6 +44,9 @@ import roc.win.lottery.app.MainDestination
 /** 宽度达到该阈值时，一级导航从底栏切换为侧栏。 */
 private val WIDE_NAVIGATION_THRESHOLD = 840.dp
 
+/** 高度低于该阈值时使用紧凑顶部导航，避免五项侧栏在手机横屏中被裁切。 */
+private val SHORT_NAVIGATION_HEIGHT_THRESHOLD = 600.dp
+
 /** 一级页面在宽屏中允许使用的最大正文宽度。 */
 private val MAX_CONTENT_WIDTH = 960.dp
 
@@ -94,10 +97,13 @@ fun AppShell(
         ) {
             val usesSideNavigation =
                 mainDestination != null && maxWidth >= WIDE_NAVIGATION_THRESHOLD
-            if (compactChrome && mainDestination != null) {
+            val usesCompactNavigation =
+                mainDestination != null &&
+                    (compactChrome || maxHeight < SHORT_NAVIGATION_HEIGHT_THRESHOLD)
+            if (usesCompactNavigation) {
                 CompactMainAppShellBody(
                     title = title,
-                    selectedDestination = mainDestination,
+                    selectedDestination = checkNotNull(mainDestination),
                     destinations = availableMainDestinations,
                     onDestinationSelected = onMainDestinationSelected,
                     actions = actions,
