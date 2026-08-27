@@ -50,6 +50,15 @@ class AiProviderConfigurationValidatorTest {
         }
     }
 
+    /** 超长地址必须在 URL 解析前按固定边界拒绝。 */
+    @Test
+    fun rejectsOversizedEndpoint() {
+        assertEquals(
+            AiProviderConfigurationProblemCode.INVALID_ENDPOINT,
+            invalid(endpointUrl = "https://api.example.test/${"x".repeat(2049)}").code,
+        )
+    }
+
     /** 展示名、模型和密钥必须分别执行保守文本边界。 */
     @Test
     fun rejectsInvalidTextFields() {

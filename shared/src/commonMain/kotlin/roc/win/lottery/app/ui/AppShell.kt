@@ -377,6 +377,7 @@ private fun MainDestination.label(): String =
         MainDestination.VERIFICATION -> "核对"
         MainDestination.NUMBER_PICKER -> "选号"
         MainDestination.TRENDS -> "走势"
+        MainDestination.AI_ANALYSIS -> "AI"
         MainDestination.RECORDS -> "记录"
     }
 
@@ -386,5 +387,6 @@ private fun MainDestination.icon(): ImageVector =
         MainDestination.VERIFICATION -> LotteryIcons.Verification
         MainDestination.NUMBER_PICKER -> LotteryIcons.NumberPicker
         MainDestination.TRENDS -> LotteryIcons.Trends
+        MainDestination.AI_ANALYSIS -> LotteryIcons.AiAnalysis
         MainDestination.RECORDS -> LotteryIcons.History
     }

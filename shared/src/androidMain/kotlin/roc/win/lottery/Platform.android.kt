@@ -11,6 +11,7 @@ import roc.win.lottery.app.OcrConfidenceDiagnostics
 import roc.win.lottery.app.withOneShotConflictInjection
 import roc.win.lottery.data.AndroidSuperLottoPdfTextExtractor
 import roc.win.lottery.data.OfficialDrawRepository
+import roc.win.lottery.data.ResponsesAiAnalysisProvider
 import roc.win.lottery.domain.LotteryPrizeCalculator
 import roc.win.lottery.domain.TicketValidator
 import roc.win.lottery.persistence.createAndroidTicketRecordStore
@@ -67,6 +68,7 @@ fun createAndroidRecognitionContainer(activity: ComponentActivity): AppContainer
                 isDebugEnabled = isDebuggable,
             ),
         historicalDrawRepository = officialDrawRepository,
+        aiAnalysisProvider = ResponsesAiAnalysisProvider(),
         prizeCalculator = LotteryPrizeCalculator(),
         appPaths = appPaths,
         ticketValidator = TicketValidator(),

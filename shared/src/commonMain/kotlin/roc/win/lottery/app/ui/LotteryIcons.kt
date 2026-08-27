@@ -2,23 +2,29 @@ package roc.win.lottery.app.ui
 
 import androidx.compose.ui.graphics.vector.ImageVector
 import com.composables.icons.lucide.ArrowLeft
+import com.composables.icons.lucide.BrainCircuit
 import com.composables.icons.lucide.Camera
 import com.composables.icons.lucide.ChartNoAxesCombined
 import com.composables.icons.lucide.Check
+import com.composables.icons.lucide.CircleStop
 import com.composables.icons.lucide.ClipboardCheck
 import com.composables.icons.lucide.Dices
 import com.composables.icons.lucide.EllipsisVertical
+import com.composables.icons.lucide.Eye
+import com.composables.icons.lucide.EyeOff
 import com.composables.icons.lucide.FileDown
 import com.composables.icons.lucide.FileUp
 import com.composables.icons.lucide.History
 import com.composables.icons.lucide.Image
 import com.composables.icons.lucide.Info
+import com.composables.icons.lucide.KeyRound
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Minus
 import com.composables.icons.lucide.Pencil
 import com.composables.icons.lucide.Plus
 import com.composables.icons.lucide.RefreshCw
 import com.composables.icons.lucide.Search
+import com.composables.icons.lucide.Send
 import com.composables.icons.lucide.ShieldCheck
 import com.composables.icons.lucide.Trash2
 import com.composables.icons.lucide.X
@@ -51,6 +57,24 @@ object LotteryIcons {
 
     /** 基本走势图一级目的地图标。 */
     val Trends: ImageVector = Lucide.ChartNoAxesCombined
+
+    /** AI 历史分析一级目的地图标。 */
+    val AiAnalysis: ImageVector = Lucide.BrainCircuit
+
+    /** 显示会话密钥图标。 */
+    val ShowSecret: ImageVector = Lucide.Eye
+
+    /** 隐藏会话密钥图标。 */
+    val HideSecret: ImageVector = Lucide.EyeOff
+
+    /** 会话密钥输入图标。 */
+    val SecretKey: ImageVector = Lucide.KeyRound
+
+    /** 发送单次 AI 请求图标。 */
+    val Send: ImageVector = Lucide.Send
+
+    /** 取消正在执行的 AI 请求图标。 */
+    val Stop: ImageVector = Lucide.CircleStop
 
     /** 查询和搜索图标。 */
     val Search: ImageVector = Lucide.Search

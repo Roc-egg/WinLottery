@@ -93,10 +93,19 @@ class LotteryAppController(
     private val predictionEngine = LotteryPredictionEngine()
 
     /** 当前控制器会话按彩种保留的最多 500 期规范化历史开奖。 */
-    private val trendHistoryCache = mutableMapOf<LotteryType, TrendHistoryCacheEntry>()
+    private val trendHistoryCache = mutableMapOf<LotteryType, HistoricalDrawCacheEntry>()
 
     /** 当前控制器会话内保留的走势图配置与加载状态。 */
     private var trendChartState = TrendChartState.create()
+
+    /** 当前移动平台启用时使用的 AI 单次确认共享工作流。 */
+    private val aiAnalysisWorkflow =
+        container.aiAnalysisProvider?.let { provider ->
+            AiAnalysisWorkflow(
+                provider = provider,
+                onStateChanged = ::publishAiWorkspace,
+            )
+        }
 
     /**
      * 从拍照或导图开始一次全新的本地分析。
@@ -183,6 +192,7 @@ class LotteryAppController(
     /** 取消当前流程并清除页面状态。 */
     suspend fun navigateHome() {
         flowGeneration += 1L
+        aiAnalysisWorkflow?.clearTransientRequest()
         clearTemporaryImage()
         lastQuerySourceScreen = null
         queryReturnScreen = null
@@ -204,6 +214,7 @@ class LotteryAppController(
 
             is AppScreen.NumberPicker,
             is AppScreen.Trends,
+            is AppScreen.AiAnalysis,
             is AppScreen.Analysis,
             is AppScreen.Review,
             is AppScreen.Records,
@@ -230,6 +241,7 @@ class LotteryAppController(
     /** 打开随机选号一级页面并结束此前的临时票面流程。 */
     suspend fun showRandomNumberPicker() {
         flowGeneration += 1L
+        aiAnalysisWorkflow?.clearTransientRequest()
         clearTemporaryImage()
         lastQuerySourceScreen = null
         queryReturnScreen = null
@@ -272,6 +284,7 @@ class LotteryAppController(
     /** 打开走势与数学研究一级页面并结束此前的临时票面流程。 */
     suspend fun showTrendChart() {
         val generation = ++flowGeneration
+        aiAnalysisWorkflow?.clearTransientRequest()
         clearTemporaryImage()
         lastQuerySourceScreen = null
         queryReturnScreen = null
@@ -357,34 +370,10 @@ class LotteryAppController(
         lotteryType: LotteryType,
         generation: Long,
     ) {
-        val repository = container.historicalDrawRepository
-        if (repository == null) {
-            publishTrendFailureIfCurrent(lotteryType, generation, "当前平台尚未接入官方历史开奖查询")
-            return
-        }
-        when (
-            val result =
-                repository.getLatestDraws(
-                    lotteryType = lotteryType,
-                    count = HistoricalDrawRepository.MAXIMUM_DRAW_COUNT,
-                )
-        ) {
-            is HistoricalDrawQueryResult.Success -> {
+        when (val result = fetchHistoricalDrawCache(lotteryType)) {
+            is HistoricalDrawCacheLoadResult.Success -> {
                 if (!isCurrentTrendLoad(lotteryType, generation)) return
-                val cache =
-                    TrendHistoryCacheEntry(
-                        draws = result.draws,
-                        sourceName = result.sourceName,
-                        fetchedAtEpochMillis = result.fetchedAtEpochMillis,
-                    )
-                if (cache.draws.size != HistoricalDrawRepository.MAXIMUM_DRAW_COUNT) {
-                    publishTrendFailureIfCurrent(
-                        lotteryType,
-                        generation,
-                        "官网未返回完整的 500 期历史开奖，请主动重试",
-                    )
-                    return
-                }
+                val cache = result.cache
                 trendHistoryCache[lotteryType] = cache
                 val configured = trendChartState
                 val calculated = calculateTrendChart(configured, cache)
@@ -394,8 +383,40 @@ class LotteryAppController(
                 publishTrendChart(calculated)
             }
 
-            is HistoricalDrawQueryResult.Unavailable -> {
+            is HistoricalDrawCacheLoadResult.Failed -> {
                 publishTrendFailureIfCurrent(lotteryType, generation, result.message)
+            }
+        }
+    }
+
+    /** 从官方仓库加载一个彩种完整 500 期会话缓存，供走势和 AI 共用。 */
+    private suspend fun fetchHistoricalDrawCache(lotteryType: LotteryType): HistoricalDrawCacheLoadResult {
+        val repository =
+            container.historicalDrawRepository
+                ?: return HistoricalDrawCacheLoadResult.Failed("当前平台尚未接入官方历史开奖查询")
+        return when (
+            val result =
+                repository.getLatestDraws(
+                    lotteryType = lotteryType,
+                    count = HistoricalDrawRepository.MAXIMUM_DRAW_COUNT,
+                )
+        ) {
+            is HistoricalDrawQueryResult.Success -> {
+                if (result.draws.size != HistoricalDrawRepository.MAXIMUM_DRAW_COUNT) {
+                    HistoricalDrawCacheLoadResult.Failed("官网未返回完整的 500 期历史开奖，请主动重试")
+                } else {
+                    HistoricalDrawCacheLoadResult.Success(
+                        HistoricalDrawCacheEntry(
+                            draws = result.draws,
+                            sourceName = result.sourceName,
+                            fetchedAtEpochMillis = result.fetchedAtEpochMillis,
+                        ),
+                    )
+                }
+            }
+
+            is HistoricalDrawQueryResult.Unavailable -> {
+                HistoricalDrawCacheLoadResult.Failed(result.message)
             }
         }
     }
@@ -403,7 +424,7 @@ class LotteryAppController(
     /** 使用当前配置从会话缓存生成走势图与数学研究结果。 */
     private fun calculateTrendChart(
         configured: TrendChartState,
-        cache: TrendHistoryCacheEntry,
+        cache: HistoricalDrawCacheEntry,
     ): TrendChartState {
         val trendContent =
             when (
@@ -491,10 +512,130 @@ class LotteryAppController(
         }
     }
 
+    /** 打开 AI 历史分析一级页面，并优先复用走势已经取得的 500 期会话缓存。 */
+    suspend fun showAiAnalysis() {
+        val workflow = aiAnalysisWorkflow ?: return
+        val generation = ++flowGeneration
+        clearTemporaryImage()
+        lastQuerySourceScreen = null
+        queryReturnScreen = null
+        resetConfirmationPersistence()
+        resetTicketRecordManagement()
+        workflow.clearTransientRequest()
+        mutableUiState.update { it.copy(screen = AppScreen.AiAnalysis(workflow.state)) }
+        val lotteryType = workflow.state.settings.lotteryType
+        val cached = trendHistoryCache[lotteryType]
+        if (cached != null) {
+            workflow.showHistoryReady(cached.draws, cached.sourceName, cached.fetchedAtEpochMillis)
+        } else {
+            workflow.showHistoryLoading()
+            loadAiHistory(lotteryType, generation)
+        }
+    }
+
+    /** 更新 AI 非敏感配置；切换彩种时复用缓存或加载新的完整历史开奖。 */
+    suspend fun updateAiAnalysisSettings(settings: AiAnalysisSettings) {
+        val workflow = aiAnalysisWorkflow ?: return
+        if (mutableUiState.value.screen !is AppScreen.AiAnalysis) return
+        val previousLotteryType = workflow.state.settings.lotteryType
+        workflow.updateSettings(settings)
+        if (workflow.state.settings != settings || settings.lotteryType == previousLotteryType) return
+        val generation = ++flowGeneration
+        val cached = trendHistoryCache[settings.lotteryType]
+        if (cached != null) {
+            workflow.showHistoryReady(cached.draws, cached.sourceName, cached.fetchedAtEpochMillis)
+        } else {
+            workflow.showHistoryLoading()
+            loadAiHistory(settings.lotteryType, generation)
+        }
+    }
+
+    /** 使用界面当前会话密钥构建精确发送预览，不发起网络请求。 */
+    fun prepareAiAnalysisPreview(apiKey: String): Boolean {
+        val workflow = aiAnalysisWorkflow ?: return false
+        if (mutableUiState.value.screen !is AppScreen.AiAnalysis) return false
+        return workflow.preparePreview(apiKey)
+    }
+
+    /** 关闭尚未消费的 AI 发送预览。 */
+    fun dismissAiAnalysisPreview() {
+        if (mutableUiState.value.screen !is AppScreen.AiAnalysis) return
+        aiAnalysisWorkflow?.dismissPreview()
+    }
+
+    /** 消费匹配指纹的单次确认，并把 Provider 结果发布到当前 AI 页面。 */
+    suspend fun confirmAiAnalysisPreview(requestFingerprint: String): Boolean {
+        val workflow = aiAnalysisWorkflow ?: return false
+        if (mutableUiState.value.screen !is AppScreen.AiAnalysis) return false
+        return workflow.confirmPreview(requestFingerprint)
+    }
+
+    /** 逻辑取消正在执行的 AI 请求，使取消后的迟到响应失效。 */
+    fun cancelAiAnalysisRequest() {
+        aiAnalysisWorkflow?.cancelActiveRequest()
+    }
+
+    /** 用户明确重试当前彩种的官方历史开奖，不自动重试 AI 请求。 */
+    suspend fun retryAiAnalysisHistory() {
+        val workflow = aiAnalysisWorkflow ?: return
+        val screen = mutableUiState.value.screen as? AppScreen.AiAnalysis ?: return
+        if (screen.workspace.history !is AiHistoryAvailability.Failed) return
+        val lotteryType = workflow.state.settings.lotteryType
+        val generation = ++flowGeneration
+        trendHistoryCache.remove(lotteryType)
+        workflow.showHistoryLoading()
+        loadAiHistory(lotteryType, generation)
+    }
+
+    /** 加载 AI 当前彩种的完整历史开奖，并写入与走势共用的会话缓存。 */
+    private suspend fun loadAiHistory(
+        lotteryType: LotteryType,
+        generation: Long,
+    ) {
+        when (val result = fetchHistoricalDrawCache(lotteryType)) {
+            is HistoricalDrawCacheLoadResult.Success -> {
+                if (!isCurrentAiHistoryLoad(lotteryType, generation)) return
+                trendHistoryCache[lotteryType] = result.cache
+                aiAnalysisWorkflow?.showHistoryReady(
+                    draws = result.cache.draws,
+                    sourceName = result.cache.sourceName,
+                    fetchedAtEpochMillis = result.cache.fetchedAtEpochMillis,
+                )
+            }
+
+            is HistoricalDrawCacheLoadResult.Failed -> {
+                if (isCurrentAiHistoryLoad(lotteryType, generation)) {
+                    aiAnalysisWorkflow?.showHistoryFailure(result.message)
+                }
+            }
+        }
+    }
+
+    /** 判断迟到的历史开奖响应是否仍属于当前 AI 页面和彩种。 */
+    private fun isCurrentAiHistoryLoad(
+        lotteryType: LotteryType,
+        generation: Long,
+    ): Boolean {
+        val screen = mutableUiState.value.screen as? AppScreen.AiAnalysis ?: return false
+        return generation == flowGeneration && screen.workspace.settings.lotteryType == lotteryType
+    }
+
+    /** 只在 AI 页面可见时把共享工作流状态同步到应用顶层状态。 */
+    private fun publishAiWorkspace(workspace: AiAnalysisWorkspaceState) {
+        mutableUiState.update { state ->
+            if (state.screen is AppScreen.AiAnalysis) {
+                state.copy(screen = AppScreen.AiAnalysis(workspace))
+            } else {
+                state
+            }
+        }
+    }
+
     /** 打开本机记录列表并结束此前的临时确认流程。 */
     suspend fun showTicketRecords() {
         if (container.ticketRecordStore == null) return
         flowGeneration += 1L
+        aiAnalysisWorkflow?.clearTransientRequest()
         clearTemporaryImage()
         lastQuerySourceScreen = null
         queryReturnScreen = null
@@ -1350,7 +1491,7 @@ class LotteryAppController(
     }
 
     /** 当前控制器会话内一个彩种的规范化历史开奖缓存。 */
-    private data class TrendHistoryCacheEntry(
+    private data class HistoricalDrawCacheEntry(
         /** 按开奖时间正序排列的完整 500 期历史开奖。 */
         val draws: List<HistoricalDraw>,
         /** 官方来源展示名称。 */
@@ -1358,6 +1499,27 @@ class LotteryAppController(
         /** 本次用户操作完成抓取的时间。 */
         val fetchedAtEpochMillis: Long,
     )
+
+    /** 从官方仓库取得完整会话历史开奖的内部结果。 */
+    private sealed interface HistoricalDrawCacheLoadResult {
+        /**
+         * 已取得一个彩种的完整 500 期规范化开奖。
+         *
+         * @property cache 走势和 AI 共用的会话缓存。
+         */
+        data class Success(
+            val cache: HistoricalDrawCacheEntry,
+        ) : HistoricalDrawCacheLoadResult
+
+        /**
+         * 当前无法形成完整 500 期缓存。
+         *
+         * @property message 不包含官网原始响应的恢复说明。
+         */
+        data class Failed(
+            val message: String,
+        ) : HistoricalDrawCacheLoadResult
+    }
 
     /** 多期查询和重试使用的状态集合。 */
     private companion object {

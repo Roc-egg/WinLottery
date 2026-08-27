@@ -4,6 +4,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -11,6 +12,7 @@ import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.backhandler.BackHandler
 import androidx.compose.ui.tooling.preview.Preview
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import roc.win.lottery.app.AppContainer
 import roc.win.lottery.app.AppScreen
@@ -19,6 +21,7 @@ import roc.win.lottery.app.MainDestination
 import roc.win.lottery.app.TicketReviewAction
 import roc.win.lottery.app.theme.LotteryTheme
 import roc.win.lottery.app.ui.AboutScreen
+import roc.win.lottery.app.ui.AiAnalysisScreen
 import roc.win.lottery.app.ui.AnalysisScreen
 import roc.win.lottery.app.ui.DemoCompleteScreen
 import roc.win.lottery.app.ui.DrawQueryScreen
@@ -45,19 +48,41 @@ fun App(container: AppContainer = remember { AppContainer.createDemo(getPlatform
     val controller = remember(container) { LotteryAppController(container) }
     val uiState by controller.uiState.collectAsState()
     val scope = rememberCoroutineScope()
+    val aiRequestJob = remember(controller) { mutableStateOf<Job?>(null) }
     val ticketRecordStore = container.ticketRecordStore
     val availableMainDestinations =
-        remember(ticketRecordStore) {
+        remember(ticketRecordStore, container.aiAnalysisProvider, container.historicalDrawRepository) {
             MainDestination.entries.filter { destination ->
-                destination != MainDestination.RECORDS || ticketRecordStore != null
+                when (destination) {
+                    MainDestination.AI_ANALYSIS -> {
+                        container.aiAnalysisProvider != null && container.historicalDrawRepository != null
+                    }
+
+                    MainDestination.RECORDS -> {
+                        ticketRecordStore != null
+                    }
+
+                    else -> {
+                        true
+                    }
+                }
             }
         }
+    val cancelAiRequest: () -> Unit = {
+        controller.cancelAiAnalysisRequest()
+        aiRequestJob.value?.cancel()
+        aiRequestJob.value = null
+    }
     val onMainDestinationSelected: (MainDestination) -> Unit = { destination ->
+        if (uiState.screen is AppScreen.AiAnalysis && destination != MainDestination.AI_ANALYSIS) {
+            cancelAiRequest()
+        }
         scope.launch {
             when (destination) {
                 MainDestination.VERIFICATION -> controller.navigateHome()
                 MainDestination.NUMBER_PICKER -> controller.showRandomNumberPicker()
                 MainDestination.TRENDS -> controller.showTrendChart()
+                MainDestination.AI_ANALYSIS -> controller.showAiAnalysis()
                 MainDestination.RECORDS -> controller.showTicketRecords()
             }
         }
@@ -88,10 +113,17 @@ fun App(container: AppContainer = remember { AppContainer.createDemo(getPlatform
         }
 
     DisposableEffect(container) {
-        onDispose { container.close() }
+        onDispose {
+            controller.cancelAiAnalysisRequest()
+            aiRequestJob.value?.cancel()
+            container.close()
+        }
     }
 
     SystemBackHandler(enabled = uiState.screen != AppScreen.Home) {
+        if (uiState.screen is AppScreen.AiAnalysis) {
+            cancelAiRequest()
+        }
         scope.launch { controller.navigateBack() }
     }
 
@@ -134,6 +166,27 @@ fun App(container: AppContainer = remember { AppContainer.createDemo(getPlatform
                     availableMainDestinations = availableMainDestinations,
                     onMainDestinationSelected = onMainDestinationSelected,
                     onAction = { action -> scope.launch { controller.updateTrendChart(action) } },
+                )
+            }
+
+            is AppScreen.AiAnalysis -> {
+                AiAnalysisScreen(
+                    workspace = screen.workspace,
+                    availableMainDestinations = availableMainDestinations,
+                    onMainDestinationSelected = onMainDestinationSelected,
+                    onSettingsChange = { settings ->
+                        scope.launch { controller.updateAiAnalysisSettings(settings) }
+                    },
+                    onRetryHistory = { scope.launch { controller.retryAiAnalysisHistory() } },
+                    onPreparePreview = controller::prepareAiAnalysisPreview,
+                    onDismissPreview = controller::dismissAiAnalysisPreview,
+                    onConfirmPreview = { fingerprint ->
+                        aiRequestJob.value =
+                            scope.launch {
+                                controller.confirmAiAnalysisPreview(fingerprint)
+                            }
+                    },
+                    onCancelRequest = cancelAiRequest,
                 )
             }
 

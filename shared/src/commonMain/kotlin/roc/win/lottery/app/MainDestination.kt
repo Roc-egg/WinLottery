@@ -11,6 +11,9 @@ enum class MainDestination {
     /** 历史开奖基本走势工作区。 */
     TRENDS,
 
+    /** 用户逐次确认的 AI 历史数据分析工作区。 */
+    AI_ANALYSIS,
+
     /** 本机结构化票据记录工作区。 */
     RECORDS,
 }

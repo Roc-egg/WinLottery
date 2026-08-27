@@ -97,6 +97,12 @@ class AiProviderConfigurationValidator {
         }
 
         val normalizedEndpoint = endpointUrl.trim()
+        if (normalizedEndpoint.length > MAX_ENDPOINT_LENGTH) {
+            return invalid(
+                AiProviderConfigurationProblemCode.INVALID_ENDPOINT,
+                "AI 服务地址为空、过长或不是完整 HTTPS 地址",
+            )
+        }
         val parsedEndpoint = runCatching { Url(normalizedEndpoint) }.getOrNull()
         if (
             parsedEndpoint == null ||
@@ -163,6 +169,9 @@ class AiProviderConfigurationValidator {
 
         /** 会话密钥最大字符数。 */
         const val MAX_API_KEY_LENGTH = 4096
+
+        /** 完整 HTTPS 服务地址最大字符数。 */
+        const val MAX_ENDPOINT_LENGTH = 2048
 
         /** Responses 风格模型标识允许的保守字符集合。 */
         val MODEL_PATTERN = Regex("^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$")

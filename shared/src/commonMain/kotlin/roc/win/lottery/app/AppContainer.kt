@@ -1,6 +1,7 @@
 package roc.win.lottery.app
 
 import roc.win.lottery.Platform
+import roc.win.lottery.data.AiAnalysisProvider
 import roc.win.lottery.data.DrawRepository
 import roc.win.lottery.data.FakeDrawRepository
 import roc.win.lottery.data.HistoricalDrawRepository
@@ -29,6 +30,7 @@ import roc.win.lottery.recognition.TicketRecognizer
  * @property ticketParser 票面结构解析能力。
  * @property drawRepository 开奖查询能力。
  * @property historicalDrawRepository 官方历史开奖查询能力；未接入的平台为 `null`。
+ * @property aiAnalysisProvider 用户逐次确认后执行单次请求的 AI 能力；未接入的平台为 `null`。
  * @property prizeCalculator 本地中奖规则计算能力。
  * @property appPaths 临时文件管理能力。
  * @property ticketValidator 票面领域校验器。
@@ -48,6 +50,7 @@ class AppContainer(
     val ticketParser: TicketParser,
     val drawRepository: DrawRepository,
     val historicalDrawRepository: HistoricalDrawRepository?,
+    val aiAnalysisProvider: AiAnalysisProvider? = null,
     val prizeCalculator: PrizeCalculator,
     val appPaths: AppPaths,
     val ticketValidator: TicketValidator,

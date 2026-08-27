@@ -378,15 +378,23 @@ internal class AiAnalysisWorkflow(
 
     /** 逻辑取消正在执行的单次请求，使任何迟到响应都不能进入界面。 */
     fun cancelActiveRequest() {
-        val wasRequesting = state.operation is AiAnalysisOperation.Requesting
+        val operation = state.operation
         invalidateTransientRequest()
-        if (wasRequesting) {
-            publish(
-                state.copy(
-                    operation = AiAnalysisOperation.Idle,
-                    errorMessage = AI_REQUEST_CANCELLED_MESSAGE,
-                ),
-            )
+        when (operation) {
+            AiAnalysisOperation.Idle -> {}
+
+            is AiAnalysisOperation.AwaitingConfirmation -> {
+                publish(state.copy(operation = AiAnalysisOperation.Idle, errorMessage = null))
+            }
+
+            is AiAnalysisOperation.Requesting -> {
+                publish(
+                    state.copy(
+                        operation = AiAnalysisOperation.Idle,
+                        errorMessage = AI_REQUEST_CANCELLED_MESSAGE,
+                    ),
+                )
+            }
         }
     }
 

@@ -35,6 +35,15 @@ sealed interface AppScreen {
     ) : AppScreen
 
     /**
+     * 用户自备密钥的 AI 历史数据分析一级页面。
+     *
+     * @property workspace 当前不含密钥、请求体或原始响应的共享工作流状态。
+     */
+    data class AiAnalysis(
+        val workspace: AiAnalysisWorkspaceState,
+    ) : AppScreen
+
+    /**
      * 本机结构化票据记录页。
      *
      * @property filter 当前彩种筛选。

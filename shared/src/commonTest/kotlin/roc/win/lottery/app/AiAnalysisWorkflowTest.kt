@@ -78,6 +78,21 @@ class AiAnalysisWorkflowTest {
             assertIs<AiAnalysisOperation.Idle>(workflow.state.operation)
         }
 
+    /** 统一取消入口遇到待确认预览时也必须销毁授权并恢复空闲状态。 */
+    @Test
+    fun cancelsPendingPreviewWithoutSending() =
+        runTest {
+            val provider = RecordingAiProvider()
+            val workflow = configuredWorkflow(provider)
+            assertTrue(workflow.preparePreview(TEST_SESSION_SECRET))
+
+            workflow.cancelActiveRequest()
+
+            assertIs<AiAnalysisOperation.Idle>(workflow.state.operation)
+            assertFalse(workflow.confirmPreview("旧确认指纹"))
+            assertEquals(0, provider.requestCount)
+        }
+
     /** 一次确认只能发起一次请求，加载和成功结果必须按顺序发布。 */
     @Test
     fun consumesConfirmationOnceAndPublishesValidatedResult() =

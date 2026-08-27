@@ -11,6 +11,7 @@ import roc.win.lottery.app.OcrConfidenceDiagnostics
 import roc.win.lottery.app.withOneShotConflictInjection
 import roc.win.lottery.data.IOSSuperLottoPdfTextExtractor
 import roc.win.lottery.data.OfficialDrawRepository
+import roc.win.lottery.data.ResponsesAiAnalysisProvider
 import roc.win.lottery.domain.LotteryPrizeCalculator
 import roc.win.lottery.domain.TicketValidator
 import roc.win.lottery.persistence.createIOSTicketRecordStore
@@ -76,6 +77,7 @@ fun createIOSRecognitionContainer(
                     isDebugEnabled = isDebugBinary,
                 ),
             historicalDrawRepository = officialDrawRepository,
+            aiAnalysisProvider = ResponsesAiAnalysisProvider(),
             prizeCalculator = LotteryPrizeCalculator(),
             appPaths = appPaths,
             ticketValidator = TicketValidator(),
