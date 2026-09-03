@@ -1,0 +1,338 @@
+name: 发布版本
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 已存在的稳定版本标签，例如 v1.4.0
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  metadata:
+    name: 校验发布标签与版本
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+      build_number: ${{ steps.release.outputs.build_number }}
+      commit: ${{ steps.release.outputs.commit }}
+    steps:
+      - name: 检出发布标签
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: 校验版本元数据
+        id: release
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$RELEASE_TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            echo "::error title=版本标签不合法::仅接受 vX.Y.Z 格式的稳定版本标签"
+            exit 1
+          fi
+
+          tag_version="${BASH_REMATCH[1]}"
+          tag_commit="$(git rev-list -n 1 "$RELEASE_TAG")"
+          head_commit="$(git rev-parse HEAD)"
+          if [[ -z "$tag_commit" || "$head_commit" != "$tag_commit" ]]; then
+            echo "::error title=标签提交不一致::工作区不是指定标签对应的提交"
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$tag_commit" "origin/$DEFAULT_BRANCH"; then
+            echo "::error title=标签不属于主分支::发布标签必须指向默认分支历史中的提交"
+            exit 1
+          fi
+
+          android_version="$(sed -n 's/^[[:space:]]*versionName = "\([^"]*\)".*/\1/p' androidApp/build.gradle.kts)"
+          android_build="$(sed -n 's/^[[:space:]]*versionCode = \([0-9][0-9]*\).*/\1/p' androidApp/build.gradle.kts)"
+          ios_version="$(sed -n 's/^MARKETING_VERSION=\(.*\)$/\1/p' iosApp/Configuration/Config.xcconfig)"
+          ios_build="$(sed -n 's/^CURRENT_PROJECT_VERSION=\([0-9][0-9]*\)$/\1/p' iosApp/Configuration/Config.xcconfig)"
+
+          if [[ "$tag_version" != "$android_version" || "$android_version" != "$ios_version" ]]; then
+            echo "::error title=版本号不一致::标签、Android 与 iOS 版本号必须完全一致"
+            exit 1
+          fi
+          if [[ -z "$android_build" || "$android_build" != "$ios_build" ]]; then
+            echo "::error title=构建号不一致::Android versionCode 与 iOS CURRENT_PROJECT_VERSION 必须一致"
+            exit 1
+          fi
+
+          {
+            echo "tag=$RELEASE_TAG"
+            echo "version=$android_version"
+            echo "build_number=$android_build"
+            echo "commit=$tag_commit"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### 发布元数据"
+            echo "- 标签：\`$RELEASE_TAG\`"
+            echo "- 版本：\`$android_version ($android_build)\`"
+            echo "- 提交：\`$tag_commit\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  verify:
+    name: 跨平台 Release 验证
+    needs: metadata
+    runs-on: macos-15
+    timeout-minutes: 50
+    permissions:
+      contents: read
+    steps:
+      - name: 检出发布代码
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.metadata.outputs.tag }}
+          persist-credentials: false
+
+      - name: 配置 Java
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+        with:
+          distribution: zulu
+          java-version: "21"
+
+      - name: 配置 Gradle
+        uses: gradle/actions/setup-gradle@67621b124fd2e251c5e8a0e6e3b91318f2287669 # v6.3.0
+        with:
+          cache-read-only: true
+
+      - name: 校验 Desktop OCR 模型锁
+        run: python3 tools/desktop-ocr/convert_ppocrv5.py --verify-lock-only
+
+      - name: 运行格式检查和共享测试矩阵
+        run: ./gradlew spotlessCheck jvmTest testAndroidHostTest iosSimulatorArm64Test --console=plain
+
+      - name: 构建 iOS Simulator Release
+        env:
+          EXPECTED_VERSION: ${{ needs.metadata.outputs.version }}
+          EXPECTED_BUILD: ${{ needs.metadata.outputs.build_number }}
+        run: |
+          set -euo pipefail
+
+          derived_data="$RUNNER_TEMP/WinLottery-ios-release"
+          xcodebuild \
+            -project iosApp/iosApp.xcodeproj \
+            -scheme iosApp \
+            -configuration Release \
+            -sdk iphonesimulator \
+            -destination "generic/platform=iOS Simulator" \
+            -derivedDataPath "$derived_data" \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+          app="$derived_data/Build/Products/Release-iphonesimulator/WinLottery.app"
+          info_plist="$app/Info.plist"
+          executable="$app/WinLottery"
+          [[ -f "$info_plist" && -f "$executable" ]] || {
+            echo "::error title=iOS Release 缺失::没有找到完整的 Simulator Release 应用"
+            exit 1
+          }
+
+          actual_version="$(plutil -extract CFBundleShortVersionString raw "$info_plist")"
+          actual_build="$(plutil -extract CFBundleVersion raw "$info_plist")"
+          [[ "$actual_version" == "$EXPECTED_VERSION" && "$actual_build" == "$EXPECTED_BUILD" ]] || {
+            echo "::error title=iOS 产物版本不一致::实际版本为 $actual_version ($actual_build)"
+            exit 1
+          }
+          file "$executable" | grep -Fq "arm64" || {
+            echo "::error title=iOS 架构不正确::Simulator Release 不是 arm64 架构"
+            exit 1
+          }
+
+          {
+            echo "### 跨平台验证"
+            echo "- 共享测试矩阵：通过"
+            echo "- iOS Simulator Release：\`$actual_version ($actual_build)\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  android-release:
+    name: 构建 Android Release
+    needs: metadata
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - name: 检出发布代码
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.metadata.outputs.tag }}
+          persist-credentials: false
+
+      - name: 配置 Java
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+        with:
+          distribution: zulu
+          java-version: "21"
+
+      - name: 配置 Gradle
+        uses: gradle/actions/setup-gradle@67621b124fd2e251c5e8a0e6e3b91318f2287669 # v6.3.0
+        with:
+          cache-read-only: true
+
+      - name: 构建 Android Release APK 与 AAB
+        run: ./gradlew :androidApp:assembleRelease :androidApp:bundleRelease --console=plain
+
+      - name: 校验并整理 Android 发布产物
+        env:
+          EXPECTED_VERSION: ${{ needs.metadata.outputs.version }}
+          EXPECTED_BUILD: ${{ needs.metadata.outputs.build_number }}
+          RELEASE_COMMIT: ${{ needs.metadata.outputs.commit }}
+        run: |
+          set -euo pipefail
+
+          apk="androidApp/build/outputs/apk/release/androidApp-release.apk"
+          aab="androidApp/build/outputs/bundle/release/androidApp-release.aab"
+          [[ -f "$apk" && -f "$aab" ]] || {
+            echo "::error title=Android Release 缺失::没有找到 APK 或 AAB"
+            exit 1
+          }
+
+          build_tools="$(find "$ANDROID_SDK_ROOT/build-tools" -mindepth 1 -maxdepth 1 -type d -print | sort -V | tail -n 1)"
+          apksigner="$build_tools/apksigner"
+          aapt2="$build_tools/aapt2"
+          [[ -x "$apksigner" && -x "$aapt2" ]] || {
+            echo "::error title=Android 工具缺失::没有找到 apksigner 或 aapt2"
+            exit 1
+          }
+
+          "$apksigner" verify --verbose "$apk"
+          jarsigner -verify "$aab" >/dev/null
+
+          badging="$("$aapt2" dump badging "$apk")"
+          grep -Fq "versionName='$EXPECTED_VERSION'" <<< "$badging" || {
+            echo "::error title=Android 版本号不一致::APK versionName 不符合标签"
+            exit 1
+          }
+          grep -Fq "versionCode='$EXPECTED_BUILD'" <<< "$badging" || {
+            echo "::error title=Android 构建号不一致::APK versionCode 不符合配置"
+            exit 1
+          }
+          if grep -Fxq "application-debuggable" <<< "$badging"; then
+            echo "::error title=Release 可调试::APK 清单仍包含 application-debuggable"
+            exit 1
+          fi
+
+          apk_abis="$(unzip -Z1 "$apk" | sed -n 's#^lib/\([^/]*\)/.*#\1#p' | sort -u | paste -sd, -)"
+          aab_abis="$(unzip -Z1 "$aab" | sed -n 's#^base/lib/\([^/]*\)/.*#\1#p' | sort -u | paste -sd, -)"
+          [[ "$apk_abis" == "arm64-v8a" && "$aab_abis" == "arm64-v8a" ]] || {
+            echo "::error title=Android ABI 不符合要求::APK=$apk_abis，AAB=$aab_abis"
+            exit 1
+          }
+
+          apk_digest="$("$apksigner" verify --print-certs "$apk" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')"
+          aab_digest="$(keytool -printcert -jarfile "$aab" | sed -n 's/^[[:space:]]*SHA256: //p' | tr -d ':' | tr '[:upper:]' '[:lower:]')"
+          [[ -n "$apk_digest" && "$apk_digest" == "$aab_digest" ]] || {
+            echo "::error title=Android 签名不一致::APK 与 AAB 证书指纹不同"
+            exit 1
+          }
+
+          asset_prefix="WinLottery-v${EXPECTED_VERSION}-android-arm64-v8a"
+          mkdir -p release-assets
+          cp "$apk" "release-assets/${asset_prefix}.apk"
+          cp "$aab" "release-assets/${asset_prefix}.aab"
+          {
+            echo "tag=$RELEASE_TAG"
+            echo "version=$EXPECTED_VERSION"
+            echo "build_number=$EXPECTED_BUILD"
+            echo "commit=$RELEASE_COMMIT"
+            echo "abi=arm64-v8a"
+            echo "certificate_sha256=$apk_digest"
+          } > release-assets/RELEASE-METADATA.txt
+          (
+            cd release-assets
+            sha256sum "${asset_prefix}.apk" "${asset_prefix}.aab" RELEASE-METADATA.txt > SHA256SUMS.txt
+          )
+
+          {
+            echo "### Android 发布产物"
+            echo "- APK/AAB：\`$EXPECTED_VERSION ($EXPECTED_BUILD)\`"
+            echo "- ABI：\`arm64-v8a\`"
+            echo "- 证书 SHA-256：\`$apk_digest\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 生成构建来源证明
+        if: github.event.repository.visibility == 'public'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: release-assets/*
+
+      - name: 上传发布候选产物
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: WinLottery-${{ needs.metadata.outputs.tag }}-android
+          path: release-assets/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+  publish:
+    name: 创建 GitHub Release
+    needs:
+      - metadata
+      - verify
+      - android-release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+    environment:
+      name: github-release
+      url: ${{ steps.publish.outputs.url }}
+    steps:
+      - name: 下载已验证产物
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: WinLottery-${{ needs.metadata.outputs.tag }}-android
+          path: release-assets
+
+      - name: 复核发布校验和
+        working-directory: release-assets
+        run: sha256sum --check SHA256SUMS.txt
+
+      - name: 创建不可覆盖的稳定版本
+        id: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.metadata.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "::error title=版本已发布::标签 $RELEASE_TAG 已存在 GitHub Release，不允许覆盖既有资产"
+            exit 1
+          fi
+
+          release_url="$(gh release create "$RELEASE_TAG" release-assets/* \
+            --verify-tag \
+            --fail-on-no-commits \
+            --title "WinLottery $VERSION" \
+            --generate-notes \
+            --notes "Android 发布资产仅支持 arm64-v8a；请先使用 SHA256SUMS.txt 核对文件完整性。")"
+          echo "url=$release_url" >> "$GITHUB_OUTPUT"
+          echo "### 已发布" >> "$GITHUB_STEP_SUMMARY"
+          echo "$release_url" >> "$GITHUB_STEP_SUMMARY"

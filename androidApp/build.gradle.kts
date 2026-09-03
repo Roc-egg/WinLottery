@@ -38,6 +38,10 @@ android {
                 .toInt()
         versionCode = 5
         versionName = "1.3.0"
+        // 默认仅打包 64 位 ARM 原生库，确保 APK 和 AAB 都不携带其他 ABI。
+        ndk {
+            abiFilters += "arm64-v8a"
+        }
     }
     signingConfigs {
         // 调试版和发布版统一使用的仓库签名。
