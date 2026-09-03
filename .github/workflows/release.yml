@@ -6,19 +6,24 @@ on:
       - "v*"
   workflow_dispatch:
     inputs:
-      tag:
-        description: 已存在的稳定版本标签，例如 v1.4.0
+      mode:
+        description: dry-run 仅验证并上传临时产物，publish 才创建正式 Release
         required: true
+        default: dry-run
+        type: choice
+        options:
+          - dry-run
+          - publish
+      tag:
+        description: publish 模式必填已存在的稳定版本标签，例如 v1.4.0
+        required: false
         type: string
 
 permissions:
   contents: read
 
-env:
-  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
-
 concurrency:
-  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  group: release-${{ github.event_name }}-${{ github.ref_name }}-${{ inputs.mode }}-${{ inputs.tag }}
   cancel-in-progress: false
 
 jobs:
@@ -31,11 +36,12 @@ jobs:
       version: ${{ steps.release.outputs.version }}
       build_number: ${{ steps.release.outputs.build_number }}
       commit: ${{ steps.release.outputs.commit }}
+      publish: ${{ steps.release.outputs.publish }}
     steps:
-      - name: 检出发布标签
+      - name: 检出待验证版本
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ env.RELEASE_TAG }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'publish' && inputs.tag || github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -43,52 +49,85 @@ jobs:
         id: release
         env:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_TAG: ${{ github.ref_name }}
+          INPUT_MODE: ${{ inputs.mode }}
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
 
-          if [[ ! "$RELEASE_TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
-            echo "::error title=版本标签不合法::仅接受 vX.Y.Z 格式的稳定版本标签"
-            exit 1
-          fi
-
-          tag_version="${BASH_REMATCH[1]}"
-          tag_commit="$(git rev-list -n 1 "$RELEASE_TAG")"
           head_commit="$(git rev-parse HEAD)"
-          if [[ -z "$tag_commit" || "$head_commit" != "$tag_commit" ]]; then
-            echo "::error title=标签提交不一致::工作区不是指定标签对应的提交"
-            exit 1
-          fi
-          if ! git merge-base --is-ancestor "$tag_commit" "origin/$DEFAULT_BRANCH"; then
-            echo "::error title=标签不属于主分支::发布标签必须指向默认分支历史中的提交"
-            exit 1
-          fi
-
           android_version="$(sed -n 's/^[[:space:]]*versionName = "\([^"]*\)".*/\1/p' androidApp/build.gradle.kts)"
           android_build="$(sed -n 's/^[[:space:]]*versionCode = \([0-9][0-9]*\).*/\1/p' androidApp/build.gradle.kts)"
           ios_version="$(sed -n 's/^MARKETING_VERSION=\(.*\)$/\1/p' iosApp/Configuration/Config.xcconfig)"
           ios_build="$(sed -n 's/^CURRENT_PROJECT_VERSION=\([0-9][0-9]*\)$/\1/p' iosApp/Configuration/Config.xcconfig)"
 
-          if [[ "$tag_version" != "$android_version" || "$android_version" != "$ios_version" ]]; then
-            echo "::error title=版本号不一致::标签、Android 与 iOS 版本号必须完全一致"
+          if [[ ! "$android_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ || "$android_version" != "$ios_version" ]]; then
+            echo "::error title=版本号不一致::Android 与 iOS 必须使用相同的 X.Y.Z 版本号"
             exit 1
           fi
           if [[ -z "$android_build" || "$android_build" != "$ios_build" ]]; then
             echo "::error title=构建号不一致::Android versionCode 与 iOS CURRENT_PROJECT_VERSION 必须一致"
             exit 1
           fi
+          if ! git merge-base --is-ancestor "$head_commit" "origin/$DEFAULT_BRANCH"; then
+            echo "::error title=提交不属于主分支::仅允许验证默认分支历史中的提交"
+            exit 1
+          fi
+
+          publish=true
+          requested_tag="$EVENT_TAG"
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            if [[ "$INPUT_MODE" == "publish" ]]; then
+              requested_tag="$INPUT_TAG"
+              if [[ -z "$requested_tag" ]]; then
+                echo "::error title=缺少版本标签::publish 模式必须填写已存在的稳定版本标签"
+                exit 1
+              fi
+            else
+              publish=false
+              requested_tag="v${android_version}-dry-run-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
+            fi
+          fi
+
+          if [[ "$publish" == "true" ]]; then
+            if [[ ! "$requested_tag" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+              echo "::error title=版本标签不合法::正式发布仅接受 vX.Y.Z 格式的稳定版本标签"
+              exit 1
+            fi
+            tag_version="${BASH_REMATCH[1]}"
+            if [[ "$tag_version" != "$android_version" ]]; then
+              echo "::error title=版本号不一致::标签、Android 与 iOS 版本号必须完全一致"
+              exit 1
+            fi
+            if ! tag_commit="$(git rev-parse --verify "refs/tags/${requested_tag}^{commit}" 2>/dev/null)"; then
+              echo "::error title=版本标签不存在::没有找到标签 $requested_tag"
+              exit 1
+            fi
+            if [[ "$head_commit" != "$tag_commit" ]]; then
+              echo "::error title=标签提交不一致::工作区不是指定标签对应的提交"
+              exit 1
+            fi
+          fi
 
           {
-            echo "tag=$RELEASE_TAG"
+            echo "tag=$requested_tag"
             echo "version=$android_version"
             echo "build_number=$android_build"
-            echo "commit=$tag_commit"
+            echo "commit=$head_commit"
+            echo "publish=$publish"
           } >> "$GITHUB_OUTPUT"
 
           {
             echo "### 发布元数据"
-            echo "- 标签：\`$RELEASE_TAG\`"
+            if [[ "$publish" == "true" ]]; then
+              echo "- 模式：正式发布"
+            else
+              echo "- 模式：手动演练，不创建 GitHub Release"
+            fi
+            echo "- 标识：\`$requested_tag\`"
             echo "- 版本：\`$android_version ($android_build)\`"
-            echo "- 提交：\`$tag_commit\`"
+            echo "- 提交：\`$head_commit\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
   verify:
@@ -102,7 +141,7 @@ jobs:
       - name: 检出发布代码
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.metadata.outputs.tag }}
+          ref: ${{ needs.metadata.outputs.commit }}
           persist-credentials: false
 
       - name: 配置 Java
@@ -178,7 +217,7 @@ jobs:
       - name: 检出发布代码
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.metadata.outputs.tag }}
+          ref: ${{ needs.metadata.outputs.commit }}
           persist-credentials: false
 
       - name: 配置 Java
@@ -200,6 +239,7 @@ jobs:
           EXPECTED_VERSION: ${{ needs.metadata.outputs.version }}
           EXPECTED_BUILD: ${{ needs.metadata.outputs.build_number }}
           RELEASE_COMMIT: ${{ needs.metadata.outputs.commit }}
+          RELEASE_TAG: ${{ needs.metadata.outputs.tag }}
         run: |
           set -euo pipefail
 
@@ -294,6 +334,7 @@ jobs:
       - metadata
       - verify
       - android-release
+    if: needs.metadata.outputs.publish == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -319,6 +360,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           VERSION: ${{ needs.metadata.outputs.version }}
+          RELEASE_TAG: ${{ needs.metadata.outputs.tag }}
         run: |
           set -euo pipefail
 
@@ -336,3 +378,38 @@ jobs:
           echo "url=$release_url" >> "$GITHUB_OUTPUT"
           echo "### 已发布" >> "$GITHUB_STEP_SUMMARY"
           echo "$release_url" >> "$GITHUB_STEP_SUMMARY"
+
+  dry-run:
+    name: 发布演练检查
+    needs:
+      - metadata
+      - verify
+      - android-release
+    if: needs.metadata.outputs.publish != 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: 下载演练产物
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: WinLottery-${{ needs.metadata.outputs.tag }}-android
+          path: release-assets
+
+      - name: 复核演练产物校验和
+        working-directory: release-assets
+        run: sha256sum --check SHA256SUMS.txt
+
+      - name: 记录演练结果
+        env:
+          RELEASE_TAG: ${{ needs.metadata.outputs.tag }}
+        run: |
+          {
+            echo "### 发布演练通过"
+            echo "- 标识：\`$RELEASE_TAG\`"
+            echo "- Android Release 已完成构建、验签、上传、下载与校验"
+            echo "- 跨平台 Release 验证已通过"
+            echo "- 未创建标签或 GitHub Release"
+          } >> "$GITHUB_STEP_SUMMARY"
