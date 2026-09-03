@@ -282,8 +282,19 @@ jobs:
             exit 1
           }
 
-          apk_digest="$("$apksigner" verify --print-certs "$apk" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')"
-          aab_digest="$(keytool -printcert -jarfile "$aab" | sed -n 's/^[[:space:]]*SHA256: //p' | tr -d ':' | tr '[:upper:]' '[:lower:]')"
+          apk_certificate="$RUNNER_TEMP/winlottery-release-apk.pem"
+          aab_certificate="$RUNNER_TEMP/winlottery-release-aab.pem"
+          "$apksigner" verify --print-certs-pem "$apk" |
+            sed -n '/-----BEGIN CERTIFICATE-----/,/-----END CERTIFICATE-----/p' > "$apk_certificate"
+          keytool -printcert -rfc -jarfile "$aab" |
+            sed -n '/-----BEGIN CERTIFICATE-----/,/-----END CERTIFICATE-----/p' > "$aab_certificate"
+          [[ -s "$apk_certificate" && -s "$aab_certificate" ]] || {
+            echo "::error title=Android 签名证书缺失::无法从 APK 或 AAB 提取签名证书"
+            exit 1
+          }
+
+          apk_digest="$(openssl x509 -in "$apk_certificate" -outform DER | sha256sum | awk '{print $1}')"
+          aab_digest="$(openssl x509 -in "$aab_certificate" -outform DER | sha256sum | awk '{print $1}')"
           [[ -n "$apk_digest" && "$apk_digest" == "$aab_digest" ]] || {
             echo "::error title=Android 签名不一致::APK 与 AAB 证书指纹不同"
             exit 1
