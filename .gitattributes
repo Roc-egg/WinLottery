@@ -1,0 +1,8 @@
+# OCR 模型字典必须保持 LF，否则 Windows 检出会改变锁定的字节数和 SHA-256。
+shared/recognition/src/commonMain/resources/roc/win/lottery/recognition/models/ppocrv5/*.txt text eol=lf
+
+# ONNX 模型始终按二进制文件处理。
+shared/recognition/src/commonMain/resources/roc/win/lottery/recognition/models/ppocrv5/*.onnx binary
+
+# 模型锁清单统一使用 LF。
+shared/recognition/src/jvmMain/resources/roc/win/lottery/recognition/models/ppocrv5/model-lock.json text eol=lf
