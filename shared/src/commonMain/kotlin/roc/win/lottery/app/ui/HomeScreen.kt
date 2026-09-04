@@ -253,7 +253,7 @@ private fun DemoNotice(
             text =
                 when {
                     usesRealRecognition && usesRealDrawData -> {
-                        "移动验证版：本地 OCR、人工确认、官网开奖结果查询和本地中奖测算已贯通；正式对账与数据授权尚未完成。"
+                        "本地识别验证版：图片导入、本地 OCR、人工确认、官网开奖结果查询和本地中奖测算已贯通；正式对账与数据授权尚未完成。"
                     }
 
                     usesRealRecognition -> {

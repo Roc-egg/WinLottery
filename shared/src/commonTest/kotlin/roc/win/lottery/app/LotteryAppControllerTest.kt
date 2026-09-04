@@ -1278,6 +1278,30 @@ class LotteryAppControllerTest {
             assertEquals(listOf("b1-demo-ticket"), paths.deletedImageIds)
         }
 
+    /** 桌面 OCR 尚不可用时应保留私有图片并进入对照原图录入，不得落入 Fake 识别。 */
+    @Test
+    fun unavailableRecognitionFallsBackToImageAssistedManualEntry() =
+        runTest {
+            val paths = TrackingAppPaths()
+            val recognizer =
+                TicketRecognizer {
+                    RecognitionResult.ManualEntryRequired("桌面 OCR 正在适配")
+                }
+            val controller =
+                createController(
+                    repository = CountingDrawRepository(),
+                    appPaths = paths,
+                    ticketRecognizer = recognizer,
+                )
+
+            controller.startAnalysis(ImageAcquisitionSource.SYSTEM_PICKER)
+
+            val review = assertIs<AppScreen.Review>(controller.uiState.value.screen)
+            assertEquals("桌面 OCR 正在适配", review.manualEntryReason)
+            assertEquals("b1-demo-ticket", review.imageRef?.id)
+            assertTrue(paths.deletedImageIds.isEmpty())
+        }
+
     /** 渐进式 OCR 回调必须持续更新分析页百分比和阶段说明，不得停留在固定中点。 */
     @Test
     fun progressiveRecognitionUpdatesAnalysisScreen() =
@@ -2142,6 +2166,9 @@ class LotteryAppControllerTest {
 
         /** 按调用顺序记录已清理的图片标识。 */
         val deletedImageIds = mutableListOf<String>()
+
+        /** 测试清扫不额外记录单张图片删除。 */
+        override fun clearTemporaryImages() = Unit
 
         /** 记录清理请求并模拟删除成功。 */
         override suspend fun deleteTemporaryImage(imageRef: ImageRef): Boolean {

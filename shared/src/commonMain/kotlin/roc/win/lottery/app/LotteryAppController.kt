@@ -1249,6 +1249,22 @@ class LotteryAppController(
                 showError("图片质量不足", recognition.issues.joinToString(separator = "；"), generation)
             }
 
+            is RecognitionResult.ManualEntryRequired -> {
+                if (generation == flowGeneration) {
+                    mutableUiState.update {
+                        it.copy(
+                            screen =
+                                createReviewScreen(
+                                    editor = TicketReviewState.createManual(),
+                                    imageRef = acquisition.imageRef,
+                                    fieldRegions = emptyList(),
+                                    manualEntryReason = recognition.message,
+                                ),
+                        )
+                    }
+                }
+            }
+
             is RecognitionResult.Success -> {
                 if (generation != flowGeneration) return
                 mutableUiState.update {

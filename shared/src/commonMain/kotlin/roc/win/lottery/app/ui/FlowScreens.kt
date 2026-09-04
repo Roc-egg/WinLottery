@@ -138,7 +138,7 @@ fun ReviewScreen(
     val focusManager = LocalFocusManager.current
     val isImageAssistedManualEntry = imageRef != null && manualEntryReason != null
     val isManualEntry = imageRef == null || isImageAssistedManualEntry
-    val previewState = if (usesRealRecognition && imageRef != null) rememberTicketPreviewState(imageRef) else null
+    val previewState = imageRef?.let { rememberTicketPreviewState(it) }
     AppShell(
         title =
             when {
@@ -157,11 +157,11 @@ fun ReviewScreen(
                     }
 
                     isManualEntry && usesRealDrawData -> {
-                        "手动录入会绕过 OCR；确认后会精确查询该期官网数据并在本机测算。当前仍是未通过正式对账的移动验证版。"
+                        "手动录入会绕过 OCR；确认后会精确查询该期官网数据并在本机测算。当前仍是预览验证版。"
                     }
 
                     usesRealRecognition && usesRealDrawData -> {
-                        "票面来自本地 OCR；确认后会精确查询该期官网数据并在本机测算。当前仍是未通过正式对账的移动验证版。"
+                        "票面来自本地 OCR；确认后会精确查询该期官网数据并在本机测算。当前仍是预览验证版。"
                     }
 
                     usesRealRecognition -> {
@@ -786,7 +786,7 @@ fun DrawQueryScreen(
  * 显示开发状态流完成结果，不声称完成真实测算。
  *
  * @param drawResult Fake 开奖仓库返回的演示结果。
- * @param usesRealRecognition 票面是否来自移动端真实本地 OCR。
+ * @param usesRealRecognition 票面是否来自当前平台的真实本地 OCR。
  * @param onBack 返回票面确认页。
  * @param onDone 返回首页的操作。
  */
@@ -805,7 +805,7 @@ fun DemoCompleteScreen(
         StatusBanner("开发链路已跑通，本页不代表真实中奖结果。")
         Spacer(Modifier.height(24.dp))
         Text(
-            if (usesRealRecognition) "移动端校正链路可用" else "共享演示状态流可用",
+            if (usesRealRecognition) "本地识别校正链路可用" else "共享演示状态流可用",
             style = MaterialTheme.typography.headlineMedium,
         )
         Spacer(Modifier.height(12.dp))

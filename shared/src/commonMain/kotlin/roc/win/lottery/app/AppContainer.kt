@@ -62,8 +62,9 @@ class AppContainer(
     val ticketRecordFileExchange: TicketRecordFileExchange? = null,
     val ocrConfidenceDiagnostics: OcrConfidenceDiagnostics = OcrConfidenceDiagnostics.Disabled,
 ) {
-    /** 关闭容器持有的本机数据库连接。 */
+    /** 清理临时票图并关闭容器持有的本机数据库连接。 */
     fun close() {
+        appPaths.clearTemporaryImages()
         ticketRecordStore?.close()
     }
 

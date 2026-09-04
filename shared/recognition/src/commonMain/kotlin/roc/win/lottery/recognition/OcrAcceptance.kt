@@ -141,6 +141,7 @@ internal suspend fun analyzeOcrAcceptanceSample(
             outcome =
                 when (recognition) {
                     is RecognitionResult.PoorImage -> OcrAcceptanceOutcome.RECOGNITION_POOR_IMAGE
+                    is RecognitionResult.ManualEntryRequired -> OcrAcceptanceOutcome.RECOGNITION_FAILURE
                     is RecognitionResult.Failure -> OcrAcceptanceOutcome.RECOGNITION_FAILURE
                     is RecognitionResult.Success -> error("成功结果已在前置分支排除")
                 },

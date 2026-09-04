@@ -25,10 +25,10 @@ class AndroidPpOcrTicketRecognizer(
         PpOcrTicketRecognizer(
             imageDecoder = AndroidPpOcrRgbImageDecoder(),
             runtime = AndroidPpOcrOnnxRuntime(resources),
-            characters = parsePpOcrCharacters(resources.readText(DICTIONARY_FILE_NAME)),
+            characters = parsePpOcrCharacters(resources.readText(PP_OCR_DICTIONARY_FILE_NAME)),
             latinCharacters =
                 parsePpOcrCharacters(
-                    resources.readText(LATIN_DICTIONARY_FILE_NAME),
+                    resources.readText(PP_OCR_LATIN_DICTIONARY_FILE_NAME),
                     PP_OCR_LATIN_CHARACTER_COUNT,
                 ),
         )
@@ -41,15 +41,6 @@ class AndroidPpOcrTicketRecognizer(
     ): RecognitionResult {
         onProgress(RecognitionProgress(0f, "正在加载本地识别模型"))
         return delegate.recognize(imageRef, onProgress)
-    }
-
-    /** PP-OCRv5 字典资源文件。 */
-    private companion object {
-        /** 与识别模型配套的字符字典文件名。 */
-        const val DICTIONARY_FILE_NAME = "characters.txt"
-
-        /** 与英文识别模型配套的字符字典文件名。 */
-        const val LATIN_DICTIONARY_FILE_NAME = "characters_latin.txt"
     }
 }
 
@@ -241,7 +232,7 @@ private class AndroidPpOcrResources(
     /** 返回已核对长度与 SHA-256 的私有 ONNX 文件。 */
     @Synchronized
     fun modelFile(model: PpOcrModel): File {
-        val expected = requireNotNull(MODEL_LOCKS[model]) { "缺少模型文件锁" }
+        val expected = requireNotNull(PP_OCR_MODEL_RESOURCE_LOCKS[model]) { "缺少模型文件锁" }
         val directory = File(context.noBackupFilesDir, PRIVATE_MODEL_DIRECTORY).apply { mkdirs() }
         val destination = File(directory, model.fileName)
         if (destination.isFile && destination.length() == expected.byteCount &&
@@ -291,14 +282,6 @@ private class AndroidPpOcrResources(
         }
     }
 
-    /** 单个模型文件的供应链锁。 */
-    private data class LockedModelFile(
-        /** 预期文件字节数。 */
-        val byteCount: Long,
-        /** 预期小写十六进制 SHA-256。 */
-        val sha256: String,
-    )
-
     /** 与仓库 model-lock.json 一致的移动模型文件锁。 */
     private companion object {
         /** 模型私有目录包含固定 bundle 标识，升级时自动隔离旧文件。 */
@@ -318,30 +301,5 @@ private class AndroidPpOcrResources(
 
         /** 一个字节固定使用两个十六进制字符。 */
         const val HEX_BYTE_WIDTH = 2
-
-        /** 三段 ONNX 模型的长度与哈希。 */
-        val MODEL_LOCKS =
-            mapOf(
-                PpOcrModel.DETECTION to
-                    LockedModelFile(
-                        4_766_440,
-                        "c8d9b07063420ce5365c74e42532de48238feeeedcdb7a330b195708bc38a93f",
-                    ),
-                PpOcrModel.ORIENTATION to
-                    LockedModelFile(
-                        1_016_850,
-                        "4d6027cad43b04171d6eafa20e7342fea7a657724e96d642564392b6df1e9768",
-                    ),
-                PpOcrModel.RECOGNITION to
-                    LockedModelFile(
-                        16_529_870,
-                        "bcb195e3463eb9e46ef419b8a01ea4729577de5fd63c64f0a762e43bd64256e7",
-                    ),
-                PpOcrModel.LATIN_RECOGNITION to
-                    LockedModelFile(
-                        7_843_511,
-                        "70b2450eed39599af6b996c27a2f1a0ef30eeb49f9f66dd3e74f28f652befc89",
-                    ),
-            )
     }
 }

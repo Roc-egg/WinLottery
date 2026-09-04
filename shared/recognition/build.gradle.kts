@@ -73,4 +73,8 @@ kotlin {
 // 官方 ONNX Runtime 二进制默认开启遥测，必须在原生库初始化前通过进程环境关闭。
 tasks.withType<Test>().configureEach {
     environment("ORT_DISABLE_TELEMETRY", "1")
+    // 真实子进程测试需要复用 Gradle 已解析的完整测试运行时，不把任何票图路径放进命令行。
+    doFirst {
+        systemProperty("winLottery.desktopOcrTestClasspath", classpath.asPath)
+    }
 }

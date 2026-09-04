@@ -134,6 +134,25 @@ class DesktopImageImporterTest {
             }
         }
 
+    /** 应用退出清扫应删除受控目录内的全部票图，同时保留目录本身。 */
+    @Test
+    fun clearTemporaryImagesRemovesAllOwnedFiles() {
+        val root = createIsolatedDirectory("clear-all")
+        try {
+            val paths = DesktopAppPaths(root)
+            val first = File(paths.temporaryImageDirectory, "first.jpg").apply { writeText("测试") }
+            val second = File(paths.temporaryImageDirectory, "second.jpg").apply { writeText("测试") }
+
+            paths.clearTemporaryImages()
+
+            assertFalse(first.exists())
+            assertFalse(second.exists())
+            assertTrue(File(paths.temporaryImageDirectory).isDirectory)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
     /** 创建不含真实票面内容的纯色 JPEG。 */
     private fun createJpeg(
         width: Int,

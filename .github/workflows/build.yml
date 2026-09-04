@@ -38,11 +38,13 @@ jobs:
         run: ./gradlew :androidApp:assembleDebug
       - name: 构建 macOS 分发包
         run: ./gradlew :desktopApp:packageDmg
+      - name: 验证 macOS 成品本地 OCR
+        run: ./gradlew :desktopApp:verifyPackagedOnnxRuntime :desktopApp:verifyPackagedDesktopOcr
       - name: 编译 iOS 模拟器共享框架
         run: ./gradlew :shared:linkDebugFrameworkIosSimulatorArm64
 
   windows:
-    name: Windows 桌面包
+    name: Windows x64 桌面包与本地 OCR
     runs-on: windows-2025
     timeout-minutes: 35
     steps:
@@ -57,7 +59,11 @@ jobs:
           java-version: "21"
       - name: 配置 Gradle
         uses: gradle/actions/setup-gradle@67621b124fd2e251c5e8a0e6e3b91318f2287669 # v6.3.0
+      - name: 校验 Desktop OCR 模型锁
+        run: python tools/desktop-ocr/convert_ppocrv5.py --verify-lock-only
       - name: 运行共享测试
         run: .\gradlew.bat jvmTest
       - name: 构建 Windows 分发包
         run: .\gradlew.bat :desktopApp:packageMsi
+      - name: 验证 Windows 成品本地 OCR
+        run: .\gradlew.bat :desktopApp:verifyPackagedOnnxRuntime :desktopApp:verifyPackagedDesktopOcr

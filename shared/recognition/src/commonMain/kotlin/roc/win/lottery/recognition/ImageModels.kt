@@ -78,6 +78,9 @@ interface AppPaths {
     /** 不被系统相册和云备份扫描的临时图片目录。 */
     val temporaryImageDirectory: String
 
+    /** 清理当前平台私有目录中的全部临时票图。 */
+    fun clearTemporaryImages()
+
     /**
      * 删除分析流程已经不再需要的临时图片。
      *

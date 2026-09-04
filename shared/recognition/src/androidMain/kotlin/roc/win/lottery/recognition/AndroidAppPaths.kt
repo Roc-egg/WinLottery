@@ -24,6 +24,12 @@ class AndroidAppPaths(
         prepareCameraCaptureDirectory()
     }
 
+    /** 清理票图和相机暂存目录，同时保留阻止媒体扫描的标记。 */
+    override fun clearTemporaryImages() {
+        prepareDirectory()
+        prepareCameraCaptureDirectory()
+    }
+
     /** 只删除本实现临时目录直属的图片，拒绝处理目录外路径。 */
     override suspend fun deleteTemporaryImage(imageRef: ImageRef): Boolean =
         withContext(Dispatchers.IO) {

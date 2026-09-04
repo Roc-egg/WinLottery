@@ -57,10 +57,10 @@ class IOSPpOcrTicketRecognizer(
         PpOcrTicketRecognizer(
             imageDecoder = IOSPpOcrRgbImageDecoder(),
             runtime = IOSPpOcrOnnxRuntimeAdapter(runtime),
-            characters = parsePpOcrCharacters(loadDictionary(DICTIONARY_RESOURCE_NAME)),
+            characters = parsePpOcrCharacters(loadDictionary(PP_OCR_DICTIONARY_FILE_NAME)),
             latinCharacters =
                 parsePpOcrCharacters(
-                    loadDictionary(LATIN_DICTIONARY_RESOURCE_NAME),
+                    loadDictionary(PP_OCR_LATIN_DICTIONARY_FILE_NAME),
                     PP_OCR_LATIN_CHARACTER_COUNT,
                 ),
         )
@@ -75,12 +75,14 @@ class IOSPpOcrTicketRecognizer(
         return delegate.recognize(imageRef, onProgress)
     }
 
-    /** 从应用主 Bundle 根目录读取与模型配套的 UTF-8 字典。 */
-    private fun loadDictionary(resourceName: String): String {
+    /** 从应用主 Bundle 根目录读取与模型配套的 UTF-8 字典文件。 */
+    private fun loadDictionary(fileName: String): String {
+        val resourceName = fileName.substringBeforeLast(FILE_EXTENSION_SEPARATOR)
+        val resourceExtension = fileName.substringAfterLast(FILE_EXTENSION_SEPARATOR)
         val path =
             NSBundle.mainBundle.pathForResource(
                 name = resourceName,
-                ofType = DICTIONARY_RESOURCE_EXTENSION,
+                ofType = resourceExtension,
             ) ?: error("PP-OCRv5 字符字典缺失")
         val data = NSFileManager.defaultManager.contentsAtPath(path) ?: error("PP-OCRv5 字符字典无法读取")
         val bytes = ByteArray(data.length.toInt())
@@ -90,16 +92,10 @@ class IOSPpOcrTicketRecognizer(
         return bytes.decodeToString()
     }
 
-    /** iOS Bundle 字典资源名称。 */
+    /** iOS Bundle 字典资源解析常量。 */
     private companion object {
-        /** 不带扩展名的字符字典资源名。 */
-        const val DICTIONARY_RESOURCE_NAME = "characters"
-
-        /** 不带扩展名的英文字符字典资源名。 */
-        const val LATIN_DICTIONARY_RESOURCE_NAME = "characters_latin"
-
-        /** 字符字典资源扩展名。 */
-        const val DICTIONARY_RESOURCE_EXTENSION = "txt"
+        /** 文件名和扩展名分隔符。 */
+        const val FILE_EXTENSION_SEPARATOR = '.'
     }
 }
 

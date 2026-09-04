@@ -63,6 +63,9 @@ class FakeAppPaths : AppPaths {
     /** Fake 不会创建真实目录。 */
     override val temporaryImageDirectory: String = "memory://temporary-images"
 
+    /** Fake 没有落盘文件，因此不需要清理。 */
+    override fun clearTemporaryImages() = Unit
+
     /** Fake 没有落盘文件，因此始终视为已经清理。 */
     override suspend fun deleteTemporaryImage(imageRef: ImageRef): Boolean = imageRef.id.isNotBlank()
 }

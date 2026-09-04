@@ -12,7 +12,7 @@ import kotlin.math.roundToInt
 import kotlin.math.sin
 import kotlin.math.sqrt
 
-/** PP-OCRv5 移动端模型资源所在的类路径和 iOS Bundle 目录。 */
+/** PP-OCRv5 三端共用模型资源所在的类路径和 iOS Bundle 目录。 */
 internal const val PP_OCR_RESOURCE_ROOT = "roc/win/lottery/recognition/models/ppocrv5"
 
 /** PP-OCRv5 三段推理模型。 */

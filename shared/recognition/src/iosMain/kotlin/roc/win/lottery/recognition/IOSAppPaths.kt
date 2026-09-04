@@ -18,6 +18,11 @@ class IOSAppPaths : AppPaths {
         prepareDirectory()
     }
 
+    /** 清理 iOS 临时目录中的全部票图副本。 */
+    override fun clearTemporaryImages() {
+        prepareDirectory()
+    }
+
     /** 只删除本实现临时目录直属的图片，拒绝处理目录外路径。 */
     override suspend fun deleteTemporaryImage(imageRef: ImageRef): Boolean =
         withContext(Dispatchers.Default) {

@@ -128,6 +128,15 @@ sealed interface RecognitionResult {
     ) : RecognitionResult
 
     /**
+     * 当前平台没有可用 OCR，但可以保留私有图片供用户对照录入。
+     *
+     * @property message 不包含票面内容的能力说明。
+     */
+    data class ManualEntryRequired(
+        val message: String,
+    ) : RecognitionResult
+
+    /**
      * OCR 引擎未能完成识别。
      *
      * @property message 不包含票面全文的错误说明。

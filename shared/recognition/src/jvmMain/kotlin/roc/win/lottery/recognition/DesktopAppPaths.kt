@@ -20,6 +20,11 @@ class DesktopAppPaths(
         prepareDirectory()
     }
 
+    /** 清理桌面临时目录中的全部票图副本。 */
+    override fun clearTemporaryImages() {
+        prepareDirectory()
+    }
+
     /** 只删除本实现临时目录直属的图片，拒绝处理目录外路径。 */
     override suspend fun deleteTemporaryImage(imageRef: ImageRef): Boolean =
         withContext(Dispatchers.IO) {
@@ -39,8 +44,8 @@ class DesktopAppPaths(
         }
     }
 
-    /** Desktop 临时路径常量。 */
-    private companion object {
+    /** Desktop 临时路径常量，供同一模块的受控 OCR 工作进程复用。 */
+    internal companion object {
         /** Java 系统临时目录属性名。 */
         const val JAVA_TEMPORARY_DIRECTORY_PROPERTY = "java.io.tmpdir"
 
