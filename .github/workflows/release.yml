@@ -131,12 +131,17 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   verify:
-    name: 跨平台 Release 验证
+    name: 跨平台 Release 验证与 iOS 打包
     needs: metadata
     runs-on: macos-15
-    timeout-minutes: 50
+    timeout-minutes: 70
     permissions:
       contents: read
+      id-token: write
+      attestations: write
+    outputs:
+      ios_bundle_id: ${{ steps.ios_package.outputs.bundle_id }}
+      ios_minimum_version: ${{ steps.ios_package.outputs.minimum_os }}
     steps:
       - name: 检出发布代码
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -204,7 +209,112 @@ jobs:
             echo "- iOS Simulator Release：\`$actual_version ($actual_build)\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
-  android-release:
+      - name: 构建 iOS 未签名真机 IPA
+        id: ios_package
+        env:
+          EXPECTED_VERSION: ${{ needs.metadata.outputs.version }}
+          EXPECTED_BUILD: ${{ needs.metadata.outputs.build_number }}
+        run: |
+          set -euo pipefail
+
+          derived_data="$RUNNER_TEMP/WinLottery-ios-device-release"
+          ipa_root="$RUNNER_TEMP/WinLottery-ios-unsigned-ipa"
+          xcodebuild \
+            -project iosApp/iosApp.xcodeproj \
+            -scheme iosApp \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination "generic/platform=iOS" \
+            -derivedDataPath "$derived_data" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            build
+
+          app="$derived_data/Build/Products/Release-iphoneos/WinLottery.app"
+          info_plist="$app/Info.plist"
+          executable="$app/WinLottery"
+          [[ -f "$info_plist" && -f "$executable" ]] || {
+            echo "::error title=iOS 真机 Release 缺失::没有找到完整的 iphoneos Release 应用"
+            exit 1
+          }
+
+          actual_version="$(plutil -extract CFBundleShortVersionString raw "$info_plist")"
+          actual_build="$(plutil -extract CFBundleVersion raw "$info_plist")"
+          bundle_id="$(plutil -extract CFBundleIdentifier raw "$info_plist")"
+          minimum_os="$(plutil -extract MinimumOSVersion raw "$info_plist")"
+          [[ "$actual_version" == "$EXPECTED_VERSION" && "$actual_build" == "$EXPECTED_BUILD" ]] || {
+            echo "::error title=iOS 真机产物版本不一致::实际版本为 $actual_version ($actual_build)"
+            exit 1
+          }
+          file "$executable" | grep -Fq "arm64" || {
+            echo "::error title=iOS 真机架构不正确::iphoneos Release 不是 arm64 架构"
+            exit 1
+          }
+          xcrun vtool -show-build "$executable" | grep -Eq 'platform +IOS$' || {
+            echo "::error title=iOS 平台不正确::真机 IPA 中的可执行文件不是 iphoneos 平台"
+            exit 1
+          }
+          if codesign --verify --deep --strict "$app" >/dev/null 2>&1; then
+            echo "::error title=iOS 产物意外签名::待用户自行签名的 IPA 不应预置应用签名"
+            exit 1
+          fi
+          [[ ! -e "$app/embedded.mobileprovision" ]] || {
+            echo "::error title=iOS 描述文件残留::未签名 IPA 不应包含 embedded.mobileprovision"
+            exit 1
+          }
+
+          mkdir -p "$ipa_root/Payload" "$GITHUB_WORKSPACE/release-assets"
+          ditto "$app" "$ipa_root/Payload/WinLottery.app"
+          asset="$GITHUB_WORKSPACE/release-assets/WinLottery-v${EXPECTED_VERSION}-ios-arm64-unsigned.ipa"
+          (
+            cd "$ipa_root"
+            /usr/bin/zip -qry "$asset" Payload
+          )
+          [[ -s "$asset" ]] || {
+            echo "::error title=iOS IPA 缺失::未生成可下载的未签名 IPA"
+            exit 1
+          }
+          unzip -tq "$asset"
+          unzip -Z1 "$asset" | grep -Fxq "Payload/WinLottery.app/Info.plist" || {
+            echo "::error title=iOS IPA 结构不完整::IPA 中缺少应用 Info.plist"
+            exit 1
+          }
+          unzip -Z1 "$asset" | grep -Fxq "Payload/WinLottery.app/WinLottery" || {
+            echo "::error title=iOS IPA 结构不完整::IPA 中缺少应用可执行文件"
+            exit 1
+          }
+
+          {
+            echo "bundle_id=$bundle_id"
+            echo "minimum_os=$minimum_os"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "### iOS 未签名真机产物"
+            echo "- IPA：\`$actual_version ($actual_build)\`"
+            echo "- Bundle ID：\`$bundle_id\`"
+            echo "- 架构：\`arm64\`"
+            echo "- 最低系统：\`iOS $minimum_os\`"
+            echo "- 安装要求：必须由使用者使用自己的有效证书和描述文件重新签名"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 生成 iOS 构建来源证明
+        if: github.event.repository.visibility == 'public'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: release-assets/*.ipa
+
+      - name: 上传 iOS 发布候选产物
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: WinLottery-${{ needs.metadata.outputs.tag }}-ios
+          path: release-assets/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+  android_release:
     name: 构建 Android Release
     needs: metadata
     runs-on: ubuntu-24.04
@@ -213,6 +323,8 @@ jobs:
       contents: read
       id-token: write
       attestations: write
+    outputs:
+      certificate_sha256: ${{ steps.android_package.outputs.certificate_sha256 }}
     steps:
       - name: 检出发布代码
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -231,22 +343,20 @@ jobs:
         with:
           cache-read-only: true
 
-      - name: 构建 Android Release APK 与 AAB
-        run: ./gradlew :androidApp:assembleRelease :androidApp:bundleRelease --console=plain
+      - name: 构建 Android Release APK
+        run: ./gradlew :androidApp:assembleRelease --console=plain
 
       - name: 校验并整理 Android 发布产物
+        id: android_package
         env:
           EXPECTED_VERSION: ${{ needs.metadata.outputs.version }}
           EXPECTED_BUILD: ${{ needs.metadata.outputs.build_number }}
-          RELEASE_COMMIT: ${{ needs.metadata.outputs.commit }}
-          RELEASE_TAG: ${{ needs.metadata.outputs.tag }}
         run: |
           set -euo pipefail
 
           apk="androidApp/build/outputs/apk/release/androidApp-release.apk"
-          aab="androidApp/build/outputs/bundle/release/androidApp-release.aab"
-          [[ -f "$apk" && -f "$aab" ]] || {
-            echo "::error title=Android Release 缺失::没有找到 APK 或 AAB"
+          [[ -f "$apk" ]] || {
+            echo "::error title=Android Release 缺失::没有找到 APK"
             exit 1
           }
 
@@ -259,7 +369,6 @@ jobs:
           }
 
           "$apksigner" verify --verbose "$apk"
-          jarsigner -verify "$aab" >/dev/null
 
           badging="$("$aapt2" dump badging "$apk")"
           grep -Fq "versionName='$EXPECTED_VERSION'" <<< "$badging" || {
@@ -276,50 +385,33 @@ jobs:
           fi
 
           apk_abis="$(unzip -Z1 "$apk" | sed -n 's#^lib/\([^/]*\)/.*#\1#p' | sort -u | paste -sd, -)"
-          aab_abis="$(unzip -Z1 "$aab" | sed -n 's#^base/lib/\([^/]*\)/.*#\1#p' | sort -u | paste -sd, -)"
-          [[ "$apk_abis" == "arm64-v8a" && "$aab_abis" == "arm64-v8a" ]] || {
-            echo "::error title=Android ABI 不符合要求::APK=$apk_abis，AAB=$aab_abis"
+          [[ "$apk_abis" == "arm64-v8a" ]] || {
+            echo "::error title=Android ABI 不符合要求::APK=$apk_abis"
             exit 1
           }
 
           apk_certificate="$RUNNER_TEMP/winlottery-release-apk.pem"
-          aab_certificate="$RUNNER_TEMP/winlottery-release-aab.pem"
           "$apksigner" verify --print-certs-pem "$apk" |
             sed -n '/-----BEGIN CERTIFICATE-----/,/-----END CERTIFICATE-----/p' > "$apk_certificate"
-          keytool -printcert -rfc -jarfile "$aab" |
-            sed -n '/-----BEGIN CERTIFICATE-----/,/-----END CERTIFICATE-----/p' > "$aab_certificate"
-          [[ -s "$apk_certificate" && -s "$aab_certificate" ]] || {
-            echo "::error title=Android 签名证书缺失::无法从 APK 或 AAB 提取签名证书"
+          [[ -s "$apk_certificate" ]] || {
+            echo "::error title=Android 签名证书缺失::无法从 APK 提取签名证书"
             exit 1
           }
 
           apk_digest="$(openssl x509 -in "$apk_certificate" -outform DER | sha256sum | awk '{print $1}')"
-          aab_digest="$(openssl x509 -in "$aab_certificate" -outform DER | sha256sum | awk '{print $1}')"
-          [[ -n "$apk_digest" && "$apk_digest" == "$aab_digest" ]] || {
-            echo "::error title=Android 签名不一致::APK 与 AAB 证书指纹不同"
+          [[ -n "$apk_digest" ]] || {
+            echo "::error title=Android 签名摘要缺失::无法计算 APK 证书 SHA-256"
             exit 1
           }
 
           asset_prefix="WinLottery-v${EXPECTED_VERSION}-android-arm64-v8a"
           mkdir -p release-assets
           cp "$apk" "release-assets/${asset_prefix}.apk"
-          cp "$aab" "release-assets/${asset_prefix}.aab"
-          {
-            echo "tag=$RELEASE_TAG"
-            echo "version=$EXPECTED_VERSION"
-            echo "build_number=$EXPECTED_BUILD"
-            echo "commit=$RELEASE_COMMIT"
-            echo "abi=arm64-v8a"
-            echo "certificate_sha256=$apk_digest"
-          } > release-assets/RELEASE-METADATA.txt
-          (
-            cd release-assets
-            sha256sum "${asset_prefix}.apk" "${asset_prefix}.aab" RELEASE-METADATA.txt > SHA256SUMS.txt
-          )
+          echo "certificate_sha256=$apk_digest" >> "$GITHUB_OUTPUT"
 
           {
             echo "### Android 发布产物"
-            echo "- APK/AAB：\`$EXPECTED_VERSION ($EXPECTED_BUILD)\`"
+            echo "- APK：\`$EXPECTED_VERSION ($EXPECTED_BUILD)\`"
             echo "- ABI：\`arm64-v8a\`"
             echo "- 证书 SHA-256：\`$apk_digest\`"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -328,7 +420,7 @@ jobs:
         if: github.event.repository.visibility == 'public'
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
-          subject-path: release-assets/*
+          subject-path: release-assets/*.apk
 
       - name: 上传发布候选产物
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -339,12 +431,93 @@ jobs:
           retention-days: 30
           compression-level: 0
 
+  release_assets:
+    name: 汇总发布资产
+    needs:
+      - metadata
+      - verify
+      - android_release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: 下载 Android 发布候选产物
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: WinLottery-${{ needs.metadata.outputs.tag }}-android
+          path: release-assets
+
+      - name: 下载 iOS 发布候选产物
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: WinLottery-${{ needs.metadata.outputs.tag }}-ios
+          path: release-assets
+
+      - name: 生成并复核发布清单
+        env:
+          RELEASE_TAG: ${{ needs.metadata.outputs.tag }}
+          RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
+          RELEASE_BUILD: ${{ needs.metadata.outputs.build_number }}
+          RELEASE_COMMIT: ${{ needs.metadata.outputs.commit }}
+          ANDROID_CERTIFICATE_SHA256: ${{ needs.android_release.outputs.certificate_sha256 }}
+          IOS_BUNDLE_ID: ${{ needs.verify.outputs.ios_bundle_id }}
+          IOS_MINIMUM_VERSION: ${{ needs.verify.outputs.ios_minimum_version }}
+        run: |
+          set -euo pipefail
+
+          android_apk="WinLottery-v${RELEASE_VERSION}-android-arm64-v8a.apk"
+          ios_ipa="WinLottery-v${RELEASE_VERSION}-ios-arm64-unsigned.ipa"
+          [[ -f "release-assets/$android_apk" && -f "release-assets/$ios_ipa" ]] || {
+            echo "::error title=发布资产不完整::必须同时包含 Android APK 和 iOS 未签名 IPA"
+            exit 1
+          }
+          [[ -n "$ANDROID_CERTIFICATE_SHA256" && -n "$IOS_BUNDLE_ID" && -n "$IOS_MINIMUM_VERSION" ]] || {
+            echo "::error title=发布元数据不完整::缺少 Android 签名或 iOS 应用信息"
+            exit 1
+          }
+
+          {
+            echo "tag=$RELEASE_TAG"
+            echo "version=$RELEASE_VERSION"
+            echo "build_number=$RELEASE_BUILD"
+            echo "commit=$RELEASE_COMMIT"
+            echo "android_abi=arm64-v8a"
+            echo "android_certificate_sha256=$ANDROID_CERTIFICATE_SHA256"
+            echo "ios_bundle_id=$IOS_BUNDLE_ID"
+            echo "ios_minimum_version=$IOS_MINIMUM_VERSION"
+            echo "ios_arch=arm64"
+            echo "ios_signing=unsigned"
+            echo "ios_installation=requires_user_signing"
+          } > release-assets/RELEASE-METADATA.txt
+          (
+            cd release-assets
+            sha256sum "$android_apk" "$ios_ipa" RELEASE-METADATA.txt > SHA256SUMS.txt
+            sha256sum --check SHA256SUMS.txt
+          )
+
+          {
+            echo "### 完整发布资产"
+            echo "- Android：签名 APK，\`arm64-v8a\`"
+            echo "- iOS：未签名真机 IPA，\`arm64\`，最低 iOS \`$IOS_MINIMUM_VERSION\`"
+            echo "- SHA-256 清单：通过"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 上传完整发布候选产物
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: WinLottery-${{ needs.metadata.outputs.tag }}-release
+          path: release-assets/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
   publish:
     name: 创建 GitHub Release
     needs:
       - metadata
-      - verify
-      - android-release
+      - release_assets
     if: needs.metadata.outputs.publish == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -358,7 +531,7 @@ jobs:
       - name: 下载已验证产物
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: WinLottery-${{ needs.metadata.outputs.tag }}-android
+          name: WinLottery-${{ needs.metadata.outputs.tag }}-release
           path: release-assets
 
       - name: 复核发布校验和
@@ -372,6 +545,12 @@ jobs:
           GH_REPO: ${{ github.repository }}
           VERSION: ${{ needs.metadata.outputs.version }}
           RELEASE_TAG: ${{ needs.metadata.outputs.tag }}
+          RELEASE_NOTES: |
+            Android 提供仅含 arm64-v8a 原生库的签名 APK。
+
+            iOS 提供面向 arm64 真机的未签名 IPA。该文件不能直接安装，使用者必须使用自己的有效证书和描述文件重新签名；第三方签名工具的安全性与兼容性需由使用者自行判断。
+
+            安装前请使用 SHA256SUMS.txt 核对文件完整性。
         run: |
           set -euo pipefail
 
@@ -385,7 +564,7 @@ jobs:
             --fail-on-no-commits \
             --title "WinLottery $VERSION" \
             --generate-notes \
-            --notes "Android 发布资产仅支持 arm64-v8a；请先使用 SHA256SUMS.txt 核对文件完整性。")"
+            --notes "$RELEASE_NOTES")"
           echo "url=$release_url" >> "$GITHUB_OUTPUT"
           echo "### 已发布" >> "$GITHUB_STEP_SUMMARY"
           echo "$release_url" >> "$GITHUB_STEP_SUMMARY"
@@ -394,8 +573,7 @@ jobs:
     name: 发布演练检查
     needs:
       - metadata
-      - verify
-      - android-release
+      - release_assets
     if: needs.metadata.outputs.publish != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -406,7 +584,7 @@ jobs:
       - name: 下载演练产物
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: WinLottery-${{ needs.metadata.outputs.tag }}-android
+          name: WinLottery-${{ needs.metadata.outputs.tag }}-release
           path: release-assets
 
       - name: 复核演练产物校验和
@@ -420,7 +598,8 @@ jobs:
           {
             echo "### 发布演练通过"
             echo "- 标识：\`$RELEASE_TAG\`"
-            echo "- Android Release 已完成构建、验签、上传、下载与校验"
-            echo "- 跨平台 Release 验证已通过"
+            echo "- Android 签名 APK 已完成构建、验签、上传、下载与校验"
+            echo "- iOS arm64 未签名真机 IPA 已完成构建、上传、下载与校验"
+            echo "- 跨平台 Release 与 Simulator 验证已通过"
             echo "- 未创建标签或 GitHub Release"
           } >> "$GITHUB_STEP_SUMMARY"

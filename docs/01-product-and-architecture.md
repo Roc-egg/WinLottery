@@ -316,7 +316,7 @@ interface AppPaths
 - iOS 使用微软官方 ONNX Runtime Swift Package `1.24.2`；Swift 只负责连续 Float32 张量和 Session，检测、方向分类、识别预后处理及 CTC 解码全部复用共享 Kotlin。模型和字典位于签名应用 Bundle，构建产物必须逐项核对哈希。
 - 该版本官方 `Privacy.md` 明确说明受支持平台的官方二进制默认开启遥测。项目必须在原生库初始化前设置 `ORT_DISABLE_TELEMETRY=1`，或改用通过 `--no_telemetry` 构建并完成供应链记录的目标平台制品；只在初始化后调用关闭 API 不满足本项目的本地处理边界。Windows/macOS 产品启动器完成并验证该约束前，不得启用真实桌面 OCR。
 - Desktop PoC 采用独立本地工作进程隔离 ONNX Runtime：普通 UI 主进程不加载运行时，父进程在创建子进程时注入 `ORT_DISABLE_TELEMETRY=1`，子进程随后再次调用关闭遥测 API。运行时健康检查协议只返回版本和执行提供器，拒绝额外输出；macOS arm64 分发启动器已通过该路径，Windows x64 仍需在实际分发包中验收。
-- 三份转换后 ONNX 合计约 21.3 MB。Android 通用 Debug APK 还会包含四套 ORT ABI，当前约 140 MB；正式 AAB 按设备 ABI 拆分后的下载体积、iOS 包体和目标平台裁剪只能以发布构建实测为准。
+- 三份转换后 ONNX 合计约 21.3 MB。Android 通用 Debug APK 还会包含四套 ORT ABI，当前约 140 MB；正式 `arm64-v8a` APK、iOS 真机 IPA 和目标平台裁剪只能以发布构建实测为准。
 - 模型随安装包离线提供，运行时不联网下载；加载前校验版本和 SHA-256。
 - PaddleOCR、模型和 Paddle2ONNX 使用 Apache-2.0，ONNX Runtime 使用 MIT。发行包必须附带许可证正文、第三方声明、模型来源、版本、哈希和转换说明。
 - Android 历史开奖公告使用 Apache-2.0 的 PDFBox Android `2.0.27.0`；只启用未加密文本层能力并排除 BouncyCastle 传递依赖。发布材料仍须加入 PDFBox Android 与上游 Apache PDFBox 的许可证和第三方声明，且只能处理严格官方域名、固定结构和受限大小的公告。
@@ -526,12 +526,12 @@ V1.1 已使用跨平台 Room 3 保存用户确认后的结构化票据，支持�
 
 KMP 不产生一个通用安装包，至少需要：
 
-- Android V1：APK/AAB。
-- iOS V1：IPA。
+- Android V1：仅发布 `arm64-v8a` 签名 APK。
+- iOS V1：发布 `arm64` 真机未签名 IPA，由使用者使用自己的有效证书和描述文件重新签名。
 - Windows 后续版本：MSI/EXE。
 - macOS 后续版本：DMG/PKG。
 
-iOS 必须在 macOS 上构建和签名。Windows/macOS 正式分发要求与对应 runner 在桌面版本恢复开发时验收，不属于移动 V1 发布闸门。
+iOS 必须在 macOS 上构建；未签名 IPA 不能直接安装，真机安装前仍必须完成有效签名。Windows/macOS 正式分发要求与对应 runner 在桌面版本恢复开发时验收，不属于移动 V1 发布闸门。
 
 首版建议平台矩阵：
 

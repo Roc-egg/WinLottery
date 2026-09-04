@@ -850,7 +850,7 @@ if [[ "$VERIFY_MEMORY_PRESSURE" == "1" ]]; then
   xcrun --find lldb >/dev/null || current_vm_fail "缺少 iOS Simulator 调试器"
 fi
 
-for required_command in codesign file jarsigner plutil rg shasum strings unzip xcodebuild; do
+for required_command in codesign file plutil rg shasum strings unzip xcodebuild; do
   command -v "$required_command" >/dev/null || current_vm_fail "缺少命令 $required_command"
 done
 if [[ "$VERIFY_VERSION_UPGRADE" == "1" ]]; then
@@ -937,7 +937,7 @@ if [[ "$VERIFY_VERSION_UPGRADE" == "1" ]]; then
   require_release_file "$upgrade_base_ios_release_app/WinLottery"
 fi
 
-release_gradle_tasks=(spotlessCheck :androidApp:assembleRelease :androidApp:bundleRelease)
+release_gradle_tasks=(spotlessCheck :androidApp:assembleRelease)
 if [[ "$VERIFY_INSTALL_LIFECYCLE" == "1" || "$VERIFY_PROCESS_RECOVERY" == "1" || "$VERIFY_ABRUPT_TERMINATION" == "1" || "$VERIFY_CRASH_RECOVERY" == "1" || "$VERIFY_MEMORY_PRESSURE" == "1" || "$VERIFY_VERSION_UPGRADE" == "1" ]]; then
   release_gradle_tasks+=(:androidApp:assembleDebug)
 fi
@@ -948,12 +948,10 @@ fi
 
 readonly unsigned_android_apk="$REPOSITORY_ROOT/androidApp/build/outputs/apk/release/androidApp-release-unsigned.apk"
 readonly configured_signed_android_apk="$REPOSITORY_ROOT/androidApp/build/outputs/apk/release/androidApp-release.apk"
-readonly android_aab="$REPOSITORY_ROOT/androidApp/build/outputs/bundle/release/androidApp-release.aab"
 readonly android_debug_apk="$REPOSITORY_ROOT/androidApp/build/outputs/apk/debug/androidApp-debug.apk"
 readonly signed_android_debug_apk="$release_check_directory/androidApp-debug-test-signed.apk"
 readonly aligned_android_apk="$release_check_directory/androidApp-release-aligned.apk"
 readonly signed_android_apk="$release_check_directory/androidApp-release-test-signed.apk"
-require_release_file "$android_aab"
 if [[ "$VERIFY_INSTALL_LIFECYCLE" == "1" || "$VERIFY_PROCESS_RECOVERY" == "1" || "$VERIFY_ABRUPT_TERMINATION" == "1" || "$VERIFY_CRASH_RECOVERY" == "1" || "$VERIFY_MEMORY_PRESSURE" == "1" || "$VERIFY_VERSION_UPGRADE" == "1" ]]; then
   require_release_file "$android_debug_apk"
   copy_verified_android_apk \
@@ -984,13 +982,6 @@ if [[ "$VERIFY_CRASH_RECOVERY" == "1" || "$VERIFY_MEMORY_PRESSURE" == "1" ]]; th
   if rg -a -F "$MEMORY_PRESSURE_MARKER" "$android_dex_directory" >/dev/null; then
     current_vm_fail "Android Release DEX 仍包含内存压力验收标记"
   fi
-fi
-unzip -tq "$android_aab"
-if unzip -Z1 "$android_aab" | rg -qi '^META-INF/[^/]+\.(RSA|DSA|EC)$'; then
-  jarsigner -verify "$android_aab" >/dev/null 2>&1 || current_vm_fail "Android Release AAB 签名校验失败"
-  android_aab_signature_state="存在有效签名记录，但仍需核对生产证书与 Play Console"
-else
-  android_aab_signature_state="未配置生产签名，仅完成 ZIP 结构校验"
 fi
 
 adb -s "$CURRENT_ANDROID_SERIAL_ID" install -r -d "$signed_android_apk"
@@ -1096,11 +1087,9 @@ if [[ "$VERIFY_INSTALL_LIFECYCLE" == "1" ]]; then
 fi
 
 android_apk_size="$(stat -f '%z' "$signed_android_apk")"
-android_aab_size="$(stat -f '%z' "$android_aab")"
 ios_app_size_kib="$(du -sk "$ios_release_app" | awk '{print $1}')"
 
 print "Android Release APK：${android_apk_size} 字节，进程 $android_process_id，非 Debug 校验通过"
-print "Android Release AAB：${android_aab_size} 字节，${android_aab_signature_state}"
 print "iOS Release Simulator App：${ios_app_size_kib} KiB，${ios_launch_result}，非 Debug 校验通过"
 print "iOS 产物仅为 Simulator 本地签名 .app，不是 IPA 或发布签名"
 if [[ "$VERIFY_INSTALL_LIFECYCLE" == "1" ]]; then
@@ -1123,5 +1112,4 @@ if [[ "$VERIFY_VERSION_UPGRADE" == "1" ]]; then
   print "升级验收截图与日志：$upgrade_evidence_directory"
 fi
 print "Android APK SHA-256：$(shasum -a 256 "$signed_android_apk" | awk '{print $1}')"
-print "Android AAB SHA-256：$(shasum -a 256 "$android_aab" | awk '{print $1}')"
 print "临时验收签名 APK 与 Xcode DerivedData 将在脚本退出时清理"
