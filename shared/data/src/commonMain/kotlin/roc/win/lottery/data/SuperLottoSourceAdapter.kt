@@ -94,8 +94,9 @@ internal object SuperLottoSourceAdapter {
             if (drawDate.substring(2, 4) != targetIssue.take(2)) {
                 return@parseSafely SourceParseResult.SourceUnavailable("大乐透辅助日期与期号年份不一致")
             }
+            val promotionActive = record.int("lotteryPromotionFlag")?.let { it != NO_PROMOTION_VALUE } == true
             val tiers =
-                when (val parsed = parsePrizeTiers(record)) {
+                when (val parsed = parsePrizeTiers(record, promotionActive)) {
                     is PrizeTierParseResult.Success -> {
                         parsed.tiers
                     }
@@ -153,9 +154,6 @@ internal object SuperLottoSourceAdapter {
         val promotionFlag =
             record.int("lotteryPromotionFlag")
                 ?: return SourceParseResult.SourceUnavailable("大乐透主响应缺少派奖状态")
-        if (promotionFlag != NO_PROMOTION_VALUE) {
-            return SourceParseResult.Publishing("大乐透当期存在 V1 尚未验证的派奖活动")
-        }
         val numbers =
             parseSuperLottoNumbers(record.text("lotteryDrawResult"))
                 ?: return SourceParseResult.SourceUnavailable("大乐透开奖号码不合法")
@@ -165,14 +163,15 @@ internal object SuperLottoSourceAdapter {
         if (drawDate.substring(2, 4) != targetIssue.take(2)) {
             return SourceParseResult.SourceUnavailable("大乐透开奖日期与期号年份不一致")
         }
-        val tierResult = parsePrizeTiers(record)
+        val promotionActive = promotionFlag != NO_PROMOTION_VALUE
+        val tierResult = parsePrizeTiers(record, promotionActive)
         if (tierResult is PrizeTierParseResult.Failure) {
             return SourceParseResult.SourceUnavailable(tierResult.message)
         }
         val tiers = (tierResult as PrizeTierParseResult.Success).tiers
         val detailUrl = normalizeDetailUrl(record.text("drawPdfUrl"), targetIssue)
         val publicationFieldsComplete = !detailUrl.isNullOrBlank()
-        val payoutFieldsComplete = hasCompletePayouts(tiers)
+        val payoutFieldsComplete = !promotionActive && hasCompletePayouts(tiers)
         val canonical =
             canonicalMainDraw(
                 lotteryType = LotteryType.SUPER_LOTTO,
@@ -223,8 +222,11 @@ internal object SuperLottoSourceAdapter {
         return primary to secondary
     }
 
-    /** 按奖级名称聚合基本投注与追加投注字段。 */
-    private fun parsePrizeTiers(record: JsonObject): PrizeTierParseResult {
+    /** 按奖级名称聚合基础与追加字段，并在明确派奖时隔离已知的派奖附加行。 */
+    private fun parsePrizeTiers(
+        record: JsonObject,
+        promotionActive: Boolean,
+    ): PrizeTierParseResult {
         val rowElements =
             record["prizeLevelList"].arrayOrNull()
                 ?: return PrizeTierParseResult.Failure("大乐透奖级列表字段缺失")
@@ -235,11 +237,22 @@ internal object SuperLottoSourceAdapter {
         if (rows.isEmpty()) return PrizeTierParseResult.Failure("大乐透奖级列表为空")
         val baseRows = mutableMapOf<String, ParsedPrizeRow>()
         val additionalRows = mutableMapOf<String, ParsedPrizeRow>()
+        val promotionRows = mutableSetOf<String>()
         for (row in rows) {
             val name = row.text("prizeLevel") ?: return PrizeTierParseResult.Failure("大乐透奖级名称缺失")
-            val mapping =
-                SUPER_LOTTO_PRIZE_NAMES[name]
-                    ?: return PrizeTierParseResult.Failure("大乐透出现未知奖级或派奖字段")
+            val mapping = SUPER_LOTTO_PRIZE_NAMES[name]
+            if (mapping == null) {
+                if (!promotionActive || name !in KNOWN_PROMOTION_PRIZE_NAMES) {
+                    return PrizeTierParseResult.Failure("大乐透出现未知奖级或派奖字段")
+                }
+                if (parsePrizeRow(row, name) == null) {
+                    return PrizeTierParseResult.Failure("大乐透派奖奖级数据不合法")
+                }
+                if (!promotionRows.add(name)) {
+                    return PrizeTierParseResult.Failure("大乐透奖级列表包含重复派奖奖级")
+                }
+                continue
+            }
             val parsed = parsePrizeRow(row, name) ?: return PrizeTierParseResult.Failure("大乐透奖级数据不合法")
             val target = if (mapping.isAdditional) additionalRows else baseRows
             if (target.put(mapping.code, parsed) != null) {
@@ -355,6 +368,16 @@ internal object SuperLottoSourceAdapter {
             "五等奖" to PrizeNameMapping(PrizeTierCodes.FIFTH, false),
             "六等奖" to PrizeNameMapping(PrizeTierCodes.SIXTH, false),
             "七等奖" to PrizeNameMapping(PrizeTierCodes.SEVENTH, false),
+        )
+
+    /** 当前官网派奖期明确出现、但不参与基础奖级金额计算的附加行。 */
+    private val KNOWN_PROMOTION_PRIZE_NAMES =
+        setOf(
+            "三等奖派奖",
+            "四等奖派奖",
+            "五等奖派奖",
+            "六等奖派奖",
+            "七等奖派奖",
         )
 
     /** 大乐透必须具备的七个基本奖级。 */

@@ -9,8 +9,23 @@ plugins {
 /** 桌面安装包和原生启动器的统一名称。 */
 val desktopPackageName = "WinLottery"
 
-/** 与当前移动端稳定版一致的桌面预览版版本号。 */
-val desktopPackageVersion = "1.3.0"
+/** Android、iOS、macOS 与 Windows 统一使用的语义版本号。 */
+val desktopPackageVersion = "1.3.1"
+
+/** Windows 安装包跨版本复用的稳定升级标识。 */
+val desktopWindowsUpgradeUuid = "BB1BC520-8D33-30F8-AA0A-352A3E2186A0"
+
+/** Windows 开始菜单中展示桌面预览版的分组名称。 */
+val desktopWindowsMenuGroup = "给我中"
+
+/** 与 Android/iOS 品牌图标同源的 Windows 多尺寸图标。 */
+val desktopWindowsIconFile = project.file("src/main/packaging/WinLottery.ico")
+
+/** 与 Android/iOS 品牌图标同源的 macOS Retina 图标。 */
+val desktopMacIconFile = project.file("src/main/packaging/WinLottery.icns")
+
+/** Windows MSI 在 Compose 分发目录中的相对路径。 */
+val desktopMsiRelativePath = "compose/binaries/main/msi/$desktopPackageName-$desktopPackageVersion.msi"
 
 /** 当前宿主平台在 Compose 分发目录中的原生启动器相对路径。 */
 val desktopLauncherRelativePath =
@@ -54,6 +69,17 @@ compose.desktop {
                 bundleID = "roc.win.lottery"
                 dockName = "给我中"
                 appCategory = "public.app-category.utilities"
+                iconFile.set(desktopMacIconFile)
+            }
+
+            windows {
+                // 当前用户安装固定使用 LocalAppData，避免自选盘符导致卸载回滚目录权限异常。
+                perUserInstall = true
+                dirChooser = false
+                menu = true
+                menuGroup = desktopWindowsMenuGroup
+                upgradeUuid = desktopWindowsUpgradeUuid
+                iconFile.set(desktopWindowsIconFile)
             }
         }
     }
@@ -85,4 +111,39 @@ tasks.register<Exec>("verifyPackagedDesktopOcr") {
             .asFile
     environment("ORT_DISABLE_TELEMETRY", "0")
     commandLine(launcher.absolutePath, "--verify-packaged-desktop-ocr")
+}
+
+tasks.register<Exec>("verifyPackagedWindowsMsi") {
+    group = "verification"
+    description = "验证 Windows MSI 的架构、版本、安装范围、升级标识和关键载荷"
+    dependsOn("packageMsi")
+
+    /** 当前版本应生成并接受检查的 Windows MSI。 */
+    val installer =
+        layout.buildDirectory
+            .file(desktopMsiRelativePath)
+            .get()
+            .asFile
+
+    /** 使用 Windows Installer 只读接口检查 MSI 的脚本。 */
+    val verifier = rootProject.file("tools/windows/verify-packaged-msi.ps1")
+
+    inputs.file(installer)
+    inputs.file(verifier)
+    commandLine(
+        "powershell.exe",
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        verifier.absolutePath,
+        "-MsiPath",
+        installer.absolutePath,
+        "-ExpectedVersion",
+        desktopPackageVersion,
+        "-ExpectedUpgradeCode",
+        desktopWindowsUpgradeUuid,
+    )
 }

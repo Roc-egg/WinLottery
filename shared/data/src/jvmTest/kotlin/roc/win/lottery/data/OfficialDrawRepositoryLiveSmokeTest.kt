@@ -29,7 +29,10 @@ class OfficialDrawRepositoryLiveSmokeTest {
             if (System.getenv(ENABLE_ENVIRONMENT_VARIABLE) != ENABLED_VALUE) return@runTest
             val superLottoIssue = requiredEnvironmentVariable(SUPER_LOTTO_ISSUE_ENVIRONMENT_VARIABLE)
             val doubleColorBallIssue = requiredEnvironmentVariable(DOUBLE_COLOR_BALL_ISSUE_ENVIRONMENT_VARIABLE)
-            val repository = OfficialDrawRepository()
+            val repository =
+                OfficialDrawRepository(
+                    superLottoPdfTextExtractor = JvmSuperLottoPdfTextExtractor(),
+                )
 
             val superLotto =
                 repository

@@ -38,7 +38,7 @@ import kotlin.time.Instant
  * @property httpClient 使用当前平台网络引擎的 Ktor 客户端。
  * @property clock 为证据时间和开奖日期合理性提供可测试时钟。
  * @property ruleVersionSelector 根据期号选择规则版本。
- * @property superLottoPdfTextExtractor 当前移动平台的官方 PDF 文本层提取能力。
+ * @property superLottoPdfTextExtractor 当前平台的官方 PDF 文本层提取能力。
  */
 class OfficialDrawRepository(
     private val httpClient: HttpClient = createPlatformHttpClient(),

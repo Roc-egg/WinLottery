@@ -61,9 +61,10 @@ jobs:
           android_build="$(sed -n 's/^[[:space:]]*versionCode = \([0-9][0-9]*\).*/\1/p' androidApp/build.gradle.kts)"
           ios_version="$(sed -n 's/^MARKETING_VERSION=\(.*\)$/\1/p' iosApp/Configuration/Config.xcconfig)"
           ios_build="$(sed -n 's/^CURRENT_PROJECT_VERSION=\([0-9][0-9]*\)$/\1/p' iosApp/Configuration/Config.xcconfig)"
+          desktop_version="$(sed -n 's/^[[:space:]]*val desktopPackageVersion = "\([^"]*\)".*/\1/p' desktopApp/build.gradle.kts)"
 
-          if [[ ! "$android_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ || "$android_version" != "$ios_version" ]]; then
-            echo "::error title=版本号不一致::Android 与 iOS 必须使用相同的 X.Y.Z 版本号"
+          if [[ ! "$android_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ || "$android_version" != "$ios_version" || "$android_version" != "$desktop_version" ]]; then
+            echo "::error title=版本号不一致::Android、iOS、macOS 与 Windows 必须使用相同的 X.Y.Z 版本号"
             exit 1
           fi
           if [[ -z "$android_build" || "$android_build" != "$ios_build" ]]; then
@@ -97,7 +98,7 @@ jobs:
             fi
             tag_version="${BASH_REMATCH[1]}"
             if [[ "$tag_version" != "$android_version" ]]; then
-              echo "::error title=版本号不一致::标签、Android 与 iOS 版本号必须完全一致"
+              echo "::error title=版本号不一致::标签与四个平台版本号必须完全一致"
               exit 1
             fi
             if ! tag_commit="$(git rev-parse --verify "refs/tags/${requested_tag}^{commit}" 2>/dev/null)"; then
@@ -131,10 +132,10 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   verify:
-    name: 跨平台 Release 验证与 iOS 打包
+    name: 跨平台 Release 验证与 Apple 平台打包
     needs: metadata
     runs-on: macos-15
-    timeout-minutes: 70
+    timeout-minutes: 90
     permissions:
       contents: read
       id-token: write
@@ -299,16 +300,73 @@ jobs:
             echo "- 安装要求：必须由使用者使用自己的有效证书和描述文件重新签名"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: 生成 iOS 构建来源证明
+      - name: 构建并校验 macOS DMG
+        env:
+          EXPECTED_VERSION: ${{ needs.metadata.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          [[ "$(uname -m)" == "arm64" ]] || {
+            echo "::error title=macOS 架构不正确::发布 DMG 必须在 Apple Silicon runner 构建"
+            exit 1
+          }
+          ./gradlew \
+            :desktopApp:packageDmg \
+            :desktopApp:verifyPackagedOnnxRuntime \
+            :desktopApp:verifyPackagedDesktopOcr \
+            --console=plain
+
+          app="desktopApp/build/compose/binaries/main/app/WinLottery.app"
+          info_plist="$app/Contents/Info.plist"
+          executable="$app/Contents/MacOS/WinLottery"
+          dmg="desktopApp/build/compose/binaries/main/dmg/WinLottery-${EXPECTED_VERSION}.dmg"
+          [[ -f "$info_plist" && -f "$executable" && -s "$dmg" ]] || {
+            echo "::error title=macOS 产物缺失::没有找到完整的应用包或 DMG"
+            exit 1
+          }
+
+          actual_version="$(plutil -extract CFBundleShortVersionString raw "$info_plist")"
+          [[ "$actual_version" == "$EXPECTED_VERSION" ]] || {
+            echo "::error title=macOS 版本号不一致::实际版本为 $actual_version"
+            exit 1
+          }
+          file "$executable" | grep -Fq "arm64" || {
+            echo "::error title=macOS 架构不正确::应用可执行文件不是 arm64"
+            exit 1
+          }
+
+          icon_count="$(find "$app/Contents/Resources" -maxdepth 1 -type f -name '*.icns' | wc -l | tr -d ' ')"
+          [[ "$icon_count" == "1" ]] || {
+            echo "::error title=macOS 图标不唯一::应用包必须恰好包含一份 ICNS"
+            exit 1
+          }
+          packaged_icon="$(find "$app/Contents/Resources" -maxdepth 1 -type f -name '*.icns' -print -quit)"
+          cmp desktopApp/src/main/packaging/WinLottery.icns "$packaged_icon" || {
+            echo "::error title=macOS 图标不一致::应用包未使用移动端同源品牌图标"
+            exit 1
+          }
+          hdiutil verify "$dmg"
+
+          asset="release-assets/WinLottery-v${EXPECTED_VERSION}-macos-arm64.dmg"
+          cp "$dmg" "$asset"
+          {
+            echo "### macOS 发布产物"
+            echo "- DMG：\`$EXPECTED_VERSION\`"
+            echo "- 架构：\`arm64\`"
+            echo "- 签名：未签名桌面预览包"
+            echo "- 品牌图标：与 Android/iOS AppIcon 一致"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 生成 Apple 平台构建来源证明
         if: github.event.repository.visibility == 'public'
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
-          subject-path: release-assets/*.ipa
+          subject-path: release-assets/*
 
-      - name: 上传 iOS 发布候选产物
+      - name: 上传 Apple 平台发布候选产物
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: WinLottery-${{ needs.metadata.outputs.tag }}-ios
+          name: WinLottery-${{ needs.metadata.outputs.tag }}-apple
           path: release-assets/
           if-no-files-found: error
           retention-days: 30
@@ -431,12 +489,100 @@ jobs:
           retention-days: 30
           compression-level: 0
 
+  windows_release:
+    name: 构建 Windows Release
+    needs: metadata
+    runs-on: windows-2025
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    outputs:
+      signing: ${{ steps.windows_package.outputs.signing }}
+    steps:
+      - name: 检出发布代码
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.metadata.outputs.commit }}
+          persist-credentials: false
+
+      - name: 配置 Java
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+        with:
+          distribution: zulu
+          java-version: "21"
+
+      - name: 配置 Gradle
+        uses: gradle/actions/setup-gradle@67621b124fd2e251c5e8a0e6e3b91318f2287669 # v6.3.0
+        with:
+          cache-read-only: true
+
+      - name: 校验 Desktop OCR 模型锁
+        run: python tools/desktop-ocr/convert_ppocrv5.py --verify-lock-only
+
+      - name: 构建并验证 Windows MSI
+        run: >-
+          .\gradlew.bat
+          :desktopApp:verifyPackagedWindowsMsi
+          :desktopApp:verifyPackagedOnnxRuntime
+          :desktopApp:verifyPackagedDesktopOcr
+          --console=plain
+
+      - name: 校验并整理 Windows 发布产物
+        id: windows_package
+        shell: pwsh
+        env:
+          EXPECTED_VERSION: ${{ needs.metadata.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $source = "desktopApp/build/compose/binaries/main/msi/WinLottery-$env:EXPECTED_VERSION.msi"
+          if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
+              Write-Error '没有找到 Windows MSI'
+          }
+          $signature = Get-AuthenticodeSignature -LiteralPath $source
+          $signing = switch ($signature.Status) {
+              'Valid' { 'signed' }
+              'NotSigned' { 'unsigned' }
+              default { throw "Windows MSI 签名状态异常：$($signature.Status)" }
+          }
+
+          New-Item -ItemType Directory -Path release-assets -Force | Out-Null
+          $asset = "release-assets/WinLottery-v$env:EXPECTED_VERSION-windows-x64.msi"
+          Copy-Item -LiteralPath $source -Destination $asset
+          "signing=$signing" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          @"
+          ### Windows 发布产物
+          - MSI：``$env:EXPECTED_VERSION``
+          - 架构：``x64``
+          - 安装范围：当前用户 LocalAppData
+          - 签名：``$signing``
+          - 品牌图标：与 Android/iOS AppIcon 一致
+          "@ | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+
+      - name: 生成 Windows 构建来源证明
+        if: github.event.repository.visibility == 'public'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: release-assets/*.msi
+
+      - name: 上传 Windows 发布候选产物
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: WinLottery-${{ needs.metadata.outputs.tag }}-windows
+          path: release-assets/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
   release_assets:
     name: 汇总发布资产
     needs:
       - metadata
       - verify
       - android_release
+      - windows_release
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -449,10 +595,16 @@ jobs:
           name: WinLottery-${{ needs.metadata.outputs.tag }}-android
           path: release-assets
 
-      - name: 下载 iOS 发布候选产物
+      - name: 下载 Apple 平台发布候选产物
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: WinLottery-${{ needs.metadata.outputs.tag }}-ios
+          name: WinLottery-${{ needs.metadata.outputs.tag }}-apple
+          path: release-assets
+
+      - name: 下载 Windows 发布候选产物
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: WinLottery-${{ needs.metadata.outputs.tag }}-windows
           path: release-assets
 
       - name: 生成并复核发布清单
@@ -464,17 +616,20 @@ jobs:
           ANDROID_CERTIFICATE_SHA256: ${{ needs.android_release.outputs.certificate_sha256 }}
           IOS_BUNDLE_ID: ${{ needs.verify.outputs.ios_bundle_id }}
           IOS_MINIMUM_VERSION: ${{ needs.verify.outputs.ios_minimum_version }}
+          WINDOWS_SIGNING: ${{ needs.windows_release.outputs.signing }}
         run: |
           set -euo pipefail
 
           android_apk="WinLottery-v${RELEASE_VERSION}-android-arm64-v8a.apk"
           ios_ipa="WinLottery-v${RELEASE_VERSION}-ios-arm64-unsigned.ipa"
-          [[ -f "release-assets/$android_apk" && -f "release-assets/$ios_ipa" ]] || {
-            echo "::error title=发布资产不完整::必须同时包含 Android APK 和 iOS 未签名 IPA"
+          macos_dmg="WinLottery-v${RELEASE_VERSION}-macos-arm64.dmg"
+          windows_msi="WinLottery-v${RELEASE_VERSION}-windows-x64.msi"
+          [[ -f "release-assets/$android_apk" && -f "release-assets/$ios_ipa" && -f "release-assets/$macos_dmg" && -f "release-assets/$windows_msi" ]] || {
+            echo "::error title=发布资产不完整::必须同时包含 Android APK、iOS IPA、macOS DMG 和 Windows MSI"
             exit 1
           }
-          [[ -n "$ANDROID_CERTIFICATE_SHA256" && -n "$IOS_BUNDLE_ID" && -n "$IOS_MINIMUM_VERSION" ]] || {
-            echo "::error title=发布元数据不完整::缺少 Android 签名或 iOS 应用信息"
+          [[ -n "$ANDROID_CERTIFICATE_SHA256" && -n "$IOS_BUNDLE_ID" && -n "$IOS_MINIMUM_VERSION" && -n "$WINDOWS_SIGNING" ]] || {
+            echo "::error title=发布元数据不完整::缺少移动端应用信息或 Windows 签名状态"
             exit 1
           }
 
@@ -490,10 +645,15 @@ jobs:
             echo "ios_arch=arm64"
             echo "ios_signing=unsigned"
             echo "ios_installation=requires_user_signing"
+            echo "macos_arch=arm64"
+            echo "macos_signing=unsigned"
+            echo "windows_arch=x64"
+            echo "windows_install_scope=per-user-local-app-data"
+            echo "windows_signing=$WINDOWS_SIGNING"
           } > release-assets/RELEASE-METADATA.txt
           (
             cd release-assets
-            sha256sum "$android_apk" "$ios_ipa" RELEASE-METADATA.txt > SHA256SUMS.txt
+            sha256sum "$android_apk" "$ios_ipa" "$macos_dmg" "$windows_msi" RELEASE-METADATA.txt > SHA256SUMS.txt
             sha256sum --check SHA256SUMS.txt
           )
 
@@ -501,6 +661,8 @@ jobs:
             echo "### 完整发布资产"
             echo "- Android：签名 APK，\`arm64-v8a\`"
             echo "- iOS：未签名真机 IPA，\`arm64\`，最低 iOS \`$IOS_MINIMUM_VERSION\`"
+            echo "- macOS：未签名 DMG，\`arm64\`"
+            echo "- Windows：MSI，\`x64\`，签名状态 \`$WINDOWS_SIGNING\`"
             echo "- SHA-256 清单：通过"
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -549,6 +711,8 @@ jobs:
             Android 提供仅含 arm64-v8a 原生库的签名 APK。
 
             iOS 提供面向 arm64 真机的未签名 IPA。该文件不能直接安装，使用者必须使用自己的有效证书和描述文件重新签名；第三方签名工具的安全性与兼容性需由使用者自行判断。
+
+            macOS 提供面向 Apple Silicon 的未签名 DMG；Windows 提供面向 x64、安装到当前用户 LocalAppData 的 MSI。两个桌面包均为未公证或未签名的个人预览产物，系统可能要求使用者手动确认来源。
 
             安装前请使用 SHA256SUMS.txt 核对文件完整性。
         run: |
@@ -600,6 +764,8 @@ jobs:
             echo "- 标识：\`$RELEASE_TAG\`"
             echo "- Android 签名 APK 已完成构建、验签、上传、下载与校验"
             echo "- iOS arm64 未签名真机 IPA 已完成构建、上传、下载与校验"
+            echo "- macOS arm64 未签名 DMG 已完成构建、图标、上传、下载与校验"
+            echo "- Windows x64 MSI 已完成构建、安装元数据、图标、上传、下载与校验"
             echo "- 跨平台 Release 与 Simulator 验证已通过"
             echo "- 未创建标签或 GitHub Release"
           } >> "$GITHUB_STEP_SUMMARY"

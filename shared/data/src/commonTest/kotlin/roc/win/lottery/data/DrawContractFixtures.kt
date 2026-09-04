@@ -33,7 +33,7 @@ internal object DrawContractFixtures {
         secondAdditionalCount: String = "15",
         secondAdditionalAmount: String = "274,546",
         thirdPrizeAmount: String = "6666",
-        extraPrizeName: String? = null,
+        extraPrizeNames: List<String> = emptyList(),
     ): String =
         buildJsonObject {
             put("success", businessSuccess)
@@ -62,7 +62,7 @@ internal object DrawContractFixtures {
                                         secondAdditionalCount = secondAdditionalCount,
                                         secondAdditionalAmount = secondAdditionalAmount,
                                         thirdPrizeAmount = thirdPrizeAmount,
-                                        extraPrizeName = extraPrizeName,
+                                        extraPrizeNames = extraPrizeNames,
                                     ),
                                 )
                                 if (duplicateRecord) {
@@ -83,7 +83,7 @@ internal object DrawContractFixtures {
                                             secondAdditionalCount = secondAdditionalCount,
                                             secondAdditionalAmount = secondAdditionalAmount,
                                             thirdPrizeAmount = thirdPrizeAmount,
-                                            extraPrizeName = extraPrizeName,
+                                            extraPrizeNames = extraPrizeNames,
                                         ),
                                     )
                                 }
@@ -101,6 +101,7 @@ internal object DrawContractFixtures {
         drawDate: String = DEFAULT_DLT_DATE,
         verify: Int = 1,
         notice: Int = 1,
+        promotionFlag: Int = 0,
         detailUrl: String = defaultDltDetailUrl(issue),
         firstPrizeAmount: String = "10,000,000",
         firstAdditionalCount: String = "0",
@@ -109,7 +110,7 @@ internal object DrawContractFixtures {
         secondAdditionalCount: String = "15",
         secondAdditionalAmount: String = "274,546",
         thirdPrizeAmount: String = "6666",
-        extraPrizeName: String? = null,
+        extraPrizeNames: List<String> = emptyList(),
         businessSuccess: Boolean = true,
         includeDraw: Boolean = true,
     ): String =
@@ -132,7 +133,7 @@ internal object DrawContractFixtures {
                                         verify = verify,
                                         drawStatus = 20,
                                         notice = notice,
-                                        promotionFlag = 0,
+                                        promotionFlag = promotionFlag,
                                         detailUrl = detailUrl,
                                         firstPrizeAmount = firstPrizeAmount,
                                         firstAdditionalCount = firstAdditionalCount,
@@ -141,7 +142,7 @@ internal object DrawContractFixtures {
                                         secondAdditionalCount = secondAdditionalCount,
                                         secondAdditionalAmount = secondAdditionalAmount,
                                         thirdPrizeAmount = thirdPrizeAmount,
-                                        extraPrizeName = extraPrizeName,
+                                        extraPrizeNames = extraPrizeNames,
                                     ),
                                 )
                             }
@@ -305,7 +306,7 @@ internal object DrawContractFixtures {
         secondAdditionalCount: String,
         secondAdditionalAmount: String,
         thirdPrizeAmount: String,
-        extraPrizeName: String?,
+        extraPrizeNames: List<String>,
     ): JsonObject =
         buildJsonObject {
             put("lotteryGameNum", "85")
@@ -327,7 +328,7 @@ internal object DrawContractFixtures {
                     secondAdditionalCount = secondAdditionalCount,
                     secondAdditionalAmount = secondAdditionalAmount,
                     thirdPrizeAmount = thirdPrizeAmount,
-                    extraPrizeName = extraPrizeName,
+                    extraPrizeNames = extraPrizeNames,
                 ),
             )
         }
@@ -341,7 +342,7 @@ internal object DrawContractFixtures {
         secondAdditionalCount: String,
         secondAdditionalAmount: String,
         thirdPrizeAmount: String,
-        extraPrizeName: String?,
+        extraPrizeNames: List<String>,
     ): JsonArray =
         buildJsonArray {
             add(superLottoPrizeRow("一等奖", "3", firstPrizeAmount))
@@ -353,7 +354,7 @@ internal object DrawContractFixtures {
             add(superLottoPrizeRow("五等奖", "57,982", "200"))
             add(superLottoPrizeRow("六等奖", "648,165", "18"))
             add(superLottoPrizeRow("七等奖", "7,001,956", "7"))
-            extraPrizeName?.let { add(superLottoPrizeRow(it, "1", "10")) }
+            extraPrizeNames.forEach { add(superLottoPrizeRow(it, "1", "10")) }
         }
 
     /** 构造大乐透单条奖级字段。 */
@@ -449,6 +450,16 @@ internal object DrawContractFixtures {
 
     /** 大乐透默认开奖日期。 */
     const val DEFAULT_DLT_DATE = "2026-08-12"
+
+    /** 大乐透 2026 年已观察到的三至七等奖派奖附加行。 */
+    val DEFAULT_DLT_PROMOTION_PRIZE_NAMES =
+        listOf(
+            "三等奖派奖",
+            "四等奖派奖",
+            "五等奖派奖",
+            "六等奖派奖",
+            "七等奖派奖",
+        )
 
     /** 双色球默认期号。 */
     const val DEFAULT_SSQ_ISSUE = "2026091"

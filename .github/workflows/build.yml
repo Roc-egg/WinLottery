@@ -63,7 +63,7 @@ jobs:
         run: python tools/desktop-ocr/convert_ppocrv5.py --verify-lock-only
       - name: 运行共享测试
         run: .\gradlew.bat jvmTest
-      - name: 构建 Windows 分发包
-        run: .\gradlew.bat :desktopApp:packageMsi
+      - name: 构建并验证 Windows MSI
+        run: .\gradlew.bat :desktopApp:verifyPackagedWindowsMsi
       - name: 验证 Windows 成品本地 OCR
         run: .\gradlew.bat :desktopApp:verifyPackagedOnnxRuntime :desktopApp:verifyPackagedDesktopOcr

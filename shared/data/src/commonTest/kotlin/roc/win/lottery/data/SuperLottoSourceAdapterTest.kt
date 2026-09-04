@@ -136,19 +136,48 @@ class SuperLottoSourceAdapterTest {
         )
     }
 
-    /** 未经验证的临时派奖不能套用基础规则。 */
+    /** 已审核派奖期应保留开奖号码和基础奖级，同时把奖金状态降为待确认。 */
     @Test
-    fun promotionFlagIsPublishing() {
-        assertIs<SourceParseResult.Publishing>(
-            parseMain(DrawContractFixtures.superLottoMain(promotionFlag = 1)),
-        )
+    fun promotionFlagKeepsNumbersAndDefersPayout() {
+        val result =
+            parseMain(
+                DrawContractFixtures.superLottoMain(
+                    promotionFlag = 1,
+                    extraPrizeNames = DrawContractFixtures.DEFAULT_DLT_PROMOTION_PRIZE_NAMES,
+                ),
+            )
+        val snapshot = assertIs<SourceParseResult.Success<MainDrawSnapshot>>(result).value
+
+        assertEquals(listOf(3, 4, 7, 12, 32), snapshot.primaryNumbers)
+        assertEquals(listOf(1, 2), snapshot.secondaryNumbers)
+        assertEquals(7, snapshot.prizeTiers.size)
+        assertFalse(snapshot.payoutFieldsComplete)
+    }
+
+    /** 辅助数据面同样应隔离已知派奖行并保留可交叉核对的基础奖级。 */
+    @Test
+    fun supportingPromotionRowsKeepBasicTiers() {
+        val result =
+            parseSupporting(
+                DrawContractFixtures.superLottoSupporting(
+                    promotionFlag = 1,
+                    extraPrizeNames = DrawContractFixtures.DEFAULT_DLT_PROMOTION_PRIZE_NAMES,
+                ),
+            )
+
+        assertEquals(7, assertIs<SourceParseResult.Success<SupportingDrawSnapshot>>(result).value.prizeTiers.size)
     }
 
     /** 未知奖级必须阻断，不能按数组下标猜测。 */
     @Test
     fun unknownPrizeTierIsSourceUnavailable() {
         assertIs<SourceParseResult.SourceUnavailable>(
-            parseMain(DrawContractFixtures.superLottoMain(extraPrizeName = "派奖奖级")),
+            parseMain(
+                DrawContractFixtures.superLottoMain(
+                    promotionFlag = 1,
+                    extraPrizeNames = listOf("派奖奖级"),
+                ),
+            ),
         )
     }
 

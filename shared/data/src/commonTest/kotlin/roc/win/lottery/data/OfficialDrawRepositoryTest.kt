@@ -18,11 +18,13 @@ import roc.win.lottery.domain.Issue
 import roc.win.lottery.domain.LotteryPrizeCalculator
 import roc.win.lottery.domain.LotteryType
 import roc.win.lottery.domain.PrizeCheckStatus
+import roc.win.lottery.domain.PrizeTierCodes
 import roc.win.lottery.domain.RuleVersion
 import roc.win.lottery.domain.TicketFieldOrigin
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Clock
 import kotlin.time.Instant
@@ -482,6 +484,73 @@ class OfficialDrawRepositoryTest {
             assertEquals(3, requests.size)
             assertEquals(SuperLottoAnnouncementTestFixtures.EXPECTED_PDF_URL, requests.last())
             assertEquals("中国体彩网开奖公告 PDF", draw.supportingEvidence.single().sourceName)
+        }
+
+    /** 大乐透历史派奖期应完成双源判级，但不得把基础奖金误报为含派奖的最终金额。 */
+    @Test
+    fun historicalPromotionDrawReturnsFinalNumbersAndWinningTier() =
+        runTest {
+            val repository =
+                repository(
+                    clock = MutableTestClock("2026-08-13T01:00:00Z"),
+                    superLottoPdfTextExtractor = fixedPdfExtractor(HISTORICAL_DLT_PDF_TEXT),
+                ) { request ->
+                    when (request.url.encodedPath) {
+                        DLT_MAIN_PATH -> {
+                            jsonResponse(
+                                DrawContractFixtures.superLottoMain(
+                                    issue = "26090",
+                                    numbers = "09 14 17 19 24 02 09",
+                                    drawDate = "2026-08-10",
+                                    promotionFlag = 1,
+                                    firstAdditionalCount = "1",
+                                    firstAdditionalAmount = "8,000,000",
+                                    extraPrizeNames = DrawContractFixtures.DEFAULT_DLT_PROMOTION_PRIZE_NAMES,
+                                ),
+                            )
+                        }
+
+                        DLT_SUPPORTING_PATH -> {
+                            jsonResponse(DrawContractFixtures.superLottoSupporting(issue = "26091"))
+                        }
+
+                        DLT_PDF_PATH -> {
+                            pdfResponse(SuperLottoAnnouncementTestFixtures.validPdfEnvelope())
+                        }
+
+                        else -> {
+                            error("收到未预期请求：${request.url}")
+                        }
+                    }
+                }
+            val draw =
+                assertIs<DrawQueryResult.Success>(
+                    repository.getDraw(LotteryType.SUPER_LOTTO, Issue("26090")),
+                ).drawResult
+            val ticket =
+                ConfirmedTicket(
+                    lotteryType = confirmed(LotteryType.SUPER_LOTTO),
+                    issue = confirmed(Issue("26090")),
+                    betLines =
+                        listOf(
+                            BetLine(
+                                primaryNumbers = confirmed(listOf(9, 14, 17, 19, 24)),
+                                secondaryNumbers = confirmed(listOf(2, 9)),
+                                isAdditional = confirmed(false),
+                                originalText = "派奖期端到端测试投注行",
+                            ),
+                        ),
+                    multiplier = confirmed(1),
+                    periodCount = confirmed(1),
+                    paidAmountFen = confirmed(200L),
+                )
+
+            val prizeCheck = LotteryPrizeCalculator().calculate(ticket, draw)
+
+            assertEquals(DrawStatus.FINAL_NUMBERS, draw.status)
+            assertEquals(PrizeCheckStatus.WIN, prizeCheck.status)
+            assertEquals(PrizeTierCodes.FIRST, prizeCheck.lineResults.single().prizeTierCode)
+            assertNull(prizeCheck.estimatedPrizeFen)
         }
 
     /** PDF 公告与主记录号码不一致时必须进入冲突，不能形成开奖结果。 */

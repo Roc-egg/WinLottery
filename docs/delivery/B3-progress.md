@@ -8,7 +8,7 @@
 
 B3 已打通 Android 和 iOS 的“系统选图或拍照 → 私有去元数据副本 → 分辨率与像素质量闸门 → 本地 OCR → 共享保守解析 → 人工校正页”纵向链路，并按 ADR-018 纳入个人自用 V1 已关闭基线；Android CameraX 和 iOS AVFoundation 的核心拍照流程已有真机证据。移动端 OCR 已从 Android ML Kit 与 iOS Vision 切换为统一的 PP-OCRv5 mobile 三段 ONNX 流水线，共用检测、方向分类、文字识别、字符字典和后处理。此前 13 张探索图的 ML Kit/Vision 匿名分数只保留为历史基线，不能用于新引擎的阈值或准确率结论。移动端仍可保守拒绝严重整体过暗、严重整体过亮、明显全局模糊、关键印刷内容疑似贴边裁切、明显梯形透视和明显画面倾斜；裁切与透视规则的真实场景准确率、阴影、局部反光、自动旋转和透视校正、PP-OCRv5 真值标注及批量准确率统计仍决定对外自动识别能力声明，但不阻塞 V1.1。
 
-Windows/macOS 已在共用 JVM 宿主中接入同一套 PP-OCRv5 模型、字符字典、共享预后处理和保守解析，并补齐系统导图、像素质量检查、原图校正预览、官网开奖、AI、Room 与逻辑包导入导出。ONNX Runtime 只在显式禁用遥测的隔离子进程中加载；macOS arm64 最终 `.app` 与 DMG 已完成真实成品验收。Windows x64 的应用数据路径、MSI 构建和最终 `.exe` 双验收已写入 `windows-2025` 工作流，仍需在代码推送后取得 Windows runner 的实际通过证据。
+Windows/macOS 已在共用 JVM 宿主中接入同一套 PP-OCRv5 模型、字符字典、共享预后处理和保守解析，并补齐系统导图、像素质量检查、原图校正预览、官网开奖、AI、Room 与逻辑包导入导出。ONNX Runtime 只在显式禁用遥测的隔离子进程中加载；macOS arm64 最终 `.app` 与 DMG 已完成真实成品验收，Windows 11 x64 也已在本机完成 MSI 构建和最终 `.exe` 双验收。`windows-2025` 工作流仍需在代码推送后取得独立 runner 证据。
 
 当前支持白名单保持为空。本进展不能解释为支持任何省份、销售终端、版式或真实中奖判断。
 
@@ -55,6 +55,7 @@ Windows/macOS 已在共用 JVM 宿主中接入同一套 PP-OCRv5 模型、字符
 - 桌面父进程只把随机 UUID 写入匿名标准输入，图片路径不进入命令行；子进程通过匿名标准输出返回进度和结构化 OCR 文档，标准错误被丢弃，票图与 OCR 文本不写日志或持久化。
 - OCR 子进程支持页面取消、180 秒超时、正常终止和强制回收；普通 UI 主进程不加载 ONNX Runtime，也不会在健康检查或失败信息中暴露设备、路径或票面字段。
 - 桌面容器已接入真实官网开奖、历史走势、会话级 AI、Room 记录和逻辑票据包导入导出。macOS 数据写入用户 Application Support；Windows 依次使用 `%LOCALAPPDATA%`、`%APPDATA%` 和用户目录。
+- Windows MSI 使用当前用户安装范围，固定跨版本 UpgradeCode，并创建开始菜单入口；只读验证任务会检查 x64、版本、厂商、安装目录、快捷方式和关键 OCR 载荷。
 
 ### 共享流程
 
@@ -126,7 +127,7 @@ Windows/macOS 已在共用 JVM 宿主中接入同一套 PP-OCRv5 模型、字符
 - 当前仍没有不同手机、距离、角度和光线下成组拍摄的质量真值；确定性变体只能证明规则边界和双端一致性，不能替代真实场景误拒率与漏检率统计。
 - 2026-09-04 在 macOS arm64 执行 `spotlessCheck`、共享 JVM、Android Host、iOS Simulator、DMG 和两项桌面成品任务，共 173 个 Gradle 任务通过；最终启动器返回 `WINLOTTERY_ONNX_RUNTIME_CLIENT_OK 1.29.0 CPU` 与 `WINLOTTERY_DESKTOP_OCR_CLIENT_OK`。
 - `verifyPackagedDesktopOcr` 使用不含真实票面内容的确定性合成票面，覆盖最终 `.app` 启动器、四段模型、两份字典、无遥测子进程、共享后处理和保守解析；模型锁独立复核通过。
-- macOS 产物为 `WinLottery-1.3.0.dmg`，本轮实际生成并完成内部启动器验收。Windows x64 共用代码、路径回退测试和 CI 配置已通过本机可执行部分验证，但 MSI 与最终 `.exe` 仍必须由 `windows-2025` runner 实际执行后才能记为 Windows 成品通过。
+- macOS 产物为 `WinLottery-1.3.0.dmg`，本轮实际生成并完成内部启动器验收。Windows 11 x64 本机已生成桌面补丁包 `WinLottery-1.3.1.msi`，当前用户安装固定至 LocalAppData 且不再开放自选盘符；Windows ICO 与 macOS ICNS 均由移动端 1024 px 品牌 AppIcon 生成。最终 `.exe` 返回 `WINLOTTERY_ONNX_RUNTIME_CLIENT_OK 1.29.0 CPU` 与 `WINLOTTERY_DESKTOP_OCR_CLIENT_OK`；该证据仍不能替代 `windows-2025` runner 和干净系统安装验收。
 
 ## 对外能力声明与后续优化范围
 
@@ -134,11 +135,11 @@ Windows/macOS 已在共用 JVM 宿主中接入同一套 PP-OCRv5 模型、字符
 - 初步裁切与透视规则的真实场景误拒率与漏检率、完整彩票轮廓、阴影、局部反光及更复杂的局部或运动模糊检测。
 - 自动旋转、透视校正、增强候选图和号码区域二次识别；当前倾斜与裁切能力只负责阻断，不会修改原图。
 - 移动端 PP-OCRv5 工程接入已完成；真实票逐 token 双人真值、不同拍摄条件批量准确率、置信度校准、低端设备峰值内存、物理真机冷/热 P95 和发布包 ABI/体积验收仍未完成。
-- Windows x64 最终分发启动器尚未取得实际 runner 通过证据；自构建 `--no_telemetry` 制品仍可作为后续纵深防护评估项。
+- Windows x64 最终分发启动器已取得本机通过证据，但尚未取得独立 `windows-2025` runner 证据；自构建 `--no_telemetry` 制品仍可作为后续纵深防护评估项。
 - ONNX Runtime 目标平台裁剪、正式发布包许可证归档、公证和卸载验证。
 - 彩种、期号、投注行、倍数、追加、期数、金额的原图区域、解析候选值和原始置信度聚合已经接入 B4，并建立当前 13 图的分平台初步分布；逐 token 真值、正确/错误条件分布、平台分别校准、低置信视觉标记和足量样本仍未完成。
 - PP-OCRv5 置信度校准、准确率统计、Android/iOS 物理真机运行时差异评估和真实票连续识别稳定性测试。
-- 桌面 ZXing、Windows 干净系统连续导入、MSI 安装/卸载、代码签名，以及 macOS Developer ID、公证与卸载仍待独立验收，不属于移动 V1 闸门。
+- 桌面 ZXing、Windows 干净系统连续导入、MSI 安装、升级、降级阻断与卸载、代码签名，以及 macOS Developer ID、公证与卸载仍待独立验收，不属于移动 V1 闸门。
 
 ## 票样与验收差距
 
@@ -153,7 +154,7 @@ Windows/macOS 已在共用 JVM 宿主中接入同一套 PP-OCRv5 模型、字符
 - `spotlessCheck`、共享 JVM 测试、Android Host 测试、iOS Simulator 测试、iOS arm64 Framework 链接和 Android Debug APK 构建均已通过；模型资源测试逐项校验三份 ONNX 与字符字典的字节数和 SHA-256。
 - Android Debug APK 约 140 MB，包含四套 ABI；iOS Simulator Debug `.app` 约 114 MB，包含三份模型、字符字典和 `onnxruntime.framework`。二者均为开发产物，不能替代正式 AAB/IPA 的按设备下载体积验收。
 - `tools/mobile/run-current-vm-performance-checks.sh` 已在锁定的 Android 16 与 iOS 26.5 模拟器完整通过：Android 20 次设备测试成功，iOS Debug 20 次应用内真实推理成功，iOS Debug/Release 均从干净派生目录构建，Release 未启用 Debug 性能入口，脚本退出前已恢复 Release 应用并删除临时产物。
-- 本轮已重新构建 macOS arm64 DMG，并从最终分发启动器完成 ONNX Runtime 与真实 OCR 双验收；Windows MSI 和 `.exe` 验收已交由 `windows-2025` 工作流，尚未因本机 macOS 结果而提前标记通过。
+- 本轮已重新构建 macOS arm64 DMG，并从最终分发启动器完成 ONNX Runtime 与真实 OCR 双验收；Windows 11 x64 也已生成 MSI 并完成最终 `.exe` 双验收和 MSI 元数据检查，但尚未据此宣称完成独立 runner、真实票、安装/升级/降级/卸载或签名验收。
 - 本轮已使用现有 13 张探索图测量 PP-OCRv5 的 OCR 文档形成率、保守解析完整度和模拟器耗时；由于没有逐字段、逐 token 双人真值，仍不能报告号码准确率，也未完成 Android/iPhone 物理真机性能、低端设备峰值内存和正式 AAB/IPA 体积验收。
 
 ## 后续优化候选

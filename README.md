@@ -4,7 +4,7 @@
   <p><strong>基于 Kotlin Multiplatform 的纸质彩票识别与中奖测算工具</strong></p>
   <p>Android 与 iOS 共享业务规则、数据访问、结构化存储和 Compose Multiplatform 界面。</p>
   <p>
-    <img alt="当前版本" src="https://img.shields.io/badge/version-1.3.0-2f7d32">
+    <img alt="当前版本" src="https://img.shields.io/badge/version-1.3.1-2f7d32">
     <img alt="项目状态" src="https://img.shields.io/badge/status-V1.4%20in%20progress-d97706">
     <img alt="技术架构" src="https://img.shields.io/badge/Kotlin-Multiplatform-7f52ff">
     <img alt="目标平台" src="https://img.shields.io/badge/platform-Android%20%7C%20iOS-1565c0">
@@ -22,7 +22,7 @@
 
 ## 项目总进度
 
-更新日期：2026-08-27。当前稳定版本为 `1.3.0 (5)`，V1、V1.1、V1.2 与 V1.3 均已按各自个人自用基线完成关闭；V1.4 已立项推进，V1.5 尚未开始。
+更新日期：2026-09-04。当前稳定版本为 `1.3.1 (6)`，在 V1.3 已关闭能力上修复大乐透派奖期判级、Windows 当前用户安装生命周期和桌面品牌图标，并同时提供 Android、iOS、macOS 与 Windows 发布包。V1.4 已立项推进，V1.5 尚未开始。
 
 | 状态 | 版本数量 | 当前范围 |
 |---|---:|---|
@@ -60,6 +60,7 @@ V1.4 已按 ADR-025 立项。首发在 V1.3 当前会话的规范化开奖数据
 | 随机选号 | 大乐透、双色球合法随机号码；`1..20` 期、每期 `1..10` 注、最多 `200` 注及受控跨期模式 |
 | 历史走势 | 大乐透前后区、双色球红蓝球；官方最新期向前 `50 / 80 / 120 / 300 / 500` 期及遗漏统计 |
 | 数学研究 | 固定频次遗漏策略、下一期候选、450 期样本外前推回测、精确随机基线与责任说明 |
+| 桌面预览 | Windows/macOS 系统导图、本地 PP-OCRv5、人工校正、官网查询、Room 与逻辑包交换 |
 | 工程交付 | KMP 独立宿主与 `:shared` 架构、CI、R8 Release、签名 APK、未签名真机 IPA 和双虚拟机回归 |
 
 ## 支持范围
@@ -70,7 +71,7 @@ V1.4 已按 ADR-025 立项。首发在 V1.3 当前会话的规范化开奖数据
 | 1 至 20 期连续票 | 超过 20 期或跨年度未知期号序列 |
 | 单式、多注单式、倍数、大乐透追加 | 复式、胆拖及未知票型 |
 | Android 与 iOS 个人自用 | 应用市场公开分发、完整真机矩阵和商用数据授权 |
-| Windows/macOS 工程与 OCR 底座 | 桌面真实 OCR、目标平台裁剪、签名和正式分发 |
+| Windows/macOS 系统导图与共享本地 OCR 预览 | 桌面真实票准确率、目标平台裁剪、签名和正式分发 |
 
 自动识别结果始终需要用户确认。任何期号、号码、金额、开奖证据或规则状态不完整时，应用不会输出确定的“未中奖”结论。
 
@@ -114,8 +115,9 @@ V1.4 已按 ADR-025 立项。首发在 V1.3 当前会话的规范化开奖数据
 - 验收时官网最新期为大乐透 `26096`、双色球 `2026098`；500 期大乐透样本为 `23049..26096`，没有使用静态演示期号。
 - V1 至 V1.2 的最大字号、`200` 注边界、双色球逐期独立、V1.1 记录往返、横竖屏与固定虚拟机回归结论继续保留。
 - `1.2.0 (4)` 至 `1.3.0 (5)` 的双端 Release 覆盖升级验证通过，真实 Room 记录与匿名数据完整保留，升级遗留临时票图已清扫。
+- Windows 11 x64 已构建桌面补丁包 `WinLottery-1.3.1.msi`，Windows ICO 与 macOS ICNS 均由 Android/iOS 的 1024 px 品牌 AppIcon 生成；最终 `.exe` 的 ONNX Runtime `1.29.0` CPU 探针与合成票面 PP-OCRv5 验收通过。MSI 元数据检查覆盖 x64、固定至 LocalAppData 的当前用户安装、禁止自选盘符、开始菜单、固定升级标识和关键 OCR 载荷。
 
-上述结果不代表生产 IPA、应用商店上架、所有真机型号、运营商网络或公开分发合规已经完成。
+上述结果不代表生产 IPA、应用商店上架、所有真机型号、运营商网络或公开分发合规已经完成。Windows MSI 仍未完成干净系统安装、升级、降级阻断与卸载，真实票连续导入、代码签名或 SmartScreen 验收。
 
 ## 本地构建
 
@@ -126,6 +128,9 @@ V1.4 已按 ADR-025 立项。首发在 V1.3 当前会话的规范化开奖数据
 # macOS/Windows 桌面开发入口
 ./gradlew :desktopApp:run
 
+# Windows x64 MSI、安装元数据和最终启动器本地 OCR 验收
+.\gradlew.bat :desktopApp:verifyPackagedWindowsMsi :desktopApp:verifyPackagedOnnxRuntime :desktopApp:verifyPackagedDesktopOcr
+
 # 共享测试矩阵
 ./gradlew spotlessCheck jvmTest testAndroidHostTest iosSimulatorArm64Test
 
@@ -135,7 +140,7 @@ V1.4 已按 ADR-025 立项。首发在 V1.3 当前会话的规范化开奖数据
 
 iOS 使用 Xcode 打开 `iosApp/iosApp.xcodeproj`，构建 `iosApp` Scheme。固定虚拟机脚本会校验精确设备身份，目标不匹配时直接停止，不会回退到其他 ADB 或 iOS 设备。
 
-当前 GitHub Release 只发布 Android `arm64-v8a` 签名 APK，不再构建或上传 AAB；iOS 发布 `iphoneos arm64` 未签名 IPA。未签名 IPA 不能直接安装，使用者必须自行准备有效证书和描述文件完成重新签名，且设备系统版本不得低于工程声明的最低 iOS 版本。
+`v1.3.1` 起，GitHub Release 同时发布 Android `arm64-v8a` 签名 APK、iOS `iphoneos arm64` 未签名 IPA、macOS Apple Silicon 未签名 DMG 和 Windows x64 未签名 MSI，并附统一 SHA-256 清单。未签名 IPA 不能直接安装，使用者必须自行准备有效证书和描述文件完成重新签名；桌面预览包尚未完成 Developer ID、公证或 Authenticode 签名，系统可能要求手动确认来源。
 
 ## 项目文档
 
