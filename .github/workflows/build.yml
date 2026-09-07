@@ -27,7 +27,7 @@ jobs:
           distribution: zulu
           java-version: "21"
       - name: 配置 Gradle
-        uses: gradle/actions/setup-gradle@67621b124fd2e251c5e8a0e6e3b91318f2287669 # v6.3.0
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
       - name: 校验 Desktop OCR 模型锁
         run: python3 tools/desktop-ocr/convert_ppocrv5.py --verify-lock-only
       - name: 运行格式检查和共享测试矩阵
@@ -56,7 +56,7 @@ jobs:
           distribution: zulu
           java-version: "21"
       - name: 配置 Gradle
-        uses: gradle/actions/setup-gradle@67621b124fd2e251c5e8a0e6e3b91318f2287669 # v6.3.0
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
       - name: 校验 Desktop OCR 模型锁
         run: python tools/desktop-ocr/convert_ppocrv5.py --verify-lock-only
       - name: 运行共享测试
