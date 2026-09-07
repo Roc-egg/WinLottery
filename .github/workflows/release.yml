@@ -14,6 +14,7 @@ on:
         options:
           - dry-run
           - publish
+          - apple-only
       tag:
         description: publish 模式必填已存在的稳定版本标签，例如 v1.4.0
         required: false
@@ -41,7 +42,7 @@ jobs:
       - name: 检出待验证版本
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'publish' && inputs.tag || github.sha }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -79,7 +80,7 @@ jobs:
           publish=true
           requested_tag="$EVENT_TAG"
           if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
-            if [[ "$INPUT_MODE" == "publish" ]]; then
+            if [[ "$INPUT_MODE" == "publish" || "$INPUT_MODE" == "apple-only" ]]; then
               requested_tag="$INPUT_TAG"
               if [[ -z "$requested_tag" ]]; then
                 echo "::error title=缺少版本标签::publish 模式必须填写已存在的稳定版本标签"
@@ -116,6 +117,8 @@ jobs:
             echo "version=$android_version"
             echo "build_number=$android_build"
             echo "commit=$head_commit"
+            # 单独补打 Apple 包时保留标签校验，但不自动发布不完整的版本。
+            [[ "$INPUT_MODE" != "apple-only" ]] || publish=false
             echo "publish=$publish"
           } >> "$GITHUB_OUTPUT"
 
@@ -265,8 +268,8 @@ jobs:
             --console=plain
 
           mount_dir="$(mktemp -d)"
-          # 直接检查将发布的 DMG，避免另建一份应用目录。
-          hdiutil attach "desktopApp/build/compose/binaries/main/dmg/WinLottery-${EXPECTED_VERSION}.dmg" -nobrowse -readonly -mountpoint "$mount_dir"
+          # 自动接受包内许可证，避免无交互 runner 取消挂载。
+          printf 'Y\n' | hdiutil attach "desktopApp/build/compose/binaries/main/dmg/WinLottery-${EXPECTED_VERSION}.dmg" -nobrowse -readonly -mountpoint "$mount_dir"
           trap 'hdiutil detach "$mount_dir" >/dev/null' EXIT
           app="$mount_dir/WinLottery.app"
           info_plist="$app/Contents/Info.plist"
@@ -310,6 +313,8 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: 上传 Apple 平台发布候选产物
+        # 即使后续校验失败，也保留已经完成的安装包供排查和恢复发布。
+        if: ${{ !cancelled() && steps.ios_package.outcome == 'success' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: WinLottery-${{ needs.metadata.outputs.tag }}-apple
@@ -320,6 +325,7 @@ jobs:
 
   android_release:
     name: 构建 Android Release
+    if: inputs.mode != 'apple-only'
     needs: metadata
     runs-on: ubuntu-24.04
     timeout-minutes: 35
@@ -429,6 +435,7 @@ jobs:
 
   windows_release:
     name: 构建 Windows Release
+    if: inputs.mode != 'apple-only'
     needs: metadata
     runs-on: windows-2025
     timeout-minutes: 45
@@ -491,6 +498,15 @@ jobs:
           - 签名：``$signing``
           - 品牌图标：与 Android/iOS AppIcon 一致
           "@ | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+
+      # jpackage 将底层错误写入文件；直接展示日志，避免为收集错误再次打包。
+      - name: 显示 Windows 打包失败日志
+        if: failure()
+        shell: pwsh
+        run: |
+          Get-ChildItem desktopApp/build/compose -Recurse -Filter *.txt -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match 'logs' } |
+            ForEach-Object { Write-Output $_.FullName; Get-Content -LiteralPath $_.FullName }
 
       - name: 上传 Windows 发布候选产物
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
