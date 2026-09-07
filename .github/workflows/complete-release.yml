@@ -1,0 +1,108 @@
+# 仅用于失败发布的收尾：复用已构建安装包，不重新运行编译和测试。
+name: 汇总已有安装包完成发布
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 已存在且仍为草稿的版本标签
+        required: true
+        type: string
+      android_run:
+        description: Android 安装包所在的工作流运行编号
+        required: true
+        type: string
+      apple_run:
+        description: Apple 安装包所在的成功工作流运行编号
+        required: true
+        type: string
+      windows_sha256:
+        description: 已验证并上传草稿的 Windows MSI 校验和
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: complete-release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: github-release
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ inputs.tag }}
+      ANDROID_RUN: ${{ inputs.android_run }}
+      APPLE_RUN: ${{ inputs.apple_run }}
+      WINDOWS_SHA256: ${{ inputs.windows_sha256 }}
+    steps:
+      - name: 检出版本以核验产物来源
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: 复核草稿及构建来源
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$ANDROID_RUN" =~ ^[0-9]+$ && "$APPLE_RUN" =~ ^[0-9]+$ ]]
+          [[ "$WINDOWS_SHA256" =~ ^[[:xdigit:]]{64}$ ]]
+          gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft' | grep -Fx true
+          commit="$(git rev-parse HEAD)"
+          android_commit="$(gh api "repos/$GH_REPO/actions/runs/$ANDROID_RUN" --jq '.head_sha')"
+          [[ "$commit" == "$android_commit" ]]
+          gh api "repos/$GH_REPO/actions/runs/$APPLE_RUN" --jq '.conclusion' | grep -Fx success
+          # Apple 补打使用新版工作流，但应用源码必须与版本标签完全一致。
+          apple_commit="$(gh api "repos/$GH_REPO/actions/runs/$APPLE_RUN" --jq '.head_sha')"
+          git diff --exit-code "$commit" "$apple_commit" -- . ':!.github/workflows'
+          echo "RELEASE_COMMIT=$commit" >> "$GITHUB_ENV"
+
+      - name: 复用 Android 安装包
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: WinLottery-${{ inputs.tag }}-android
+          run-id: ${{ inputs.android_run }}
+          github-token: ${{ github.token }}
+          path: release-assets
+
+      - name: 复用 Apple 安装包
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: WinLottery-${{ inputs.tag }}-apple
+          run-id: ${{ inputs.apple_run }}
+          github-token: ${{ github.token }}
+          path: release-assets
+
+      - name: 汇总四平台并发布草稿
+        run: |
+          set -euo pipefail
+          windows="WinLottery-${RELEASE_TAG}-windows-x64.msi"
+          gh release download "$RELEASE_TAG" --pattern "$windows" --dir release-assets
+          cd release-assets
+          printf '%s  %s\n' "$WINDOWS_SHA256" "$windows" | sha256sum --check
+          assets=("WinLottery-${RELEASE_TAG}-android-arm64-v8a.apk" "WinLottery-${RELEASE_TAG}-ios-arm64-unsigned.ipa" "WinLottery-${RELEASE_TAG}-macos-arm64.dmg" "$windows")
+          for asset in "${assets[@]}"; do [[ -s "$asset" ]]; done
+          # 明确记录恢复来源，不把本机 MSI 误标为 Actions 构建。
+          printf 'tag=%s\ncommit=%s\nandroid_run=%s\napple_run=%s\nwindows_build=local-verified-msi\nios_signing=unsigned\nmacos_signing=unsigned\nwindows_signing=unsigned\n' \
+            "$RELEASE_TAG" "$RELEASE_COMMIT" "$ANDROID_RUN" "$APPLE_RUN" > RELEASE-METADATA.txt
+          sha256sum "${assets[@]}" RELEASE-METADATA.txt > SHA256SUMS.txt
+          sha256sum --check SHA256SUMS.txt
+          gh release upload "$RELEASE_TAG" "${assets[0]}" "${assets[1]}" "${assets[2]}" RELEASE-METADATA.txt SHA256SUMS.txt
+          # 所有附件上传完成后才公开，避免用户下载到不完整版本。
+          gh release edit "$RELEASE_TAG" --draft=false --latest --title "WinLottery ${RELEASE_TAG#v}" --notes "修复派奖期中奖等级查询、Windows 安装配置，以及 Windows/macOS 与移动端图标的一致性。
+
+          Android：arm64-v8a 签名 APK。
+          iOS：arm64 未签名 IPA，需要使用自己的有效证书和描述文件重新签名，不能直接安装。
+          macOS：Apple Silicon arm64 未签名 DMG。
+          Windows：x64 MSI，安装到当前用户 LocalAppData，未签名。
+
+          桌面安装包未签名或未公证，系统可能提示确认来源。安装前可用 SHA256SUMS.txt 核对完整性。"
+          gh release view "$RELEASE_TAG" --json url --jq '.url' >> "$GITHUB_STEP_SUMMARY"
