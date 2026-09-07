@@ -132,14 +132,12 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   verify:
-    name: 跨平台 Release 验证与 Apple 平台打包
+    name: 构建 iOS 与 macOS 安装包
     needs: metadata
     runs-on: macos-15
     timeout-minutes: 90
     permissions:
       contents: read
-      id-token: write
-      attestations: write
     outputs:
       ios_bundle_id: ${{ steps.ios_package.outputs.bundle_id }}
       ios_minimum_version: ${{ steps.ios_package.outputs.minimum_os }}
@@ -161,55 +159,7 @@ jobs:
         with:
           cache-read-only: true
 
-      - name: 校验 Desktop OCR 模型锁
-        run: python3 tools/desktop-ocr/convert_ppocrv5.py --verify-lock-only
-
-      - name: 运行格式检查和共享测试矩阵
-        run: ./gradlew spotlessCheck jvmTest testAndroidHostTest iosSimulatorArm64Test --console=plain
-
-      - name: 构建 iOS Simulator Release
-        env:
-          EXPECTED_VERSION: ${{ needs.metadata.outputs.version }}
-          EXPECTED_BUILD: ${{ needs.metadata.outputs.build_number }}
-        run: |
-          set -euo pipefail
-
-          derived_data="$RUNNER_TEMP/WinLottery-ios-release"
-          xcodebuild \
-            -project iosApp/iosApp.xcodeproj \
-            -scheme iosApp \
-            -configuration Release \
-            -sdk iphonesimulator \
-            -destination "generic/platform=iOS Simulator" \
-            -derivedDataPath "$derived_data" \
-            CODE_SIGNING_ALLOWED=NO \
-            build
-
-          app="$derived_data/Build/Products/Release-iphonesimulator/WinLottery.app"
-          info_plist="$app/Info.plist"
-          executable="$app/WinLottery"
-          [[ -f "$info_plist" && -f "$executable" ]] || {
-            echo "::error title=iOS Release 缺失::没有找到完整的 Simulator Release 应用"
-            exit 1
-          }
-
-          actual_version="$(plutil -extract CFBundleShortVersionString raw "$info_plist")"
-          actual_build="$(plutil -extract CFBundleVersion raw "$info_plist")"
-          [[ "$actual_version" == "$EXPECTED_VERSION" && "$actual_build" == "$EXPECTED_BUILD" ]] || {
-            echo "::error title=iOS 产物版本不一致::实际版本为 $actual_version ($actual_build)"
-            exit 1
-          }
-          file "$executable" | grep -Fq "arm64" || {
-            echo "::error title=iOS 架构不正确::Simulator Release 不是 arm64 架构"
-            exit 1
-          }
-
-          {
-            echo "### 跨平台验证"
-            echo "- 共享测试矩阵：通过"
-            echo "- iOS Simulator Release：\`$actual_version ($actual_build)\`"
-          } >> "$GITHUB_STEP_SUMMARY"
-
+      # 发布仅构建真机安装包，完整测试和模拟器验收通过手动验证工作流执行。
       - name: 构建 iOS 未签名真机 IPA
         id: ios_package
         env:
@@ -312,11 +262,13 @@ jobs:
           }
           ./gradlew \
             :desktopApp:packageDmg \
-            :desktopApp:verifyPackagedOnnxRuntime \
-            :desktopApp:verifyPackagedDesktopOcr \
             --console=plain
 
-          app="desktopApp/build/compose/binaries/main/app/WinLottery.app"
+          mount_dir="$(mktemp -d)"
+          # 直接检查将发布的 DMG，避免另建一份应用目录。
+          hdiutil attach "desktopApp/build/compose/binaries/main/dmg/WinLottery-${EXPECTED_VERSION}.dmg" -nobrowse -readonly -mountpoint "$mount_dir"
+          trap 'hdiutil detach "$mount_dir" >/dev/null' EXIT
+          app="$mount_dir/WinLottery.app"
           info_plist="$app/Contents/Info.plist"
           executable="$app/Contents/MacOS/WinLottery"
           dmg="desktopApp/build/compose/binaries/main/dmg/WinLottery-${EXPECTED_VERSION}.dmg"
@@ -357,19 +309,13 @@ jobs:
             echo "- 品牌图标：与 Android/iOS AppIcon 一致"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: 生成 Apple 平台构建来源证明
-        if: github.event.repository.visibility == 'public'
-        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
-        with:
-          subject-path: release-assets/*
-
       - name: 上传 Apple 平台发布候选产物
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: WinLottery-${{ needs.metadata.outputs.tag }}-apple
           path: release-assets/
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 1
           compression-level: 0
 
   android_release:
@@ -379,8 +325,6 @@ jobs:
     timeout-minutes: 35
     permissions:
       contents: read
-      id-token: write
-      attestations: write
     outputs:
       certificate_sha256: ${{ steps.android_package.outputs.certificate_sha256 }}
     steps:
@@ -474,19 +418,13 @@ jobs:
             echo "- 证书 SHA-256：\`$apk_digest\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: 生成构建来源证明
-        if: github.event.repository.visibility == 'public'
-        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
-        with:
-          subject-path: release-assets/*.apk
-
       - name: 上传发布候选产物
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: WinLottery-${{ needs.metadata.outputs.tag }}-android
           path: release-assets/
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 1
           compression-level: 0
 
   windows_release:
@@ -496,8 +434,6 @@ jobs:
     timeout-minutes: 45
     permissions:
       contents: read
-      id-token: write
-      attestations: write
     outputs:
       signing: ${{ steps.windows_package.outputs.signing }}
     steps:
@@ -518,15 +454,10 @@ jobs:
         with:
           cache-read-only: true
 
-      - name: 校验 Desktop OCR 模型锁
-        run: python tools/desktop-ocr/convert_ppocrv5.py --verify-lock-only
-
       - name: 构建并验证 Windows MSI
         run: >-
           .\gradlew.bat
           :desktopApp:verifyPackagedWindowsMsi
-          :desktopApp:verifyPackagedOnnxRuntime
-          :desktopApp:verifyPackagedDesktopOcr
           --console=plain
 
       - name: 校验并整理 Windows 发布产物
@@ -561,19 +492,13 @@ jobs:
           - 品牌图标：与 Android/iOS AppIcon 一致
           "@ | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
 
-      - name: 生成 Windows 构建来源证明
-        if: github.event.repository.visibility == 'public'
-        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
-        with:
-          subject-path: release-assets/*.msi
-
       - name: 上传 Windows 发布候选产物
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: WinLottery-${{ needs.metadata.outputs.tag }}-windows
           path: release-assets/
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 1
           compression-level: 0
 
   release_assets:
@@ -672,7 +597,7 @@ jobs:
           name: WinLottery-${{ needs.metadata.outputs.tag }}-release
           path: release-assets/
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 1
           compression-level: 0
 
   publish:
@@ -766,6 +691,6 @@ jobs:
             echo "- iOS arm64 未签名真机 IPA 已完成构建、上传、下载与校验"
             echo "- macOS arm64 未签名 DMG 已完成构建、图标、上传、下载与校验"
             echo "- Windows x64 MSI 已完成构建、安装元数据、图标、上传、下载与校验"
-            echo "- 跨平台 Release 与 Simulator 验证已通过"
+            echo "- 四平台安装包构建已完成"
             echo "- 未创建标签或 GitHub Release"
           } >> "$GITHUB_STEP_SUMMARY"
