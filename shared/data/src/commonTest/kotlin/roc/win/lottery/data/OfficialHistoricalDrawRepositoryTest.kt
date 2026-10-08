@@ -12,15 +12,17 @@ import kotlinx.io.IOException
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import roc.win.lottery.domain.Issue
 import roc.win.lottery.domain.LotteryType
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Clock
 import kotlin.time.Instant
 
-/** 官网真实历史开奖仓库测试。 */
+/** 官网真实历史开奖与多期期次列表仓库测试。 */
 class OfficialHistoricalDrawRepositoryTest {
     /** 大乐透必须按官网每页 100 条分页并精确截取请求期数。 */
     @Test
@@ -127,6 +129,79 @@ class OfficialHistoricalDrawRepositoryTest {
             )
         }
 
+    /** 多期票跨年度时应按官网实际期号从上一年度末期接续到新年度首期。 */
+    @Test
+    fun drawnIssuesCrossYearBoundaryFromOfficialRanges() =
+        runTest {
+            val ranges = mutableListOf<String>()
+            val referers = mutableListOf<String?>()
+            val repository =
+                repository { request ->
+                    val start = requireNotNull(request.url.parameters["issueStart"])
+                    ranges += "$start-${request.url.parameters["issueEnd"]}"
+                    referers += request.headers[HttpHeaders.Referrer]
+                    val pageSize = requireNotNull(request.url.parameters["pageSize"]?.toIntOrNull())
+                    val issues = if (start == "2025150") listOf("2025151", "2025150") else listOf("2026001")
+                    jsonResponse(doubleColorBallPage(issues, pageSize))
+                }
+
+            val issues = repository.getDrawnIssues(LotteryType.DOUBLE_COLOR_BALL, Issue("2025150"), maxCount = 5)
+
+            assertEquals(listOf("2025150", "2025151", "2026001"), issues?.map { it.value })
+            assertEquals(listOf("2025150-2025154", "2026001-2026003"), ranges)
+            assertTrue(referers.all { it == "https://www.cwl.gov.cn/" })
+        }
+
+    /** 本年度后续期次尚未开奖且新年度无开奖时只返回已开奖前缀。 */
+    @Test
+    fun drawnIssuesStopAtUndrawnPeriodsWithinYear() =
+        runTest {
+            val starts = mutableListOf<String>()
+            val repository =
+                repository { request ->
+                    val start = requireNotNull(request.url.parameters["startTerm"])
+                    starts += start
+                    val issues = if (start == "26115") listOf("26116", "26115") else emptyList()
+                    jsonResponse(superLottoPage(pageNo = 1, total = issues.size, issues = issues))
+                }
+
+            val issues = repository.getDrawnIssues(LotteryType.SUPER_LOTTO, Issue("26115"), maxCount = 10)
+
+            assertEquals(listOf("26115", "26116"), issues?.map { it.value })
+            assertEquals(listOf("26115", "27001"), starts)
+        }
+
+    /** 福彩区间内无开奖时的“没有查到数据”表示起始期尚未开奖，不需要再查新年度。 */
+    @Test
+    fun emptyDoubleColorBallRangeMeansFirstIssueNotDrawn() =
+        runTest {
+            var requestCount = 0
+            val repository =
+                repository {
+                    requestCount += 1
+                    jsonResponse(
+                        """{"state":1,"message":"查询失败，没有查到数据","total":0,"pageNo":1,"pageSize":10,"result":[]}""",
+                    )
+                }
+
+            val issues = repository.getDrawnIssues(LotteryType.DOUBLE_COLOR_BALL, Issue("2026120"), maxCount = 10)
+
+            assertEquals(emptyList(), issues)
+            assertEquals(1, requestCount)
+        }
+
+    /** 官网区间结果断档时不得采用，调用方回退为本年度顺延。 */
+    @Test
+    fun nonContiguousDrawnIssuesAreRejected() =
+        runTest {
+            val repository =
+                repository {
+                    jsonResponse(superLottoPage(pageNo = 1, total = 2, issues = listOf("26117", "26115")))
+                }
+
+            assertNull(repository.getDrawnIssues(LotteryType.SUPER_LOTTO, Issue("26115"), maxCount = 5))
+        }
+
     /** 创建固定时钟和 MockEngine 的官网仓库。 */
     private fun repository(
         handler: suspend MockRequestHandleScope.(io.ktor.client.request.HttpRequestData) ->
@@ -178,16 +253,19 @@ class OfficialHistoricalDrawRepositoryTest {
             put("lotteryDrawStatus", 20)
             put("lotteryNotice", 1)
             put("lotteryDrawNum", issue)
-            put("lotteryDrawTime", "2026-01-01")
+            put("lotteryDrawTime", "20${issue.take(2)}-01-01")
             put("lotteryDrawResult", "01 02 03 04 05 01 02")
         }
 
     /** 构造双色球历史分页响应。 */
-    private fun doubleColorBallPage(issues: List<String>): String =
+    private fun doubleColorBallPage(
+        issues: List<String>,
+        pageSize: Int = issues.size,
+    ): String =
         buildJsonObject {
             put("state", 0)
             put("pageNo", 1)
-            put("pageSize", issues.size)
+            put("pageSize", pageSize)
             put("total", issues.size)
             put(
                 "result",
@@ -197,7 +275,7 @@ class OfficialHistoricalDrawRepositoryTest {
                             buildJsonObject {
                                 put("name", "双色球")
                                 put("code", issue)
-                                put("date", "2026-01-01(日)")
+                                put("date", "${issue.take(4)}-01-01(日)")
                                 put("detailsLink", "/c/2026/01/01/$issue.shtml")
                                 put("red", "01,02,03,04,05,06")
                                 put("blue", "01")

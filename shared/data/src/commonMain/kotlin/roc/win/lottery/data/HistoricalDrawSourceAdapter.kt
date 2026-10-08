@@ -63,12 +63,17 @@ internal object HistoricalDrawSourceAdapter {
             val root =
                 DrawJson.parseToJsonElement(rawJson).objectOrNull()
                     ?: return@parseSafely failure("双色球历史响应不是 JSON 对象")
-            if (root.int("state") != SUCCESS_STATE) {
+            val isEmptyRange = root.text("message").orEmpty().contains(NO_DATA_MESSAGE)
+            // 期号区间内尚无开奖时福彩返回业务失败和“没有查到数据”，按空页处理。
+            if (root.int("state") != SUCCESS_STATE && !isEmptyRange) {
                 return@parseSafely failure("双色球历史接口返回业务失败")
             }
             val metadata =
                 parsePageMetadata(root, expectedPageNo)
                     ?: return@parseSafely failure("双色球历史响应分页字段不合法")
+            if (root.int("state") != SUCCESS_STATE) {
+                return@parseSafely validatePage(metadata.copy(total = 0), emptyList(), "双色球")
+            }
             val recordElements =
                 root["result"].arrayOrNull()
                     ?: return@parseSafely failure("双色球历史响应缺少开奖记录数组")
@@ -241,6 +246,9 @@ internal object HistoricalDrawSourceAdapter {
 
     /** 福彩接口业务成功状态。 */
     private const val SUCCESS_STATE = 0
+
+    /** 福彩接口无记录提示的稳定片段。 */
+    private const val NO_DATA_MESSAGE = "没有查到数据"
 
     /** 大乐透玩法编号。 */
     private const val SUPER_LOTTO_GAME_NUMBER = "85"

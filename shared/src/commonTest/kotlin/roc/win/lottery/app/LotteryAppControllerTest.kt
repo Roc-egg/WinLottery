@@ -712,6 +712,48 @@ class LotteryAppControllerTest {
             assertFalse(assertIs<PeriodVerification.Unavailable>(screen.periodResults[3]).wasQueried)
         }
 
+    /**
+     * 年度末起始的多期票不能在确认时被固定期次上限阻断；年度结束后应按官网实际期号接续新年度，
+     * 此前按本年度顺延的预估期号被替换后，重查要补查新年度期号。
+     */
+    @Test
+    fun multiPeriodTicketFollowsOfficialIssuesAcrossYearBoundary() =
+        runTest {
+            val repository = YearBoundaryDrawRepository()
+            val draft =
+                validDraft().copy(
+                    issue = "26149",
+                    periodCount = 4,
+                    paidAmountFen = 1_200L,
+                )
+            val controller =
+                createController(
+                    repository = repository,
+                    usesRealDrawData = true,
+                    ticketParser = TicketParser { TicketParseResult.ReadyForReview(draft) },
+                )
+            controller.startAnalysis(ImageAcquisitionSource.SYSTEM_PICKER)
+
+            controller.confirmTicket()
+
+            val beforeNewYear = assertIs<AppScreen.MultiPeriodVerificationResult>(controller.uiState.value.screen)
+            assertEquals(listOf("26149", "26150", "26151", "26152"), beforeNewYear.periodResults.map { it.issue.value })
+            assertEquals(2, beforeNewYear.verifiedPeriodCount)
+            assertEquals(listOf("26149", "26150", "26151"), repository.queriedIssues.map { it.value })
+
+            repository.drawnIssues = listOf(Issue("26149"), Issue("26150"), Issue("27001"), Issue("27002"))
+            controller.retryDrawQuery()
+
+            val afterNewYear = assertIs<AppScreen.MultiPeriodVerificationResult>(controller.uiState.value.screen)
+            assertEquals(listOf("26149", "26150", "27001", "27002"), afterNewYear.periodResults.map { it.issue.value })
+            assertTrue(afterNewYear.isConclusive)
+            assertEquals(beforeNewYear.periodResults.take(2), afterNewYear.periodResults.take(2))
+            assertEquals(
+                listOf("26149", "26150", "26151", "27001", "27002"),
+                repository.queriedIssues.map { it.value },
+            )
+        }
+
     /** 多期查询断网恢复时只补查未完成期，并在全部完成后支持再次全量刷新。 */
     @Test
     fun multiPeriodNetworkRecoveryPreservesCompletedIssuesAndResumesInOrder() =
@@ -1803,6 +1845,35 @@ class LotteryAppControllerTest {
             }
             return DrawQueryResult.Success(verifiedDraw().copy(issue = issue, status = drawStatus))
         }
+    }
+
+    /** 模拟年度换期前后官网已开奖期次变化的多期仓库。 */
+    private inner class YearBoundaryDrawRepository : DrawRepository {
+        /** 官网当前已开奖的期号，测试可模拟新年度开奖。 */
+        var drawnIssues = listOf(Issue("26149"), Issue("26150"))
+
+        /** 按实际调用顺序保存的精确期号。 */
+        val queriedIssues = mutableListOf<Issue>()
+
+        /** 已开奖期号返回核验结果，其余期号视为尚未发布。 */
+        override suspend fun getDraw(
+            lotteryType: LotteryType,
+            issue: Issue,
+        ): DrawQueryResult {
+            queriedIssues += issue
+            return if (issue in drawnIssues) {
+                DrawQueryResult.Success(verifiedDraw().copy(issue = issue))
+            } else {
+                DrawQueryResult.Unavailable(DrawStatus.NOT_PUBLISHED, "该期开奖结果尚未发布")
+            }
+        }
+
+        /** 返回从起始期号开始的已开奖期号。 */
+        override suspend fun getDrawnIssues(
+            lotteryType: LotteryType,
+            firstIssue: Issue,
+            maxCount: Int,
+        ): List<Issue> = drawnIssues.dropWhile { it != firstIssue }.take(maxCount)
     }
 
     /** 首轮第二次查询模拟断网，后续查询按请求期号恢复成功。 */

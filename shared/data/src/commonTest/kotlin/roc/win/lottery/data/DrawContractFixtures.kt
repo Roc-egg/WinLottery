@@ -170,6 +170,7 @@ internal object DrawContractFixtures {
         specialRuleInfo: String = "",
         prizeSpecialInfo: String = "",
         includePolicyEvidenceFields: Boolean = true,
+        addMoney: String = "",
         firstPrizeAmount: String = "10000000",
         thirdPrizeAmount: String = "3000",
         extraPrizeType: Int? = null,
@@ -194,6 +195,7 @@ internal object DrawContractFixtures {
                                 specialRuleInfo = specialRuleInfo,
                                 prizeSpecialInfo = prizeSpecialInfo,
                                 includePolicyEvidenceFields = includePolicyEvidenceFields,
+                                addMoney = addMoney,
                                 firstPrizeAmount = firstPrizeAmount,
                                 thirdPrizeAmount = thirdPrizeAmount,
                                 extraPrizeType = extraPrizeType,
@@ -213,6 +215,7 @@ internal object DrawContractFixtures {
                                     specialRuleInfo = specialRuleInfo,
                                     prizeSpecialInfo = prizeSpecialInfo,
                                     includePolicyEvidenceFields = includePolicyEvidenceFields,
+                                    addMoney = addMoney,
                                     firstPrizeAmount = firstPrizeAmount,
                                     thirdPrizeAmount = thirdPrizeAmount,
                                     extraPrizeType = extraPrizeType,
@@ -382,6 +385,7 @@ internal object DrawContractFixtures {
         specialRuleInfo: String,
         prizeSpecialInfo: String,
         includePolicyEvidenceFields: Boolean,
+        addMoney: String = "",
         firstPrizeAmount: String,
         thirdPrizeAmount: String,
         extraPrizeType: Int?,
@@ -398,7 +402,7 @@ internal object DrawContractFixtures {
                 put("fyjMoney", fortuneMoney)
                 put("specialRuleInfo", specialRuleInfo)
                 put("prizeSpecialInfo", prizeSpecialInfo)
-                put("addmoney", "")
+                put("addmoney", addMoney)
                 put("addmoney2", "")
                 put("z2add", "")
                 put("m2add", "")

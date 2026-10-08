@@ -96,7 +96,11 @@ internal object DoubleColorBallSourceAdapter {
             parseSupportingRecord(record, targetIssue, sourceUrl)
         }
 
-    /** 解析并严格校验主响应中的一条记录。 */
+    /**
+     * 解析主响应中的一条记录。
+     *
+     * 号码、日期和玩法必须严格合法；奖级表、派奖或奖项说明无法按现行规则确认时只让金额待定，不阻断号码比对。
+     */
     private fun parseMainRecord(
         record: JsonObject,
         targetIssue: String,
@@ -115,27 +119,24 @@ internal object DoubleColorBallSourceAdapter {
         if (drawDate.take(4) != targetIssue.take(4)) {
             return SourceParseResult.SourceUnavailable("双色球开奖日期与期号年份不一致")
         }
-        val detailUrl =
-            normalizeDetailUrl(record.text("detailsLink"))
-                ?: return SourceParseResult.Publishing("双色球详情公告链接尚未发布")
-        val basicTiers =
-            when (val parsed = parseBasicPrizeTiers(record)) {
-                is PrizeTierParseResult.Success -> parsed.tiers
-                is PrizeTierParseResult.Failure -> return SourceParseResult.SourceUnavailable(parsed.message)
-            }
-        if (POLICY_EVIDENCE_FIELDS.any { record.text(it) == null }) {
-            return SourceParseResult.SourceUnavailable("双色球主响应缺少特别规定或派奖状态字段")
-        }
-        if (PROMOTION_FIELDS.any { !record.text(it).isNullOrEmpty() }) {
-            return SourceParseResult.Publishing("双色球当期存在 V1 尚未验证的派奖活动")
-        }
+        val detailUrl = normalizeDetailUrl(record.text("detailsLink"))
+        val basicTiers = (parseBasicPrizeTiers(record) as? PrizeTierParseResult.Success)?.tiers
         val policyResult = parsePolicy(record, targetIssue)
-        if (policyResult is PolicyParseResult.Unknown) {
-            return SourceParseResult.Publishing(policyResult.message)
-        }
-        val policy = (policyResult as PolicyParseResult.Known).policy
-        val tiers = basicTiers + policyResult.additionalTiers
-        val payoutFieldsComplete = tiers.all { it.singlePrizeFen != null }
+        val policy = policyResult.policy
+        val tiers = basicTiers.orEmpty() + policyResult.additionalTiers
+        val policyFieldsPresent = POLICY_EVIDENCE_FIELDS.all { record.text(it) != null }
+        val promotionActive = PROMOTION_FIELDS.any { !record.text(it).isNullOrEmpty() }
+        val prizeSpecialInfo = record.text("prizeSpecialInfo").orEmpty()
+        val specialRuleInfo = record.text("specialRuleInfo").orEmpty()
+        val hasUnmodeledNotice =
+            (prizeSpecialInfo.isNotEmpty() && !isKnownFirstPrizeCapInfo(prizeSpecialInfo)) ||
+                (specialRuleInfo.isNotEmpty() && policy == DrawPolicy.STANDARD)
+        val payoutFieldsComplete =
+            basicTiers != null &&
+                policyFieldsPresent &&
+                !promotionActive &&
+                !hasUnmodeledNotice &&
+                tiers.all { it.singlePrizeFen != null || it.winnerCount == 0L }
         val canonical =
             canonicalMainDraw(
                 lotteryType = LotteryType.DOUBLE_COLOR_BALL,
@@ -145,7 +146,6 @@ internal object DoubleColorBallSourceAdapter {
                 secondaryNumbers = numbers.second,
                 policy = policy,
                 prizeTiers = tiers,
-                publicationFieldsComplete = true,
                 detailUrl = detailUrl,
             )
         return SourceParseResult.Success(
@@ -157,7 +157,6 @@ internal object DoubleColorBallSourceAdapter {
                 secondaryNumbers = numbers.second,
                 policy = policy,
                 prizeTiers = tiers,
-                publicationFieldsComplete = true,
                 payoutFieldsComplete = payoutFieldsComplete,
                 evidence = EvidenceDraft("中国福彩网开奖公告", sourceUrl, canonical),
                 detailUrl = detailUrl,
@@ -275,51 +274,35 @@ internal object DoubleColorBallSourceAdapter {
         return PrizeTierParseResult.Success(REQUIRED_BASIC_TIER_CODES.map(tiers::getValue))
     }
 
-    /** 根据当期完整官方字段和已确认特别规定范围选择政策状态。 */
+    /**
+     * 根据当期官方福运奖字段和已确认特别规定范围选择政策。
+     *
+     * 已知特别规定期间或官网给出福运奖字段时启用福运奖；福运奖注数或金额暂不可解析时只留空对应字段。
+     */
     private fun parsePolicy(
         record: JsonObject,
         issue: String,
     ): PolicyParseResult {
-        val fortuneCountRaw = requireNotNull(record.text("fyjCount"))
-        val fortuneMoneyRaw = requireNotNull(record.text("fyjMoney"))
-        val specialRuleInfo = requireNotNull(record.text("specialRuleInfo"))
-        val prizeSpecialInfo = requireNotNull(record.text("prizeSpecialInfo"))
-        if (prizeSpecialInfo.isNotEmpty() && !isKnownFirstPrizeCapInfo(prizeSpecialInfo)) {
-            return PolicyParseResult.Unknown("双色球当期奖项说明尚未完成规则建模")
+        val fortuneCountRaw = record.text("fyjCount").orEmpty()
+        val fortuneMoneyRaw = record.text("fyjMoney").orEmpty()
+        val inKnownFortunePeriod = issue in FORTUNE_FIRST_ISSUE..FORTUNE_LAST_ISSUE
+        if (!inKnownFortunePeriod && fortuneCountRaw.isEmpty() && fortuneMoneyRaw.isEmpty()) {
+            return PolicyParseResult(DrawPolicy.STANDARD, emptyList())
         }
-        return when {
-            issue in FORTUNE_FIRST_ISSUE..FORTUNE_LAST_ISSUE -> {
-                val count =
-                    parseCount(fortuneCountRaw)
-                        ?: return PolicyParseResult.Unknown("双色球福运奖注数尚未发布或无法解析")
-                val amountFen =
-                    parseYuanToFen(fortuneMoneyRaw)
-                        ?: return PolicyParseResult.Unknown("双色球福运奖金额尚未发布或无法解析")
-                if (count < 0L) return PolicyParseResult.Unknown("双色球福运奖注数不合法")
-                PolicyParseResult.Known(
-                    policy = DrawPolicy.DOUBLE_COLOR_BALL_FORTUNE,
-                    additionalTiers =
-                        listOf(
-                            PrizeTier(
-                                code = PrizeTierCodes.FORTUNE,
-                                displayName = "福运奖",
-                                singlePrizeFen = amountFen,
-                                additionalPrizeFen = null,
-                                winnerCount = count,
-                                singlePrizeRaw = fortuneMoneyRaw,
-                            ),
-                        ),
-                )
-            }
-
-            fortuneCountRaw.isEmpty() && fortuneMoneyRaw.isEmpty() && specialRuleInfo.isEmpty() -> {
-                PolicyParseResult.Known(DrawPolicy.STANDARD, emptyList())
-            }
-
-            else -> {
-                PolicyParseResult.Unknown("双色球当期出现尚未完成规则建模的特别规定字段")
-            }
-        }
+        return PolicyParseResult(
+            policy = DrawPolicy.DOUBLE_COLOR_BALL_FORTUNE,
+            additionalTiers =
+                listOf(
+                    PrizeTier(
+                        code = PrizeTierCodes.FORTUNE,
+                        displayName = "福运奖",
+                        singlePrizeFen = parseYuanToFen(fortuneMoneyRaw),
+                        additionalPrizeFen = null,
+                        winnerCount = parseCount(fortuneCountRaw)?.takeIf { it >= 0L },
+                        singlePrizeRaw = fortuneMoneyRaw,
+                    ),
+                ),
+        )
     }
 
     /** 只接受已核实的现行一等奖总额封顶说明，实际单注金额仍以奖级表为准。 */
@@ -358,22 +341,16 @@ internal object DoubleColorBallSourceAdapter {
         ) : PrizeTierParseResult
     }
 
-    /** 当期特别规定解析状态。 */
-    private sealed interface PolicyParseResult {
-        /** 政策状态已有固化证据。 */
-        data class Known(
-            /** 影响命中矩阵的政策。 */
-            val policy: DrawPolicy,
-            /** 政策额外引入的奖级。 */
-            val additionalTiers: List<PrizeTier>,
-        ) : PolicyParseResult
-
-        /** 政策状态或所需字段尚不能确定。 */
-        data class Unknown(
-            /** 面向用户的保守说明。 */
-            val message: String,
-        ) : PolicyParseResult
-    }
+    /**
+     * 当期特别规定解析结果。
+     *
+     * @property policy 影响命中矩阵的政策。
+     * @property additionalTiers 政策额外引入的奖级。
+     */
+    private data class PolicyParseResult(
+        val policy: DrawPolicy,
+        val additionalTiers: List<PrizeTier>,
+    )
 
     /** 福彩接口成功状态值。 */
     private const val SUCCESS_STATE = 0
@@ -390,7 +367,7 @@ internal object DoubleColorBallSourceAdapter {
     /** 非空即代表存在尚未建模活动金额的字段。 */
     private val PROMOTION_FIELDS = setOf("addmoney", "addmoney2", "z2add", "m2add", "msg")
 
-    /** 必须由主接口显式提供的特别规定和派奖状态字段。 */
+    /** 缺失时无法确认奖级表金额是否已含派奖或特别规定的状态字段。 */
     private val POLICY_EVIDENCE_FIELDS =
         PROMOTION_FIELDS + setOf("fyjCount", "fyjMoney", "specialRuleInfo", "prizeSpecialInfo")
 

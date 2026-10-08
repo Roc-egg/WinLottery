@@ -272,6 +272,29 @@ class PrizeRulesTest {
         assertEquals(SuperLottoPrizeTierValidationStatus.INCOMPLETE, result.status)
     }
 
+    /** 一等奖追加零注时官网以 `---` 表示无奖金，不应阻断其他奖级金额完整。 */
+    @Test
+    fun zeroWinnerAdditionalTierWithoutAmountIsComplete() {
+        val tiers =
+            superLottoTiers(
+                firstPrizeFen = 770_263_400L,
+                firstAdditionalPrizeFen = 616_210_700L,
+                secondPrizeFen = 8_582_200L,
+                secondAdditionalPrizeFen = 6_865_800L,
+                fixedPrizes = lowPoolFixedPrizes,
+            ).map { tier ->
+                if (tier.code == PrizeTierCodes.FIRST) {
+                    tier.copy(additionalPrizeFen = null, additionalWinnerCount = 0L)
+                } else {
+                    tier
+                }
+            }
+
+        val result = SuperLottoPrizeTierValidator.validate(tiers)
+
+        assertEquals(SuperLottoPrizeTierValidationStatus.COMPLETE, result.status)
+    }
+
     /** 大乐透缺少任一基础奖级时必须失败关闭。 */
     @Test
     fun missingSuperLottoBaseTierIsInvalid() {

@@ -87,7 +87,6 @@ class OfficialDrawHistoricalReconciliationLiveTest {
                     SuperLottoSourceAdapter.parseMain(mainBody, issue, mainUrl),
                     "大乐透 $issue 历史 JSON 未通过严格解析",
                 )
-            assertTrue(main.publicationFieldsComplete, "大乐透 $issue 公告字段不完整")
             val pdfUrl = assertNotNull(main.detailUrl, "大乐透 $issue 缺少公告地址")
             assertEquals(expectedSuperLottoPdfUrl(issue), pdfUrl, "大乐透 $issue 公告地址不符合固定期号路径")
             delay(REQUEST_INTERVAL_MILLIS)

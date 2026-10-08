@@ -130,7 +130,7 @@ internal object SuperLottoSourceAdapter {
             )
         }
 
-    /** 解析并严格校验一条大乐透主记录。 */
+    /** 解析一条大乐透主记录；号码必须严格合法，奖级金额无法确认时只留空。 */
     private fun parseMainRecord(
         record: JsonObject,
         targetIssue: String,
@@ -164,13 +164,13 @@ internal object SuperLottoSourceAdapter {
             return SourceParseResult.SourceUnavailable("大乐透开奖日期与期号年份不一致")
         }
         val promotionActive = promotionFlag != NO_PROMOTION_VALUE
-        val tierResult = parsePrizeTiers(record, promotionActive)
-        if (tierResult is PrizeTierParseResult.Failure) {
-            return SourceParseResult.SourceUnavailable(tierResult.message)
-        }
-        val tiers = (tierResult as PrizeTierParseResult.Success).tiers
+        // 审核和公告字段已确认终态，奖级表异常只让金额待定，不阻断号码比对。
+        val tiers =
+            when (val tierResult = parsePrizeTiers(record, promotionActive)) {
+                is PrizeTierParseResult.Success -> tierResult.tiers
+                is PrizeTierParseResult.Failure -> emptyList()
+            }
         val detailUrl = normalizeDetailUrl(record.text("drawPdfUrl"), targetIssue)
-        val publicationFieldsComplete = !detailUrl.isNullOrBlank()
         val payoutFieldsComplete = !promotionActive && hasCompletePayouts(tiers)
         val canonical =
             canonicalMainDraw(
@@ -181,7 +181,6 @@ internal object SuperLottoSourceAdapter {
                 secondaryNumbers = numbers.second,
                 policy = DrawPolicy.STANDARD,
                 prizeTiers = tiers,
-                publicationFieldsComplete = publicationFieldsComplete,
                 detailUrl = detailUrl,
             )
         return SourceParseResult.Success(
@@ -193,7 +192,6 @@ internal object SuperLottoSourceAdapter {
                 secondaryNumbers = numbers.second,
                 policy = DrawPolicy.STANDARD,
                 prizeTiers = tiers,
-                publicationFieldsComplete = publicationFieldsComplete,
                 payoutFieldsComplete = payoutFieldsComplete,
                 evidence = EvidenceDraft("中国体彩网历史开奖", sourceUrl, canonical),
                 detailUrl = detailUrl,

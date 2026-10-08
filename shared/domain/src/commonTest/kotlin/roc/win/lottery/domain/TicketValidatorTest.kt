@@ -124,7 +124,7 @@ class TicketValidatorTest {
         assertTrue(result.problems.any { it.field.endsWith("isAdditional") })
     }
 
-    /** 年中安全范围内的多期票应按全部期次严格核对金额。 */
+    /** 多期票应按全部期次严格核对金额。 */
     @Test
     fun multiplePeriodsWithExactAmountPass() {
         val ticket =
@@ -137,6 +137,21 @@ class TicketValidatorTest {
 
         assertEquals(TicketValidationStatus.VALID, result.status)
         assertTrue(result.canCalculate)
+    }
+
+    /** 年度后段起始、可能跨年度的多期票不能再被固定期次上限阻断。 */
+    @Test
+    fun lateYearMultiplePeriodsPass() {
+        val ticket =
+            superLottoTicket().copy(
+                issue = confirmed(Issue("26145")),
+                periodCount = confirmed(10),
+                paidAmountFen = confirmed(3_000L),
+            )
+
+        val result = validator.validate(ticket)
+
+        assertEquals(TicketValidationStatus.VALID, result.status)
     }
 
     /** 多期票金额仍只要少算一期就必须阻断。 */

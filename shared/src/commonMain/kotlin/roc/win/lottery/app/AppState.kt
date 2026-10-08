@@ -250,10 +250,10 @@ sealed interface PeriodVerification {
             }
 
     /**
-     * 已取得双官方证据并执行本地规则计算。
+     * 已取得官方开奖号码并执行本地规则计算。
      *
      * @property issue 当前精确期号。
-     * @property drawResult 经交叉核对的统一开奖结果。
+     * @property drawResult 官方统一开奖结果，辅助数据面可用时已完成交叉核对。
      * @property prizeCheckResult 本期逐注测算结果。
      */
     data class Verified(

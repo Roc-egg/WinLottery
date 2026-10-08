@@ -176,10 +176,10 @@ object LotteryPrizeRules {
 
 /** 大乐透官方奖级金额数据的校验状态。 */
 enum class SuperLottoPrizeTierValidationStatus {
-    /** 奖级和奖金字段完整且符合现行规则。 */
+    /** 奖级和奖金字段完整且符合现行规则；零注奖级允许没有金额。 */
     COMPLETE,
 
-    /** 奖级结构合法，但官网仍有奖金字段尚未发布。 */
+    /** 奖级结构合法，但官网仍有产生中奖注的奖金字段尚未发布。 */
     INCOMPLETE,
 
     /** 奖级集合、固定奖金额或追加奖金关系不符合现行规则。 */
@@ -246,10 +246,12 @@ object SuperLottoPrizeTierValidator {
                 return invalid("大乐透一、二等奖追加奖金不符合基本奖金 80% 的元级公布口径")
             }
         }
+        // 零注奖级官网常以 `---` 表示未产生奖金，不能因此阻断其他奖级金额。
         val complete =
-            prizeTiers.all { it.singlePrizeFen != null } &&
+            prizeTiers.all { it.singlePrizeFen != null || it.winnerCount == 0L } &&
                 ADDITIONAL_TIER_CODES.all { code ->
-                    tiersByCode[code]?.singleOrNull()?.additionalPrizeFen != null
+                    val tier = requireNotNull(tiersByCode[code]?.singleOrNull())
+                    tier.additionalPrizeFen != null || tier.additionalWinnerCount == 0L
                 }
         return SuperLottoPrizeTierValidationResult(
             status =
@@ -340,38 +342,28 @@ object SuperLottoPrizeTierValidator {
     private const val ADDITIONAL_RATIO_DENOMINATOR = 5L
 }
 
-/** B2 本地中奖规则计算器。 */
+/**
+ * B2 本地中奖规则计算器。
+ *
+ * 只要官方开奖号码可用就逐注比对并给出中奖或未中奖结论；奖级金额缺失、重复或异常时只把对应金额留空，
+ * 不再阻断中奖结论。
+ */
 class LotteryPrizeCalculator(
     /** 按期号选择规则版本的能力。 */
     private val ruleVersionSelector: RuleVersionSelector = RuleVersionSelector(),
-    /** 对调用方传入票据执行防御性复核的校验器。 */
-    private val ticketValidator: TicketValidator = TicketValidator(),
 ) : PrizeCalculator {
     /** 根据已确认票据和开奖结果逐注计算最高奖级并汇总税前金额。 */
     override fun calculate(
         ticket: ConfirmedTicket,
         drawResult: DrawResult,
     ): PrizeCheckResult {
-        val selectedRule =
-            ruleVersionSelector.select(ticket.lotteryType.value, ticket.issue.value)
-                ?: return unsupportedRuleResult()
-        val preconditionProblem = validatePreconditions(ticket, drawResult, selectedRule)
-        if (preconditionProblem != null) return manualReviewResult(preconditionProblem)
+        ruleVersionSelector.select(ticket.lotteryType.value, ticket.issue.value)
+            ?: return unsupportedRuleResult()
+        val comparisonProblem = findComparisonProblem(ticket, drawResult)
+        if (comparisonProblem != null) return notCalculatedResult(comparisonProblem)
 
+        val policy = effectivePolicy(drawResult)
         val tiersByCode = drawResult.prizeTiers.groupBy { it.code }
-        if (tiersByCode.values.any { it.size > 1 }) {
-            return manualReviewResult("当期开奖包含重复奖级，无法可靠测算")
-        }
-        if (drawResult.prizeTiers.any { tier ->
-                tier.singlePrizeFen?.let { it < 0L } == true ||
-                    tier.additionalPrizeFen?.let { it < 0L } == true ||
-                    tier.winnerCount?.let { it < 0L } == true ||
-                    tier.additionalWinnerCount?.let { it < 0L } == true
-            }
-        ) {
-            return manualReviewResult("当期开奖奖级数据不合法，需要人工复核")
-        }
-
         val lineResults = mutableListOf<BetLinePrizeResult>()
         var totalPrizeFen = 0L
         var hasWinner = false
@@ -392,7 +384,7 @@ class LotteryPrizeCalculator(
             val tierCode =
                 LotteryPrizeRules.findPrizeTierCode(
                     lotteryType = ticket.lotteryType.value,
-                    policy = drawResult.policy,
+                    policy = policy,
                     primaryHitCount = primaryHits,
                     secondaryHitCount = secondaryHits,
                 )
@@ -402,6 +394,7 @@ class LotteryPrizeCalculator(
             }
 
             hasWinner = true
+            // 重复奖级无法确定取哪一份金额，按金额未知处理。
             val tier = tiersByCode[tierCode]?.singleOrNull()
             val amount = calculateLineAmount(ticket, line, tierCode, tier, drawResult.status)
             when (amount) {
@@ -431,20 +424,20 @@ class LotteryPrizeCalculator(
                 )
         }
 
-        if (hasOverflow) {
-            return PrizeCheckResult(
-                status = PrizeCheckStatus.NEEDS_MANUAL_REVIEW,
-                lineResults = lineResults,
-                estimatedPrizeFen = null,
-                message = "奖金金额超出可安全计算范围，需要人工复核",
-            )
-        }
         if (!hasWinner) {
             return PrizeCheckResult(
                 status = PrizeCheckStatus.NO_WIN,
                 lineResults = lineResults,
                 estimatedPrizeFen = 0L,
                 message = null,
+            )
+        }
+        if (hasOverflow) {
+            return PrizeCheckResult(
+                status = PrizeCheckStatus.WIN,
+                lineResults = lineResults,
+                estimatedPrizeFen = null,
+                message = "已确定命中奖级，奖金合计超出可精确计算范围，请以官方兑奖金额为准",
             )
         }
         if (hasMissingAmount) {
@@ -463,68 +456,38 @@ class LotteryPrizeCalculator(
         )
     }
 
-    /** 校验票据、开奖结果、规则和政策是否能够共同驱动测算。 */
-    private fun validatePreconditions(
+    /** 只检查逐注比对本身必需的条件，金额、政策和辅助证据问题不再阻断结论。 */
+    private fun findComparisonProblem(
         ticket: ConfirmedTicket,
         drawResult: DrawResult,
-        selectedRule: RuleVersion,
     ): String? {
-        if (!ticketValidator.validate(ticket).canCalculate) return "票面信息未通过领域校验"
         if (ticket.lotteryType.value != drawResult.lotteryType || ticket.issue.value != drawResult.issue) {
             return "彩票与开奖结果的彩种或期号不一致"
         }
-        if (drawResult.status !in CALCULABLE_DRAW_STATUSES) return "开奖结果尚未达到可判断状态"
-        if (drawResult.ruleVersion != selectedRule.code) return "开奖结果的规则版本与期号不一致"
-        if (!isPolicyCompatible(drawResult)) return "当期特别规定状态与已确认规则边界冲突"
-        if (!hasValidDrawNumbers(drawResult)) return "开奖号码数量、范围或唯一性不合法"
-        if (drawResult.lotteryType == LotteryType.SUPER_LOTTO) {
-            val tierValidation = SuperLottoPrizeTierValidator.validate(drawResult.prizeTiers)
-            if (tierValidation.status == SuperLottoPrizeTierValidationStatus.INVALID) {
-                return tierValidation.message ?: "大乐透奖级数据不符合现行规则"
-            }
-            if (
-                drawResult.status == DrawStatus.FINAL_PAYOUT &&
-                tierValidation.status != SuperLottoPrizeTierValidationStatus.COMPLETE
-            ) {
-                return "大乐透奖级金额尚未完整，不能进入最终奖金状态"
-            }
+        if (drawResult.status !in CALCULABLE_DRAW_STATUSES) return "官方开奖号码尚未最终确认"
+        val spec = DrawNumberSpec.forLottery(drawResult.lotteryType)
+        if (!spec.matches(drawResult.primaryNumbers, drawResult.secondaryNumbers)) {
+            return "官方开奖号码数量或范围异常，无法比对"
         }
-        if (drawResult.revision < 1) return "开奖结果修订号不合法"
-        if (drawResult.evidence.contentSha256.isBlank()) return "开奖结果缺少内容校验证据"
-        if (drawResult.supportingEvidence.isEmpty() ||
-            drawResult.supportingEvidence.any { it.contentSha256.isBlank() }
-        ) {
-            return "开奖结果缺少官方辅助核对证据"
+        if (ticket.betLines.isEmpty()) return "票面没有可比对的投注行"
+        ticket.betLines.forEachIndexed { index, line ->
+            if (!spec.matches(line.primaryNumbers.value, line.secondaryNumbers.value)) {
+                return "第 ${index + 1} 注号码不是有效的单式投注，无法比对"
+            }
         }
         return null
     }
 
-    /** 判断特别政策是否与已固化的 2026 边界一致。 */
-    private fun isPolicyCompatible(drawResult: DrawResult): Boolean {
-        if (drawResult.lotteryType == LotteryType.SUPER_LOTTO) {
-            return drawResult.policy == DrawPolicy.STANDARD
+    /** 已知特别规定期间固定启用福运奖，其余期次以官方数据给出的政策为准。 */
+    private fun effectivePolicy(drawResult: DrawResult): DrawPolicy =
+        if (
+            drawResult.lotteryType == LotteryType.DOUBLE_COLOR_BALL &&
+            drawResult.issue.value in SSQ_FORTUNE_FIRST_ISSUE..SSQ_FORTUNE_LAST_ISSUE
+        ) {
+            DrawPolicy.DOUBLE_COLOR_BALL_FORTUNE
+        } else {
+            drawResult.policy
         }
-        val issue = drawResult.issue.value
-        if (issue in SSQ_FORTUNE_FIRST_ISSUE..SSQ_FORTUNE_LAST_ISSUE) {
-            return drawResult.policy == DrawPolicy.DOUBLE_COLOR_BALL_FORTUNE
-        }
-        return drawResult.policy == DrawPolicy.STANDARD
-    }
-
-    /** 严格校验统一模型中的开奖号码。 */
-    private fun hasValidDrawNumbers(drawResult: DrawResult): Boolean {
-        val spec =
-            when (drawResult.lotteryType) {
-                LotteryType.SUPER_LOTTO -> DrawNumberSpec(5, 1..35, 2, 1..12)
-                LotteryType.DOUBLE_COLOR_BALL -> DrawNumberSpec(6, 1..33, 1, 1..16)
-            }
-        return drawResult.primaryNumbers.size == spec.primaryCount &&
-            drawResult.primaryNumbers.distinct().size == spec.primaryCount &&
-            drawResult.primaryNumbers.all { it in spec.primaryRange } &&
-            drawResult.secondaryNumbers.size == spec.secondaryCount &&
-            drawResult.secondaryNumbers.distinct().size == spec.secondaryCount &&
-            drawResult.secondaryNumbers.all { it in spec.secondaryRange }
-    }
 
     /** 计算一行投注计入倍数和追加后的金额。 */
     private fun calculateLineAmount(
@@ -534,15 +497,15 @@ class LotteryPrizeCalculator(
         tier: PrizeTier?,
         drawStatus: DrawStatus,
     ): LineAmount {
-        if (drawStatus != DrawStatus.FINAL_PAYOUT) return LineAmount.Missing
-        val basePrizeFen = tier?.singlePrizeFen ?: return LineAmount.Missing
+        if (drawStatus != DrawStatus.FINAL_PAYOUT || ticket.multiplier.value < 1) return LineAmount.Missing
+        val basePrizeFen = tier?.singlePrizeFen?.takeIf { it >= 0L } ?: return LineAmount.Missing
         val additionalPrizeFen =
             if (
                 ticket.lotteryType.value == LotteryType.SUPER_LOTTO &&
                 line.isAdditional.value &&
                 tierCode in ADDITIONAL_PRIZE_TIER_CODES
             ) {
-                tier.additionalPrizeFen ?: return LineAmount.Missing
+                tier.additionalPrizeFen?.takeIf { it >= 0L } ?: return LineAmount.Missing
             } else {
                 0L
             }
@@ -572,16 +535,16 @@ class LotteryPrizeCalculator(
             message = "该期号不在 V1 已验证规则范围内",
         )
 
-    /** 创建需要人工复核的防御性结果。 */
-    private fun manualReviewResult(message: String): PrizeCheckResult =
+    /** 创建无法执行号码比对的结果。 */
+    private fun notCalculatedResult(message: String): PrizeCheckResult =
         PrizeCheckResult(
-            status = PrizeCheckStatus.NEEDS_MANUAL_REVIEW,
+            status = PrizeCheckStatus.NOT_CALCULATED,
             lineResults = emptyList(),
             estimatedPrizeFen = null,
             message = message,
         )
 
-    /** 开奖号码的严格格式。 */
+    /** 号码区域的严格格式。 */
     private data class DrawNumberSpec(
         /** 主号码数量。 */
         val primaryCount: Int,
@@ -591,7 +554,29 @@ class LotteryPrizeCalculator(
         val secondaryCount: Int,
         /** 次号码范围。 */
         val secondaryRange: IntRange,
-    )
+    ) {
+        /** 判断一组号码是否满足单式投注或开奖号码的数量、范围和唯一性。 */
+        fun matches(
+            primaryNumbers: List<Int>,
+            secondaryNumbers: List<Int>,
+        ): Boolean =
+            primaryNumbers.size == primaryCount &&
+                primaryNumbers.distinct().size == primaryCount &&
+                primaryNumbers.all { it in primaryRange } &&
+                secondaryNumbers.size == secondaryCount &&
+                secondaryNumbers.distinct().size == secondaryCount &&
+                secondaryNumbers.all { it in secondaryRange }
+
+        /** 按彩种创建号码格式。 */
+        companion object {
+            /** 返回指定彩种的号码格式。 */
+            fun forLottery(lotteryType: LotteryType): DrawNumberSpec =
+                when (lotteryType) {
+                    LotteryType.SUPER_LOTTO -> DrawNumberSpec(5, 1..35, 2, 1..12)
+                    LotteryType.DOUBLE_COLOR_BALL -> DrawNumberSpec(6, 1..33, 1, 1..16)
+                }
+        }
+    }
 
     /** 一行中奖金额的内部计算状态。 */
     private sealed interface LineAmount {

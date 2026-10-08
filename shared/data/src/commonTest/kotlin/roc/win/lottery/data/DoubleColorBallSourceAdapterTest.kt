@@ -47,14 +47,36 @@ class DoubleColorBallSourceAdapterTest {
         assertEquals(500L, fortune.singlePrizeFen)
     }
 
-    /** 特别规定期间缺少福运奖字段时必须停留在发布中。 */
+    /** 特别规定期间缺少福运奖字段时仍按福运奖判级，只把福运奖金额留空。 */
     @Test
-    fun missingFortuneFieldsArePublishing() {
+    fun missingFortuneFieldsKeepFortunePolicyWithoutAmount() {
         val raw = DrawContractFixtures.doubleColorBallMain(issue = "2026014")
 
-        assertIs<SourceParseResult.Publishing>(
-            DoubleColorBallSourceAdapter.parseMain(raw, "2026014", MAIN_URL),
-        )
+        val snapshot =
+            assertIs<SourceParseResult.Success<MainDrawSnapshot>>(
+                DoubleColorBallSourceAdapter.parseMain(raw, "2026014", MAIN_URL),
+            ).value
+
+        assertEquals(DrawPolicy.DOUBLE_COLOR_BALL_FORTUNE, snapshot.policy)
+        assertNull(snapshot.prizeTiers.single { it.code == PrizeTierCodes.FORTUNE }.singlePrizeFen)
+        assertFalse(snapshot.payoutFieldsComplete)
+    }
+
+    /** 已知区间之外官网仍给出福运奖字段时按官网字段启用福运奖。 */
+    @Test
+    fun officialFortuneFieldsOutsideKnownPeriodEnableFortunePolicy() {
+        val raw =
+            DrawContractFixtures.doubleColorBallMain(
+                fortuneCount = "8000000",
+                fortuneMoney = "5",
+                specialRuleInfo = "新一轮特别规定",
+            )
+
+        val snapshot = assertIs<SourceParseResult.Success<MainDrawSnapshot>>(parseMain(raw)).value
+
+        assertEquals(DrawPolicy.DOUBLE_COLOR_BALL_FORTUNE, snapshot.policy)
+        assertEquals(500L, snapshot.prizeTiers.single { it.code == PrizeTierCodes.FORTUNE }.singlePrizeFen)
+        assertTrue(snapshot.payoutFieldsComplete)
     }
 
     /** 已知和未来普通期的完整空活动字段都应形成普通状态。 */
@@ -72,29 +94,47 @@ class DoubleColorBallSourceAdapterTest {
         }
     }
 
-    /** 缺少政策证据字段时不能把字段缺失猜成普通状态。 */
+    /** 缺少政策证据字段时仍可比对号码，但不能确认奖级表金额是否已含活动奖金。 */
     @Test
-    fun missingPolicyEvidenceFieldsAreSourceUnavailable() {
+    fun missingPolicyEvidenceFieldsKeepNumbersButDeferPayout() {
         val raw =
             DrawContractFixtures.doubleColorBallMain(
                 issue = "2026096",
                 includePolicyEvidenceFields = false,
             )
 
-        assertIs<SourceParseResult.SourceUnavailable>(
-            DoubleColorBallSourceAdapter.parseMain(raw, "2026096", MAIN_URL),
-        )
+        val snapshot =
+            assertIs<SourceParseResult.Success<MainDrawSnapshot>>(
+                DoubleColorBallSourceAdapter.parseMain(raw, "2026096", MAIN_URL),
+            ).value
+
+        assertEquals(DrawPolicy.STANDARD, snapshot.policy)
+        assertFalse(snapshot.payoutFieldsComplete)
     }
 
-    /** 普通期出现活动字段时必须人工复核。 */
+    /** 普通期出现未建模的特别规定说明时照常比对号码，只让金额待定。 */
     @Test
-    fun unexpectedSpecialRuleInStandardPeriodIsPublishing() {
+    fun unexpectedSpecialRuleKeepsNumbersButDefersPayout() {
         val raw = DrawContractFixtures.doubleColorBallMain(specialRuleInfo = "新的特别规定")
 
-        assertIs<SourceParseResult.Publishing>(parseMain(raw))
+        val snapshot = assertIs<SourceParseResult.Success<MainDrawSnapshot>>(parseMain(raw)).value
+
+        assertEquals(listOf(2, 13, 14, 16, 20, 24), snapshot.primaryNumbers)
+        assertFalse(snapshot.payoutFieldsComplete)
     }
 
-    /** 一等奖封顶说明可使用奖级表实际金额，其他未知奖项说明必须停留在发布中。 */
+    /** 派奖活动期照常比对号码，但基础奖级金额不含派奖，不能作为最终金额。 */
+    @Test
+    fun promotionKeepsNumbersButDefersPayout() {
+        val raw = DrawContractFixtures.doubleColorBallMain(addMoney = "派奖说明")
+
+        val snapshot = assertIs<SourceParseResult.Success<MainDrawSnapshot>>(parseMain(raw)).value
+
+        assertEquals(6, snapshot.prizeTiers.size)
+        assertFalse(snapshot.payoutFieldsComplete)
+    }
+
+    /** 一等奖封顶说明可使用奖级表实际金额，其他未知奖项说明只让金额待定。 */
     @Test
     fun firstPrizeCapInfoIsWhitelistedNarrowly() {
         val known =
@@ -106,8 +146,12 @@ class DoubleColorBallSourceAdapterTest {
         val snapshot = assertIs<SourceParseResult.Success<MainDrawSnapshot>>(parseMain(known)).value
         assertEquals(588_235_200L, snapshot.prizeTiers.single { it.code == PrizeTierCodes.FIRST }.singlePrizeFen)
 
+        assertTrue(snapshot.payoutFieldsComplete)
+
         val unknown = DrawContractFixtures.doubleColorBallMain(prizeSpecialInfo = "新的奖项说明")
-        assertIs<SourceParseResult.Publishing>(parseMain(unknown))
+        assertFalse(
+            assertIs<SourceParseResult.Success<MainDrawSnapshot>>(parseMain(unknown)).value.payoutFieldsComplete,
+        )
     }
 
     /** 福彩网无记录业务提示必须映射为未发布。 */
@@ -145,20 +189,16 @@ class DoubleColorBallSourceAdapterTest {
         )
     }
 
-    /** 固定奖金额与现行规则不一致时必须阻断。 */
+    /** 固定奖金额与现行规则不一致时保留号码，奖级表不作为金额依据。 */
     @Test
-    fun changedFixedPrizeIsSourceUnavailable() {
-        assertIs<SourceParseResult.SourceUnavailable>(
-            parseMain(DrawContractFixtures.doubleColorBallMain(thirdPrizeAmount = "2999")),
-        )
+    fun changedFixedPrizeKeepsNumbersButDropsTiers() {
+        assertNumbersWithoutTiers(parseMain(DrawContractFixtures.doubleColorBallMain(thirdPrizeAmount = "2999")))
     }
 
-    /** 未知奖级类型必须阻断，不能按数组位置推断。 */
+    /** 未知奖级类型不能按数组位置推断金额，但不影响号码比对。 */
     @Test
-    fun unknownPrizeTypeIsSourceUnavailable() {
-        assertIs<SourceParseResult.SourceUnavailable>(
-            parseMain(DrawContractFixtures.doubleColorBallMain(extraPrizeType = 8)),
-        )
+    fun unknownPrizeTypeKeepsNumbersButDropsTiers() {
+        assertNumbersWithoutTiers(parseMain(DrawContractFixtures.doubleColorBallMain(extraPrizeType = 8)))
     }
 
     /** 浮动奖金额不可解析时仍可确认号码和奖级，但不能确认金额。 */
@@ -181,6 +221,14 @@ class DoubleColorBallSourceAdapterTest {
 
         assertEquals(6, snapshot.prizeTiers.size)
         assertTrue(snapshot.prizeTiers.none { it.code == PrizeTierCodes.FORTUNE })
+    }
+
+    /** 断言主响应仍给出号码，但奖级表被整体放弃且金额待定。 */
+    private fun assertNumbersWithoutTiers(result: SourceParseResult<MainDrawSnapshot>) {
+        val snapshot = assertIs<SourceParseResult.Success<MainDrawSnapshot>>(result).value
+        assertEquals(listOf(2, 13, 14, 16, 20, 24), snapshot.primaryNumbers)
+        assertTrue(snapshot.prizeTiers.isEmpty())
+        assertFalse(snapshot.payoutFieldsComplete)
     }
 
     /** 创建默认双色球主响应解析结果。 */

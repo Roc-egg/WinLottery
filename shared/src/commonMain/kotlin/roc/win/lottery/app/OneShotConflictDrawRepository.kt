@@ -61,6 +61,13 @@ internal class OneShotConflictDrawRepository(
         }
     }
 
+    /** 期次列表不参与冲突注入，直接交给真实仓库。 */
+    override suspend fun getDrawnIssues(
+        lotteryType: LotteryType,
+        firstIssue: Issue,
+        maxCount: Int,
+    ): List<Issue>? = delegate.getDrawnIssues(lotteryType, firstIssue, maxCount)
+
     /** 一次性冲突注入使用的固定查询序号。 */
     private companion object {
         /** 初查成功后，在第一次主动重查时注入冲突。 */

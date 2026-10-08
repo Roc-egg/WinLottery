@@ -261,7 +261,7 @@ fun MultiPeriodVerificationScreen(
         }
         Spacer(Modifier.height(20.dp))
         Text(
-            "任一期尚未发布、证据不足或规则结果需复核时，应用都不会把整张多期票解释为未中奖。最终以发行机构公告和实体彩票兑奖为准。",
+            "任一期尚未发布或暂未取得官方开奖号码时，应用不会把整张多期票解释为未中奖。最终以发行机构公告和实体彩票兑奖为准。",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -292,7 +292,7 @@ private fun MultiPeriodSummary(result: AppScreen.MultiPeriodVerificationResult) 
         when {
             result.isConclusive && result.hasWinningPeriod -> "多期票有中奖记录"
             result.isConclusive -> "全部期次均未中奖"
-            result.verifiedPeriodCount == result.periodResults.size -> "逐期开奖结果需要复核"
+            result.verifiedPeriodCount == result.periodResults.size -> "部分期次无法完成比对"
             else -> "已完成 ${result.verifiedPeriodCount}/${result.periodResults.size} 期核对"
         }
     val detail =
@@ -605,8 +605,7 @@ private fun PrizeCheckResult.headline(): String =
         PrizeCheckStatus.WIN -> "有中奖记录"
         PrizeCheckStatus.NO_WIN -> "本期未中奖"
         PrizeCheckStatus.RULE_UNSUPPORTED -> "当前规则暂不支持"
-        PrizeCheckStatus.NEEDS_MANUAL_REVIEW -> "结果需要人工复核"
-        PrizeCheckStatus.NOT_CALCULATED -> "尚未完成测算"
+        PrizeCheckStatus.NOT_CALCULATED -> "无法完成比对"
     }
 
 /** 返回测算状态对应的安全说明。 */
@@ -623,10 +622,9 @@ private fun PrizeCheckResult.detail(): String =
         }
 
         PrizeCheckStatus.RULE_UNSUPPORTED,
-        PrizeCheckStatus.NEEDS_MANUAL_REVIEW,
         PrizeCheckStatus.NOT_CALCULATED,
         -> {
-            message ?: "当前证据不足，不能输出中奖或未中奖结论"
+            message ?: "当前无法用官方开奖号码完成比对"
         }
     }
 
@@ -653,7 +651,7 @@ private fun DrawStatus.displayName(): String =
         DrawStatus.FINAL_PAYOUT -> "开奖号码和奖金已确认"
         DrawStatus.NETWORK_UNAVAILABLE -> "网络不可用"
         DrawStatus.SOURCE_UNAVAILABLE -> "官方数据源不可用"
-        DrawStatus.CONFLICT -> "官方证据冲突"
+        DrawStatus.CONFLICT -> "官方数据不一致"
     }
 
 /** 返回不可用状态页的标题。 */
@@ -667,7 +665,7 @@ private fun DrawStatus.unavailableTitle(): String =
 
         DrawStatus.SOURCE_UNAVAILABLE -> "官方数据暂时不可用"
 
-        DrawStatus.CONFLICT -> "官方证据需要进一步复核"
+        DrawStatus.CONFLICT -> "官方开奖号码不一致"
 
         DrawStatus.FINAL_NUMBERS,
         DrawStatus.FINAL_PAYOUT,
@@ -685,7 +683,7 @@ private fun DrawStatus.recoveryHint(): String =
 
         DrawStatus.SOURCE_UNAVAILABLE -> "请稍后重新查询；若持续出现，请直接核对发行机构官网公告。"
 
-        DrawStatus.CONFLICT -> "为避免误报，应用已停止自动判断，请以发行机构公告和实体票兑奖为准。"
+        DrawStatus.CONFLICT -> "两个官方数据面给出的开奖号码不同，请稍后重新查询；若持续出现，请以发行机构公告为准。"
 
         DrawStatus.FINAL_NUMBERS,
         DrawStatus.FINAL_PAYOUT,

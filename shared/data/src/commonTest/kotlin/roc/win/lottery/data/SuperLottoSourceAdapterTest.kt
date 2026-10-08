@@ -11,7 +11,7 @@ import kotlin.test.assertTrue
 
 /** 大乐透官网主、辅助响应契约测试。 */
 class SuperLottoSourceAdapterTest {
-    /** 合法主响应应聚合七个基础奖级和两个追加字段。 */
+    /** 合法主响应应聚合七个基础奖级和两个追加字段；一等奖追加零注的 `---` 不阻断最终金额。 */
     @Test
     fun validMainResponseIsNormalized() {
         val result = parseMain(DrawContractFixtures.superLottoMain())
@@ -22,8 +22,7 @@ class SuperLottoSourceAdapterTest {
         assertEquals(listOf(1, 2), snapshot.secondaryNumbers)
         assertEquals(DrawPolicy.STANDARD, snapshot.policy)
         assertEquals(7, snapshot.prizeTiers.size)
-        assertTrue(snapshot.publicationFieldsComplete)
-        assertFalse(snapshot.payoutFieldsComplete)
+        assertTrue(snapshot.payoutFieldsComplete)
         val first = snapshot.prizeTiers.single { it.code == PrizeTierCodes.FIRST }
         assertEquals(1_000_000_000L, first.singlePrizeFen)
         assertNull(first.additionalPrizeFen)
@@ -168,10 +167,10 @@ class SuperLottoSourceAdapterTest {
         assertEquals(7, assertIs<SourceParseResult.Success<SupportingDrawSnapshot>>(result).value.prizeTiers.size)
     }
 
-    /** 未知奖级必须阻断，不能按数组下标猜测。 */
+    /** 未知奖级不能按数组下标猜测金额，但已审核的开奖号码仍可比对。 */
     @Test
-    fun unknownPrizeTierIsSourceUnavailable() {
-        assertIs<SourceParseResult.SourceUnavailable>(
+    fun unknownPrizeTierKeepsNumbersButDropsTiers() {
+        assertNumbersWithoutTiers(
             parseMain(
                 DrawContractFixtures.superLottoMain(
                     promotionFlag = 1,
@@ -191,18 +190,16 @@ class SuperLottoSourceAdapterTest {
         assertNull(snapshot.prizeTiers.single { it.code == PrizeTierCodes.THIRD }.singlePrizeFen)
     }
 
-    /** 三至七等奖混用两套固定奖档时必须拒绝整个官网响应。 */
+    /** 三至七等奖混用两套固定奖档时奖级表不作为金额依据，但号码仍可比对。 */
     @Test
-    fun mixedFixedPrizeBandsAreSourceUnavailable() {
-        assertIs<SourceParseResult.SourceUnavailable>(
-            parseMain(DrawContractFixtures.superLottoMain(thirdPrizeAmount = "5,000")),
-        )
+    fun mixedFixedPrizeBandsKeepNumbersButDropTiers() {
+        assertNumbersWithoutTiers(parseMain(DrawContractFixtures.superLottoMain(thirdPrizeAmount = "5,000")))
     }
 
-    /** 已发布的一等奖追加金额偏离基本奖金 80% 时必须拒绝。 */
+    /** 已发布的一等奖追加金额偏离基本奖金 80% 时奖级表不作为金额依据，但号码仍可比对。 */
     @Test
-    fun invalidAdditionalPrizeRatioIsSourceUnavailable() {
-        assertIs<SourceParseResult.SourceUnavailable>(
+    fun invalidAdditionalPrizeRatioKeepsNumbersButDropsTiers() {
+        assertNumbersWithoutTiers(
             parseMain(
                 DrawContractFixtures.superLottoMain(
                     firstAdditionalCount = "1",
@@ -218,6 +215,15 @@ class SuperLottoSourceAdapterTest {
         assertIs<SourceParseResult.NotPublished>(
             parseSupporting(DrawContractFixtures.superLottoSupporting(issue = "26092")),
         )
+    }
+
+    /** 断言主响应仍给出号码，但奖级表被整体放弃且金额待定。 */
+    private fun assertNumbersWithoutTiers(result: SourceParseResult<MainDrawSnapshot>) {
+        val snapshot = assertIs<SourceParseResult.Success<MainDrawSnapshot>>(result).value
+        assertEquals(listOf(3, 4, 7, 12, 32), snapshot.primaryNumbers)
+        assertEquals(listOf(1, 2), snapshot.secondaryNumbers)
+        assertTrue(snapshot.prizeTiers.isEmpty())
+        assertFalse(snapshot.payoutFieldsComplete)
     }
 
     /** 创建默认大乐透主响应解析结果。 */

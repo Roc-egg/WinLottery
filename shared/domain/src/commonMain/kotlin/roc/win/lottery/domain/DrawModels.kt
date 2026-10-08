@@ -20,7 +20,7 @@ enum class DrawStatus {
     /** 官网数据源异常或结构发生变化。 */
     SOURCE_UNAVAILABLE,
 
-    /** 同一期的两份证据互相冲突。 */
+    /** 同一期两个官方数据面给出的开奖号码互相矛盾。 */
     CONFLICT,
 }
 
@@ -89,7 +89,7 @@ enum class DrawPolicy {
  * @property policy 当期经官方信息确认的特别政策。
  * @property prizeTiers 当期已发布的奖级金额。
  * @property evidence 主查询数据来源证据。
- * @property supportingEvidence 用于交叉核对的其他官方证据。
+ * @property supportingEvidence 用于交叉核对的其他官方证据；辅助数据面暂不可用时为空。
  */
 data class DrawResult(
     val lotteryType: LotteryType,
@@ -108,7 +108,7 @@ data class DrawResult(
 
 /** 中奖测算的整体状态。 */
 enum class PrizeCheckStatus {
-    /** 尚未执行测算。 */
+    /** 票面或开奖号码无法用于比对，未执行测算。 */
     NOT_CALCULATED,
 
     /** 至少一行投注中奖。 */
@@ -119,9 +119,6 @@ enum class PrizeCheckStatus {
 
     /** 对应期号没有经过验证的规则。 */
     RULE_UNSUPPORTED,
-
-    /** 输入或开奖证据不足，需要人工复核。 */
-    NEEDS_MANUAL_REVIEW,
 }
 
 /**
@@ -147,7 +144,7 @@ data class BetLinePrizeResult(
  * @property status 测算状态。
  * @property lineResults 保留票面行顺序的逐注结果。
  * @property estimatedPrizeFen 整票税前奖金，金额不完整时为 `null`。
- * @property message 不能完成测算时的简体中文原因。
+ * @property message 不能完成测算或金额待定时的简体中文说明。
  */
 data class PrizeCheckResult(
     val status: PrizeCheckStatus,
@@ -163,7 +160,7 @@ fun interface PrizeCalculator {
      *
      * @param ticket 已通过领域校验的彩票。
      * @param drawResult 至少达到号码可判断状态的开奖结果。
-     * @return 不会把未知状态降级为未中奖的测算结果。
+     * @return 官方号码可用时的中奖或未中奖结论；金额未知时只留空金额，不把未知状态降级为未中奖。
      */
     fun calculate(
         ticket: ConfirmedTicket,

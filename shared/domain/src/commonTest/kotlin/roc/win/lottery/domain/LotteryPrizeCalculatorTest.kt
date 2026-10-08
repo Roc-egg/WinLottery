@@ -5,7 +5,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-/** B2 单式、多注、倍投、追加与失败保护测试。 */
+/** B2 单式、多注、倍投、追加与无法比对场景测试。 */
 class LotteryPrizeCalculatorTest {
     /** 被测中奖计算器。 */
     private val calculator = LotteryPrizeCalculator()
@@ -121,9 +121,9 @@ class LotteryPrizeCalculatorTest {
         assertTrue(result.message.orEmpty().contains("待官方数据确认"))
     }
 
-    /** 大乐透出现现行七奖级之外的未知奖级时必须进入人工复核。 */
+    /** 官方数据多出未知奖级时不影响已命中奖级的结论和金额。 */
     @Test
-    fun unknownSuperLottoTierNeedsManualReview() {
+    fun unknownExtraTierDoesNotBlockWinningResult() {
         val ticket =
             ticket(
                 lotteryType = LotteryType.SUPER_LOTTO,
@@ -139,18 +139,19 @@ class LotteryPrizeCalculatorTest {
 
         val result = calculator.calculate(ticket, draw)
 
-        assertEquals(PrizeCheckStatus.NEEDS_MANUAL_REVIEW, result.status)
-        assertTrue(result.message.orEmpty().contains("奖级"))
+        assertEquals(PrizeCheckStatus.WIN, result.status)
+        assertEquals(PrizeTierCodes.FIRST, result.lineResults.single().prizeTierCode)
+        assertEquals(1_000_000L, result.estimatedPrizeFen)
     }
 
-    /** 大乐透三至七等奖混用两套官方固定奖档时必须进入人工复核。 */
+    /** 固定奖金额与内置档位不一致时仍按官方当期金额给出结论。 */
     @Test
-    fun mixedSuperLottoFixedPrizeBandsNeedManualReview() {
+    fun officialFixedPrizeOutsideKnownBandsStillProducesResult() {
         val ticket =
             ticket(
                 lotteryType = LotteryType.SUPER_LOTTO,
                 issue = "26091",
-                lines = listOf(line(listOf(1, 2, 3, 4, 5), listOf(1, 2))),
+                lines = listOf(line(listOf(1, 2, 3, 4, 5), listOf(3, 4))),
                 multiplier = 1,
                 paidAmountFen = 200L,
             )
@@ -164,8 +165,9 @@ class LotteryPrizeCalculatorTest {
 
         val result = calculator.calculate(ticket, draw)
 
-        assertEquals(PrizeCheckStatus.NEEDS_MANUAL_REVIEW, result.status)
-        assertTrue(result.message.orEmpty().contains("固定奖档位"))
+        assertEquals(PrizeCheckStatus.WIN, result.status)
+        assertEquals(PrizeTierCodes.THIRD, result.lineResults.single().prizeTierCode)
+        assertEquals(500_000L, result.estimatedPrizeFen)
     }
 
     /** `FINAL_NUMBERS` 只能确认奖级，不能泄漏尚未最终确认的金额。 */
@@ -229,9 +231,9 @@ class LotteryPrizeCalculatorTest {
         assertEquals(1_000L, result.estimatedPrizeFen)
     }
 
-    /** 特别规定已知区间缺少特别政策证据时必须阻断测算。 */
+    /** 已知特别规定期间即使官方数据缺少政策标记也要判出福运奖，金额待定。 */
     @Test
-    fun missingKnownFortunePolicyNeedsManualReview() {
+    fun knownFortunePeriodAlwaysEnablesFortunePrize() {
         val ticket =
             ticket(
                 lotteryType = LotteryType.DOUBLE_COLOR_BALL,
@@ -243,8 +245,10 @@ class LotteryPrizeCalculatorTest {
 
         val result = calculator.calculate(ticket, doubleColorBallDraw(issue = "2026014"))
 
-        assertEquals(PrizeCheckStatus.NEEDS_MANUAL_REVIEW, result.status)
-        assertTrue(result.message.orEmpty().contains("特别规定"))
+        assertEquals(PrizeCheckStatus.WIN, result.status)
+        assertEquals(PrizeTierCodes.FORTUNE, result.lineResults.single().prizeTierCode)
+        assertNull(result.estimatedPrizeFen)
+        assertTrue(result.message.orEmpty().contains("待官方数据确认"))
     }
 
     /** 完整号码证据下所有行均未中奖时才允许输出未中奖。 */
@@ -268,7 +272,7 @@ class LotteryPrizeCalculatorTest {
 
     /** 发布中状态绝不能输出未中奖。 */
     @Test
-    fun publishingDrawNeedsManualReview() {
+    fun publishingDrawIsNotCompared() {
         val ticket =
             ticket(
                 lotteryType = LotteryType.SUPER_LOTTO,
@@ -280,13 +284,13 @@ class LotteryPrizeCalculatorTest {
 
         val result = calculator.calculate(ticket, superLottoDraw().copy(status = DrawStatus.PUBLISHING))
 
-        assertEquals(PrizeCheckStatus.NEEDS_MANUAL_REVIEW, result.status)
+        assertEquals(PrizeCheckStatus.NOT_CALCULATED, result.status)
         assertTrue(result.lineResults.isEmpty())
     }
 
-    /** 缺少官方辅助核对证据时即使号码完整也不能输出未中奖。 */
+    /** 只取得主官方数据面时也应直接给出比对结论。 */
     @Test
-    fun missingSupportingEvidenceNeedsManualReview() {
+    fun missingSupportingEvidenceStillProducesConclusion() {
         val ticket =
             ticket(
                 lotteryType = LotteryType.SUPER_LOTTO,
@@ -298,13 +302,13 @@ class LotteryPrizeCalculatorTest {
 
         val result = calculator.calculate(ticket, superLottoDraw().copy(supportingEvidence = emptyList()))
 
-        assertEquals(PrizeCheckStatus.NEEDS_MANUAL_REVIEW, result.status)
-        assertTrue(result.message.orEmpty().contains("辅助核对"))
+        assertEquals(PrizeCheckStatus.NO_WIN, result.status)
+        assertEquals(0L, result.estimatedPrizeFen)
     }
 
-    /** 已确认特别规定区间之外不能擅自套用福运奖政策。 */
+    /** 官方数据在已知区间之外给出福运奖政策时按官方政策判奖。 */
     @Test
-    fun fortunePolicyOutsideConfirmedRangeNeedsManualReview() {
+    fun officialFortunePolicyOutsideKnownRangeIsTrusted() {
         val ticket =
             ticket(
                 lotteryType = LotteryType.DOUBLE_COLOR_BALL,
@@ -320,8 +324,9 @@ class LotteryPrizeCalculatorTest {
                 doubleColorBallDraw().copy(policy = DrawPolicy.DOUBLE_COLOR_BALL_FORTUNE),
             )
 
-        assertEquals(PrizeCheckStatus.NEEDS_MANUAL_REVIEW, result.status)
-        assertTrue(result.message.orEmpty().contains("特别规定"))
+        assertEquals(PrizeCheckStatus.WIN, result.status)
+        assertEquals(PrizeTierCodes.FORTUNE, result.lineResults.single().prizeTierCode)
+        assertNull(result.estimatedPrizeFen)
     }
 
     /** 旧规则期号必须明确返回不支持，不能套用当前规则。 */
@@ -342,9 +347,9 @@ class LotteryPrizeCalculatorTest {
         assertTrue(result.lineResults.isEmpty())
     }
 
-    /** 彩票期号和开奖结果不一致时必须阻断。 */
+    /** 彩票期号和开奖结果不一致时不能比对。 */
     @Test
-    fun mismatchedDrawNeedsManualReview() {
+    fun mismatchedDrawIsNotCompared() {
         val ticket =
             ticket(
                 lotteryType = LotteryType.SUPER_LOTTO,
@@ -356,8 +361,53 @@ class LotteryPrizeCalculatorTest {
 
         val result = calculator.calculate(ticket, superLottoDraw())
 
-        assertEquals(PrizeCheckStatus.NEEDS_MANUAL_REVIEW, result.status)
+        assertEquals(PrizeCheckStatus.NOT_CALCULATED, result.status)
         assertTrue(result.message.orEmpty().contains("期号不一致"))
+    }
+
+    /**
+     * 多期票逐期测算时沿用整票期数和金额，不能因为从当前期往后展开超出年度中段上限而阻断结论。
+     */
+    @Test
+    fun laterPeriodOfMultiPeriodTicketIsCompared() {
+        val ticket =
+            ticket(
+                lotteryType = LotteryType.DOUBLE_COLOR_BALL,
+                issue = "2026118",
+                lines = listOf(line(listOf(1, 2, 3, 4, 5, 8), listOf(7))),
+                multiplier = 1,
+                periodCount = 7,
+                paidAmountFen = 1_400L,
+            )
+
+        val result = calculator.calculate(ticket, doubleColorBallDraw(issue = "2026118"))
+
+        assertEquals(PrizeCheckStatus.WIN, result.status)
+        assertEquals(PrizeTierCodes.THIRD, result.lineResults.single().prizeTierCode)
+        assertEquals(300_000L, result.estimatedPrizeFen)
+    }
+
+    /** 重复奖级只让对应金额待定，不阻断中奖结论。 */
+    @Test
+    fun duplicatedTierKeepsWinningTierWithoutAmount() {
+        val ticket =
+            ticket(
+                lotteryType = LotteryType.DOUBLE_COLOR_BALL,
+                issue = "2026091",
+                lines = listOf(line(listOf(1, 2, 3, 4, 5, 8), listOf(7))),
+                multiplier = 1,
+                paidAmountFen = 200L,
+            )
+        val draw =
+            doubleColorBallDraw().copy(
+                prizeTiers = doubleColorBallDraw().prizeTiers + tier(PrizeTierCodes.THIRD, 300_000L),
+            )
+
+        val result = calculator.calculate(ticket, draw)
+
+        assertEquals(PrizeCheckStatus.WIN, result.status)
+        assertEquals(PrizeTierCodes.THIRD, result.lineResults.single().prizeTierCode)
+        assertNull(result.estimatedPrizeFen)
     }
 
     /** 创建大乐透最终开奖模型。 */

@@ -1059,6 +1059,7 @@ class LotteryAppController(
     /**
      * 按时间顺序查询一张多期票，并保留每一期独立状态。
      *
+     * 期号优先采用官网已开奖的实际期号，因此可以跨越年度换期；尚未开奖的剩余期次按本年度序号顺延预估。
      * 明确尚未开奖、网络断开或数据源整体不可用时停止本轮后续请求；发布核对中和单期冲突只影响对应期次。
      */
     private suspend fun queryMultipleDraws(
@@ -1067,6 +1068,11 @@ class LotteryAppController(
         previousResults: List<PeriodVerification>? = null,
     ) {
         if (generation != flowGeneration) return
+        val drawnIssues =
+            container.drawRepository
+                .getDrawnIssues(ticket.lotteryType.value, ticket.issue.value, ticket.periodCount.value)
+                .orEmpty()
+        if (generation != flowGeneration) return
         val issues =
             when (
                 val resolution =
@@ -1074,6 +1080,7 @@ class LotteryAppController(
                         lotteryType = ticket.lotteryType.value,
                         firstIssue = ticket.issue.value,
                         periodCount = ticket.periodCount.value,
+                        drawnIssues = drawnIssues,
                     )
             ) {
                 is IssueSequenceResult.Success -> {
@@ -1185,17 +1192,19 @@ class LotteryAppController(
         }
     }
 
-    /** 选择多期结果页本轮需要重新查询的期号。 */
+    /**
+     * 选择多期结果页本轮需要重新查询的期号。
+     *
+     * 以本轮展开的期号为准：预估期号跨年度后被官网实际期号替换时，新期号没有既有结果，同样需要查询。
+     */
     private fun selectMultiPeriodRetryTargets(
         issues: List<Issue>,
         previousResults: List<PeriodVerification>?,
     ): Set<Issue> {
         if (previousResults == null) return issues.toSet()
-        val unfinished =
-            previousResults
-                .filter { it.requiresRetry }
-                .mapTo(mutableSetOf()) { it.issue }
-        return unfinished.ifEmpty { issues.toMutableSet() }
+        val previousByIssue = previousResults.associateBy { it.issue }
+        val unfinished = issues.filterTo(mutableSetOf()) { previousByIssue[it]?.requiresRetry != false }
+        return unfinished.ifEmpty { issues.toSet() }
     }
 
     /** 为因前序状态停止查询的后续期次生成明确说明。 */

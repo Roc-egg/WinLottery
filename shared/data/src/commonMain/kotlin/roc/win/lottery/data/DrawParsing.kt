@@ -50,11 +50,9 @@ internal data class MainDrawSnapshot(
     val secondaryNumbers: List<Int>,
     /** 当期已确认政策，无法确认时为 `null`。 */
     val policy: DrawPolicy?,
-    /** 当期奖级明细。 */
+    /** 当期奖级明细；奖级表无法按现行规则解析时为空列表。 */
     val prizeTiers: List<PrizeTier>,
-    /** 主源是否满足已知的审核和发布字段。 */
-    val publicationFieldsComplete: Boolean,
-    /** 所有实际有中奖注的奖级金额是否完整。 */
+    /** 所有实际有中奖注的奖级金额是否完整且可直接作为税前奖金。 */
     val payoutFieldsComplete: Boolean,
     /** 主数据面规范化证据。 */
     val evidence: EvidenceDraft,
@@ -218,7 +216,6 @@ internal fun canonicalMainDraw(
     secondaryNumbers: List<Int>,
     policy: DrawPolicy?,
     prizeTiers: List<PrizeTier>,
-    publicationFieldsComplete: Boolean,
     detailUrl: String?,
 ): String =
     buildJsonObject {
@@ -228,7 +225,6 @@ internal fun canonicalMainDraw(
         put("primaryNumbers", jsonNumbers(primaryNumbers))
         put("secondaryNumbers", jsonNumbers(secondaryNumbers))
         put("policy", policy?.name ?: "UNKNOWN")
-        put("publicationFieldsComplete", publicationFieldsComplete)
         put("detailUrl", detailUrl.orEmpty())
         put("prizeTiers", jsonPrizeTiers(prizeTiers))
     }.toString()

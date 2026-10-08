@@ -29,7 +29,7 @@ import kotlin.test.assertTrue
 import kotlin.time.Clock
 import kotlin.time.Instant
 
-/** 官网仓库请求范围、状态映射、稳定性、修订和冲突测试。 */
+/** 官网仓库请求范围、状态映射、辅助核对降级、修订和号码冲突测试。 */
 class OfficialDrawRepositoryTest {
     /** 历史双色球应在同一次用户调用内完成双源核对并返回最终奖金状态。 */
     @Test
@@ -140,7 +140,7 @@ class OfficialDrawRepositoryTest {
             assertEquals(2, requests.size)
         }
 
-    /** 大乐透两个已审核发布 JSON 一致时无需 PDF 提取器即可首次形成终态。 */
+    /** 大乐透两个已审核发布 JSON 一致时无需 PDF 提取器即可首次形成终态；一等奖追加零注的 `---` 不阻断金额。 */
     @Test
     fun latestSuperLottoPublishedSourcesReturnImmediatelyWithoutPdfExtractor() =
         runTest {
@@ -155,7 +155,7 @@ class OfficialDrawRepositoryTest {
 
             val result = repository.getDraw(LotteryType.SUPER_LOTTO, Issue("26091"))
 
-            assertEquals(DrawStatus.FINAL_NUMBERS, assertIs<DrawQueryResult.Success>(result).drawResult.status)
+            assertEquals(DrawStatus.FINAL_PAYOUT, assertIs<DrawQueryResult.Success>(result).drawResult.status)
         }
 
     /** 主、辅助号码不一致必须进入冲突，绝不能输出开奖或未中奖结论。 */
@@ -174,9 +174,9 @@ class OfficialDrawRepositoryTest {
             assertEquals(DrawStatus.CONFLICT, assertIs<DrawQueryResult.Unavailable>(result).status)
         }
 
-    /** 同一期主内容在主动刷新后变化必须增加修订并永久保持冲突。 */
+    /** 号码冲突只影响本次查询，官方数据恢复一致后重新查询即可得到结果。 */
     @Test
-    fun changedMainContentReturnsConflict() =
+    fun numberConflictIsNotSticky() =
         runTest {
             var queryRound = 0
             val repository =
@@ -184,12 +184,12 @@ class OfficialDrawRepositoryTest {
                     when (request.url.encodedPath) {
                         SSQ_MAIN_PATH -> {
                             queryRound += 1
-                            val red = if (queryRound == 1) DrawContractFixtures.DEFAULT_SSQ_RED else "01,03,08,16,22,30"
-                            jsonResponse(DrawContractFixtures.doubleColorBallMain(red = red))
+                            jsonResponse(DrawContractFixtures.doubleColorBallMain())
                         }
 
                         SSQ_SUPPORTING_PATH -> {
-                            jsonResponse(DrawContractFixtures.doubleColorBallSupporting())
+                            val red = if (queryRound == 1) "01,03,08,16,22,30" else DrawContractFixtures.DEFAULT_SSQ_RED
+                            jsonResponse(DrawContractFixtures.doubleColorBallSupporting(red = red))
                         }
 
                         else -> {
@@ -198,14 +198,51 @@ class OfficialDrawRepositoryTest {
                     }
                 }
 
-            assertIs<DrawQueryResult.Success>(
-                repository.getDraw(LotteryType.DOUBLE_COLOR_BALL, Issue("2026091")),
-            )
-            val changed = repository.getDraw(LotteryType.DOUBLE_COLOR_BALL, Issue("2026091"))
-            assertEquals(DrawStatus.CONFLICT, assertIs<DrawQueryResult.Unavailable>(changed).status)
+            val conflicted = repository.getDraw(LotteryType.DOUBLE_COLOR_BALL, Issue("2026091"))
+            assertEquals(DrawStatus.CONFLICT, assertIs<DrawQueryResult.Unavailable>(conflicted).status)
 
-            val stillConflicted = repository.getDraw(LotteryType.DOUBLE_COLOR_BALL, Issue("2026091"))
-            assertEquals(DrawStatus.CONFLICT, assertIs<DrawQueryResult.Unavailable>(stillConflicted).status)
+            val recovered = repository.getDraw(LotteryType.DOUBLE_COLOR_BALL, Issue("2026091"))
+            assertEquals(DrawStatus.FINAL_PAYOUT, assertIs<DrawQueryResult.Success>(recovered).drawResult.status)
+        }
+
+    /** 同一期官方内容在主动刷新后变化时以最新官方内容为准，并增加修订号。 */
+    @Test
+    fun changedOfficialContentReturnsLatestRevision() =
+        runTest {
+            var queryRound = 0
+            val changedRed = "01,03,08,16,22,30"
+            val repository =
+                repository(clock = MutableTestClock("2026-08-13T01:00:00Z")) { request ->
+                    when (request.url.encodedPath) {
+                        SSQ_MAIN_PATH -> {
+                            queryRound += 1
+                            val red = if (queryRound == 1) DrawContractFixtures.DEFAULT_SSQ_RED else changedRed
+                            jsonResponse(DrawContractFixtures.doubleColorBallMain(red = red))
+                        }
+
+                        SSQ_SUPPORTING_PATH -> {
+                            val red = if (queryRound == 1) DrawContractFixtures.DEFAULT_SSQ_RED else changedRed
+                            jsonResponse(DrawContractFixtures.doubleColorBallSupporting(red = red))
+                        }
+
+                        else -> {
+                            error("收到未预期请求：${request.url}")
+                        }
+                    }
+                }
+
+            val first =
+                assertIs<DrawQueryResult.Success>(
+                    repository.getDraw(LotteryType.DOUBLE_COLOR_BALL, Issue("2026091")),
+                ).drawResult
+            val changed =
+                assertIs<DrawQueryResult.Success>(
+                    repository.getDraw(LotteryType.DOUBLE_COLOR_BALL, Issue("2026091")),
+                ).drawResult
+
+            assertEquals(1, first.revision)
+            assertEquals(2, changed.revision)
+            assertEquals(listOf(1, 3, 8, 16, 22, 30), changed.primaryNumbers)
         }
 
     /** 奖金从待定到官方金额属于正常发布进展，应增加修订而不是进入冲突。 */
@@ -254,9 +291,9 @@ class OfficialDrawRepositoryTest {
             assertEquals(2, completed.revision)
         }
 
-    /** 单边奖金先发布时应保持发布中，双边同步后才生成新修订并放行。 */
+    /** 主数据面奖金未发布时先给出号码结论，主数据面奖金发布后生成新修订并给出金额。 */
     @Test
-    fun oneSidedPayoutCompletionWaitsForBothSources() =
+    fun oneSidedPayoutKeepsNumbersUntilMainPayoutPublished() =
         runTest {
             var queryRound = 0
             val repository =
@@ -281,8 +318,12 @@ class OfficialDrawRepositoryTest {
                     }
                 }
 
-            val first = repository.getDraw(LotteryType.DOUBLE_COLOR_BALL, Issue("2026091"))
-            assertEquals(DrawStatus.PUBLISHING, assertIs<DrawQueryResult.Unavailable>(first).status)
+            val first =
+                assertIs<DrawQueryResult.Success>(
+                    repository.getDraw(LotteryType.DOUBLE_COLOR_BALL, Issue("2026091")),
+                ).drawResult
+            assertEquals(DrawStatus.FINAL_NUMBERS, first.status)
+            assertEquals(1, first.revision)
 
             val synchronized =
                 assertIs<DrawQueryResult.Success>(
@@ -330,9 +371,9 @@ class OfficialDrawRepositoryTest {
             assertEquals(600_000L, result.estimatedPrizeFen)
         }
 
-    /** 已观察到记录后刷新为空必须进入冲突。 */
+    /** 已取得记录后刷新暂时为空只影响本次查询，不会让该期永久停留在冲突。 */
     @Test
-    fun publishedRecordDisappearingReturnsConflict() =
+    fun transientEmptyMainResultIsNotStickyConflict() =
         runTest {
             var queryRound = 0
             val repository =
@@ -341,7 +382,7 @@ class OfficialDrawRepositoryTest {
                         SSQ_MAIN_PATH -> {
                             queryRound += 1
                             jsonResponse(
-                                DrawContractFixtures.doubleColorBallMain(includeRecord = queryRound == 1),
+                                DrawContractFixtures.doubleColorBallMain(includeRecord = queryRound != 2),
                             )
                         }
 
@@ -358,9 +399,56 @@ class OfficialDrawRepositoryTest {
             assertIs<DrawQueryResult.Success>(
                 repository.getDraw(LotteryType.DOUBLE_COLOR_BALL, Issue("2026091")),
             )
-            val result = repository.getDraw(LotteryType.DOUBLE_COLOR_BALL, Issue("2026091"))
+            val empty = repository.getDraw(LotteryType.DOUBLE_COLOR_BALL, Issue("2026091"))
+            assertEquals(DrawStatus.NOT_PUBLISHED, assertIs<DrawQueryResult.Unavailable>(empty).status)
 
-            assertEquals(DrawStatus.CONFLICT, assertIs<DrawQueryResult.Unavailable>(result).status)
+            val recovered =
+                assertIs<DrawQueryResult.Success>(
+                    repository.getDraw(LotteryType.DOUBLE_COLOR_BALL, Issue("2026091")),
+                ).drawResult
+            assertEquals(1, recovered.revision)
+        }
+
+    /** 辅助数据面不可用时仍以主官方数据面给出结果，只是不附带辅助证据。 */
+    @Test
+    fun supportingSourceFailureStillReturnsMainResult() =
+        runTest {
+            val repository =
+                repository(clock = MutableTestClock("2026-08-13T01:00:00Z")) { request ->
+                    when (request.url.encodedPath) {
+                        SSQ_MAIN_PATH -> jsonResponse(DrawContractFixtures.doubleColorBallMain())
+                        SSQ_SUPPORTING_PATH -> respondError(HttpStatusCode.ServiceUnavailable)
+                        else -> error("收到未预期请求：${request.url}")
+                    }
+                }
+
+            val draw =
+                assertIs<DrawQueryResult.Success>(
+                    repository.getDraw(LotteryType.DOUBLE_COLOR_BALL, Issue("2026091")),
+                ).drawResult
+
+            assertEquals(DrawStatus.FINAL_PAYOUT, draw.status)
+            assertTrue(draw.supportingEvidence.isEmpty())
+        }
+
+    /** 两个官方数据面号码一致但已发布金额不同时，仍给出号码结论，金额等待官方数据一致。 */
+    @Test
+    fun supportingPrizeMismatchKeepsNumbersButDefersPayout() =
+        runTest {
+            val repository =
+                ssqRepository(
+                    DrawContractFixtures.doubleColorBallMain(),
+                    DrawContractFixtures.doubleColorBallSupporting(firstPrizeAmount = "9999999"),
+                    MutableTestClock("2026-08-13T01:00:00Z"),
+                )
+
+            val draw =
+                assertIs<DrawQueryResult.Success>(
+                    repository.getDraw(LotteryType.DOUBLE_COLOR_BALL, Issue("2026091")),
+                ).drawResult
+
+            assertEquals(DrawStatus.FINAL_NUMBERS, draw.status)
+            assertEquals(1, draw.supportingEvidence.size)
         }
 
     /** 大乐透当前最新期可用聚合接口交叉核对并返回最终奖金。 */
@@ -407,9 +495,9 @@ class OfficialDrawRepositoryTest {
             assertTrue(requests[1].contains("param=85%2C0") || requests[1].contains("param=85,0"))
         }
 
-    /** 大乐透非最新历史期缺少可解析公告证据时必须保守停留在发布中。 */
+    /** 大乐透非最新历史期取不到公告证据时仍以主官方数据面给出结果。 */
     @Test
-    fun historicalSuperLottoWithoutIndependentEvidenceIsPublishing() =
+    fun historicalSuperLottoWithoutPdfExtractorUsesMainSourceOnly() =
         runTest {
             val repository =
                 repository(clock = MutableTestClock("2026-08-13T01:00:00Z")) { request ->
@@ -434,9 +522,13 @@ class OfficialDrawRepositoryTest {
                     }
                 }
 
-            val result = repository.getDraw(LotteryType.SUPER_LOTTO, Issue("26090"))
+            val draw =
+                assertIs<DrawQueryResult.Success>(
+                    repository.getDraw(LotteryType.SUPER_LOTTO, Issue("26090")),
+                ).drawResult
 
-            assertEquals(DrawStatus.PUBLISHING, assertIs<DrawQueryResult.Unavailable>(result).status)
+            assertEquals(listOf(9, 14, 17, 19, 24), draw.primaryNumbers)
+            assertTrue(draw.supportingEvidence.isEmpty())
         }
 
     /** 大乐透历史期应下载同一期官方 PDF，并在严格一致后返回最终奖金状态。 */
