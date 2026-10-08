@@ -1,9 +1,7 @@
 package roc.win.lottery.app.ui
 
-import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -11,47 +9,57 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyListScope
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilterChip
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.PlainTooltip
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TooltipBox
+import androidx.compose.material3.TooltipDefaults
+import androidx.compose.material3.rememberTooltipState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.backhandler.BackHandler
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
@@ -62,113 +70,34 @@ import roc.win.lottery.app.TrendChartAction
 import roc.win.lottery.app.TrendChartContent
 import roc.win.lottery.app.TrendChartState
 import roc.win.lottery.app.TrendWorkspaceView
+import roc.win.lottery.app.trendNumberZones
 import roc.win.lottery.domain.LotteryTrendArea
-import roc.win.lottery.domain.LotteryTrendSnapshot
 import roc.win.lottery.domain.LotteryType
-import roc.win.lottery.domain.TrendDrawRow
-import roc.win.lottery.domain.TrendNumberStatistics
 import roc.win.lottery.domain.TrendSampleSize
+import roc.win.lottery.domain.trendAreaSpec
 import kotlin.time.Instant
 
-/** 竖屏固定期号列宽度。 */
-private val PORTRAIT_ISSUE_COLUMN_WIDTH = 80.dp
+/** 数据工作台的三个互补视图。 */
+internal enum class TrendDataView {
+    /** 号码分布、遗漏和相邻期连线。 */
+    NUMBERS,
 
-/** 竖屏号码矩阵单元格宽度。 */
-private val PORTRAIT_CELL_WIDTH = 32.dp
+    /** 和值、跨度、奇偶、大小、分区与重号。 */
+    SHAPES,
 
-/** 横屏固定期号列宽度。 */
-private val LANDSCAPE_ISSUE_COLUMN_WIDTH = 64.dp
-
-/** 横屏号码格允许使用的最小宽度。 */
-private val LANDSCAPE_MIN_CELL_WIDTH = 14.dp
-
-/** 横屏号码格允许使用的最大宽度。 */
-private val LANDSCAPE_MAX_CELL_WIDTH = 32.dp
-
-/** 允许判断完整矩阵已经铺满可用宽度的浮点误差。 */
-private val TREND_LAYOUT_TOLERANCE = 0.5.dp
-
-/** 官方历史开奖加载时间使用的北京时间。 */
-private val CHINA_TIME_ZONE = TimeZone.of("Asia/Shanghai")
-
-/** 完整加载时间文本长度。 */
-private const val FETCHED_TIME_TEXT_LENGTH = 16
-
-/** 横屏时间文本省略年份和连字符的前缀长度。 */
-private const val COMPACT_FETCHED_TIME_PREFIX_LENGTH = 5
-
-/** 大乐透前区命中颜色，对齐体彩常见蓝色语义。 */
-private val SuperLottoPrimaryBlue = Color(0xFF2F75B5)
-
-/** 大乐透后区命中颜色，对齐体彩常见黄色语义。 */
-private val SuperLottoSecondaryAmber = Color(0xFFD99A00)
-
-/** 双色球红球命中颜色。 */
-private val DoubleColorBallPrimaryRed = Color(0xFFC83C3C)
-
-/** 双色球蓝球命中颜色。 */
-private val DoubleColorBallSecondaryBlue = Color(0xFF2875B7)
-
-/** 大乐透前区表格底色。 */
-private val SuperLottoPrimaryTint = Color(0xFFEAF3FA)
-
-/** 大乐透后区表格底色。 */
-private val SuperLottoSecondaryTint = Color(0xFFFFF5D9)
-
-/** 双色球红球表格底色。 */
-private val DoubleColorBallPrimaryTint = Color(0xFFFFEEEE)
-
-/** 双色球蓝球表格底色。 */
-private val DoubleColorBallSecondaryTint = Color(0xFFEAF3FA)
-
-/**
- * 当前视口下号码矩阵使用的稳定尺寸。
- *
- * @property issueColumnWidth 固定期号列宽度。
- * @property cellWidth 单个号码格宽度。
- * @property zoneHeaderHeight 分区表头高度。
- * @property numberHeaderHeight 号码表头高度。
- * @property drawRowHeight 单期开奖行高度。
- * @property statisticRowHeight 单行统计高度。
- * @property hitBallSize 命中号码圆点直径。
- * @property showsAllNumbers 当前宽度是否无需横向滚动即可展示全部号码。
- */
-private data class TrendTableLayout(
-    val issueColumnWidth: Dp,
-    val cellWidth: Dp,
-    val zoneHeaderHeight: Dp,
-    val numberHeaderHeight: Dp,
-    val drawRowHeight: Dp,
-    val statisticRowHeight: Dp,
-    val hitBallSize: Dp,
-    val showsAllNumbers: Boolean,
-)
-
-/**
- * 官方常见走势图中的一个连续号码分区。
- *
- * @property label 分区名称。
- * @property firstNumber 分区首个号码。
- * @property lastNumber 分区末尾号码。
- */
-private data class TrendNumberZone(
-    val label: String,
-    val firstNumber: Int,
-    val lastNumber: Int,
-) {
-    /** 当前分区包含的号码数量。 */
-    val numberCount: Int
-        get() = lastNumber - firstNumber + 1
+    /** 当前样本内逐号统计。 */
+    STATISTICS,
 }
 
 /**
- * V1.3 跨平台走势与数学研究一级工作区。
+ * 手机优先的全屏走势工作台；全屏只隐藏应用外壳，不强制旋转设备。
  *
- * @param chart 当前会话中的走势图配置与快照。
- * @param availableMainDestinations 当前平台可进入的一级目的地。
- * @param onMainDestinationSelected 一级目的地切换操作。
- * @param onAction 修改彩种、号码区域或样本范围。
+ * @param chart 官方数据与共享配置。
+ * @param availableMainDestinations 当前平台可进入的一级页面。
+ * @param onMainDestinationSelected 切换一级页面。
+ * @param onAction 切换彩种、区域、样本或数学研究。
  */
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun TrendScreen(
     chart: TrendChartState,
@@ -176,1244 +105,561 @@ fun TrendScreen(
     onMainDestinationSelected: (MainDestination) -> Unit,
     onAction: (TrendChartAction) -> Unit,
 ) {
-    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-        val isLandscape = maxWidth > maxHeight
+    var fullscreen by rememberSaveable { mutableStateOf(true) }
+    var dataView by rememberSaveable { mutableStateOf(TrendDataView.NUMBERS) }
+    var compactPreference by rememberSaveable { mutableStateOf<Boolean?>(null) }
+    var showOmissions by rememberSaveable { mutableStateOf(true) }
+    var showLines by rememberSaveable { mutableStateOf(true) }
+    var selectedZone by rememberSaveable(chart.lotteryType, chart.area) { mutableStateOf(-1) }
+    var selectedNumber by rememberSaveable(chart.lotteryType, chart.area) { mutableStateOf<Int?>(null) }
+    var showSource by remember { mutableStateOf(false) }
+    val listState = rememberLazyListState()
+    val horizontalState = rememberScrollState()
+    val coroutineScope = rememberCoroutineScope()
+    val snapshot = chart.snapshot
+    val isBasic = chart.view == TrendWorkspaceView.BASIC_TREND
+
+    // 滚动状态放在外壳之外，全屏切换和旋转不丢失当前浏览位置。
+    LaunchedEffect(snapshot?.lotteryType, snapshot?.area, snapshot?.requestedSampleSize, snapshot?.lastIssue) {
+        // 新样本等待下一次布局再定位，避免重组期间强制重新测量旧的惰性列表。
+        snapshot?.let { listState.requestScrollToItem(it.rows.lastIndex) }
+    }
+    LaunchedEffect(chart.lotteryType, chart.area, selectedZone) { horizontalState.scrollTo(0) }
+    if (fullscreen && isBasic) BackHandler { fullscreen = false }
+
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val landscape = maxWidth > maxHeight
+        val shortLandscape = landscape && maxHeight < 500.dp
+        val compact = compactPreference ?: shortLandscape
         AppShell(
             title = "走势",
             mainDestination = MainDestination.TRENDS,
             availableMainDestinations = availableMainDestinations,
             onMainDestinationSelected = onMainDestinationSelected,
-            actions = {
-                if (isLandscape) {
-                    TrendWorkspaceViewSelector(
-                        modifier = Modifier.widthIn(max = 400.dp).fillMaxWidth(),
-                        selected = chart.view,
-                        onSelected = { view -> onAction(TrendChartAction.ChangeView(view)) },
-                    )
-                }
-            },
             scrollableContent = false,
-            compactChrome = isLandscape,
+            compactChrome = landscape,
+            immersiveContent = fullscreen && isBasic,
+            actions = {
+                TextButton(onClick = {
+                    onAction(
+                        TrendChartAction.ChangeView(
+                            if (isBasic) TrendWorkspaceView.MATHEMATICAL_RESEARCH else TrendWorkspaceView.BASIC_TREND,
+                        ),
+                    )
+                }) { Text(if (isBasic) "数学研究" else "基本走势") }
+            },
         ) {
-            TrendWorkspace(
-                chart = chart,
-                isLandscape = isLandscape,
-                onAction = onAction,
-            )
-        }
-    }
-}
-
-/**
- * 根据可用正文宽度构建竖屏浏览或横屏专注走势图。
- *
- * @param chart 当前走势图配置与快照。
- * @param isLandscape 当前是否为横屏视口。
- * @param onAction 修改走势图配置。
- */
-@Composable
-private fun TrendWorkspace(
-    chart: TrendChartState,
-    isLandscape: Boolean,
-    onAction: (TrendChartAction) -> Unit,
-) {
-    Column(modifier = Modifier.fillMaxSize()) {
-        if (!isLandscape) {
-            TrendWorkspaceViewSelector(
-                modifier =
-                    Modifier
-                        .widthIn(max = 460.dp)
-                        .fillMaxWidth()
-                        .align(Alignment.CenterHorizontally)
-                        .padding(bottom = 6.dp),
-                selected = chart.view,
-                onSelected = { view -> onAction(TrendChartAction.ChangeView(view)) },
-            )
-        }
-        Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
-            when (chart.view) {
-                TrendWorkspaceView.BASIC_TREND -> {
-                    BasicTrendWorkspace(chart = chart, isLandscape = isLandscape, onAction = onAction)
-                }
-
-                TrendWorkspaceView.MATHEMATICAL_RESEARCH -> {
-                    MathematicalResearchWorkspace(
-                        chart = chart,
-                        isLandscape = isLandscape,
-                        onLotteryTypeSelected = { lotteryType ->
-                            onAction(TrendChartAction.ChangeLotteryType(lotteryType))
-                        },
-                        onRetry = { onAction(TrendChartAction.Retry) },
-                    )
-                }
-            }
-        }
-    }
-}
-
-/**
- * 使用分段控件切换基本走势与数学研究。
- *
- * @param modifier 当前控件布局修饰符。
- * @param selected 当前工作区视图。
- * @param onSelected 视图切换操作。
- */
-@Composable
-private fun TrendWorkspaceViewSelector(
-    modifier: Modifier,
-    selected: TrendWorkspaceView,
-    onSelected: (TrendWorkspaceView) -> Unit,
-) {
-    val options = listOf(TrendWorkspaceView.BASIC_TREND, TrendWorkspaceView.MATHEMATICAL_RESEARCH)
-    SingleChoiceSegmentedButtonRow(modifier = modifier) {
-        options.forEachIndexed { index, view ->
-            SegmentedButton(
-                selected = view == selected,
-                onClick = { onSelected(view) },
-                shape = SegmentedButtonDefaults.itemShape(index, options.size),
-                label = {
-                    Text(
-                        when (view) {
-                            TrendWorkspaceView.BASIC_TREND -> "基本走势"
-                            TrendWorkspaceView.MATHEMATICAL_RESEARCH -> "数学研究"
-                        },
-                    )
-                },
-            )
-        }
-    }
-}
-
-/**
- * 根据可用正文宽度构建竖屏浏览或横屏专注走势图。
- *
- * @param chart 当前走势图配置与快照。
- * @param isLandscape 当前是否为横屏视口。
- * @param onAction 修改走势图配置。
- */
-@Composable
-private fun BasicTrendWorkspace(
-    chart: TrendChartState,
-    isLandscape: Boolean,
-    onAction: (TrendChartAction) -> Unit,
-) {
-    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-        val ready = chart.content as? TrendChartContent.Ready
-        if (ready == null) {
-            Column(modifier = Modifier.fillMaxSize()) {
-                TrendControls(chart = chart, isLandscape = isLandscape, onAction = onAction)
-                TrendLoadStatus(
-                    modifier = Modifier.weight(1f),
-                    content = chart.content,
-                    isLandscape = isLandscape,
+            if (!isBasic) {
+                MathematicalResearchWorkspace(
+                    chart = chart,
+                    isLandscape = landscape,
+                    onLotteryTypeSelected = { onAction(TrendChartAction.ChangeLotteryType(it)) },
                     onRetry = { onAction(TrendChartAction.Retry) },
                 )
+            } else {
+                Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
+                    TrendToolbar(
+                        chart,
+                        fullscreen,
+                        availableMainDestinations,
+                        onMainDestinationSelected,
+                        onAction,
+                        onFullscreen = { fullscreen = !fullscreen },
+                        inlineTools = {
+                            if (shortLandscape) {
+                                TrendDataViewTabs(dataView, { dataView = it }, inline = true)
+                                TrendDisplayMenu(
+                                    view = dataView,
+                                    compact = compact,
+                                    omissions = showOmissions,
+                                    lines = showLines,
+                                    onCompact = { compactPreference = it },
+                                    onOmissions = { showOmissions = it },
+                                    onLines = { showLines = it },
+                                )
+                            }
+                        },
+                    )
+                    if (!shortLandscape) {
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            TrendDataViewTabs(dataView, { dataView = it }, inline = false)
+                            TrendDisplayMenu(
+                                view = dataView,
+                                compact = compact,
+                                omissions = showOmissions,
+                                lines = showLines,
+                                onCompact = { compactPreference = it },
+                                onOmissions = { showOmissions = it },
+                                onLines = { showLines = it },
+                            )
+                        }
+                    }
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    if (snapshot == null) {
+                        TrendLoadStatus(Modifier.weight(1f), chart.content) { onAction(TrendChartAction.Retry) }
+                    } else {
+                        Box(Modifier.weight(1f).fillMaxWidth()) {
+                            when (dataView) {
+                                TrendDataView.NUMBERS -> {
+                                    TrendMatrix(
+                                        snapshot = snapshot,
+                                        listState = listState,
+                                        horizontalState = horizontalState,
+                                        compact = compact,
+                                        showOmissions = showOmissions,
+                                        showLines = showLines,
+                                        selectedZone = selectedZone,
+                                        onZoneSelected = { selectedZone = it },
+                                        selectedNumber = selectedNumber,
+                                        onNumberSelected = { selectedNumber = if (selectedNumber == it) null else it },
+                                        shortLandscape = shortLandscape,
+                                    )
+                                }
+
+                                TrendDataView.SHAPES -> {
+                                    TrendShapeTable(snapshot, compact)
+                                }
+
+                                TrendDataView.STATISTICS -> {
+                                    TrendStatisticsList(snapshot, compact) { number ->
+                                        selectedNumber = number
+                                        selectedZone =
+                                            if (snapshot.area == LotteryTrendArea.PRIMARY) {
+                                                trendNumberZones(snapshot.lotteryType, snapshot.area).indexOfFirst {
+                                                    number in
+                                                        it.numbers
+                                                }
+                                            } else {
+                                                -1
+                                            }
+                                        dataView = TrendDataView.NUMBERS
+                                        listState.requestScrollToItem(snapshot.rows.lastIndex)
+                                    }
+                                }
+                            }
+                        }
+                        if (dataView == TrendDataView.NUMBERS) {
+                            TrendSelectionBar(chart, selectedNumber, { selectedNumber = null }) {
+                                coroutineScope.launch { listState.animateScrollToItem(snapshot.rows.lastIndex) }
+                            }
+                        }
+                    }
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                showSource = true
+                            }.padding(horizontal = 10.dp, vertical = if (shortLandscape) 3.dp else 5.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        val missing = snapshot?.issueGaps?.sumOf { it.missingCount } ?: 0
+                        Text(
+                            if (missing >
+                                0
+                            ) {
+                                "样本缺 $missing 期 · 统计有缺口"
+                            } else {
+                                "官方历史开奖 · ${snapshot?.actualSampleCount ?: chart.sampleSize.count}期"
+                            },
+                            Modifier.weight(1f),
+                            fontSize = 10.sp,
+                            color =
+                                if (missing >
+                                    0
+                                ) {
+                                    MaterialTheme.colorScheme.error
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                        )
+                        Text("历史不预测未来", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Icon(LotteryIcons.Info, "数据来源与统计口径", Modifier.padding(start = 5.dp).size(14.dp))
+                    }
+                }
             }
-            return@BoxWithConstraints
         }
-        val snapshot = ready.snapshot
-        val horizontalScrollState = rememberScrollState()
-        val layout = trendTableLayout(maxWidth, snapshot.statistics.size, isLandscape)
-        LaunchedEffect(isLandscape, snapshot.lotteryType, snapshot.area) {
-            horizontalScrollState.scrollTo(0)
+    }
+    if (showSource) TrendSourceDialog(chart) { showSource = false }
+}
+
+/** 在单行中放置导航、彩种、区域、期数与全屏入口；窄屏和大字号允许筛选横向浏览。 */
+@Composable
+private fun TrendToolbar(
+    chart: TrendChartState,
+    fullscreen: Boolean,
+    destinations: List<MainDestination>,
+    onDestination: (MainDestination) -> Unit,
+    onAction: (TrendChartAction) -> Unit,
+    onFullscreen: () -> Unit,
+    inlineTools: @Composable RowScope.() -> Unit,
+) {
+    var navigationOpen by remember { mutableStateOf(false) }
+    Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box {
+            TrendToolButton(LotteryIcons.Navigation, "走势导航") { navigationOpen = true }
+            DropdownMenu(navigationOpen, { navigationOpen = false }) {
+                DropdownMenuItem(text = { Text("数学研究") }, leadingIcon = { Icon(LotteryIcons.Trends, null) }, onClick = {
+                    navigationOpen = false
+                    onAction(TrendChartAction.ChangeView(TrendWorkspaceView.MATHEMATICAL_RESEARCH))
+                })
+                HorizontalDivider()
+                destinations.forEach { destination ->
+                    DropdownMenuItem(text = { Text(destination.label()) }, onClick = {
+                        navigationOpen = false
+                        onDestination(destination)
+                    })
+                }
+            }
         }
-        if (isLandscape) {
-            LandscapeTrendContent(
-                chart = chart,
-                layout = layout,
-                horizontalScrollState = horizontalScrollState,
-                onAction = onAction,
-            )
-        } else {
-            PortraitTrendContent(
-                chart = chart,
-                layout = layout,
-                horizontalScrollState = horizontalScrollState,
-                onAction = onAction,
-            )
+        Row(
+            Modifier.weight(1f).horizontalScroll(rememberScrollState()),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            TrendChoiceMenu(chart.lotteryType.trendDisplayName(), "彩种", LotteryType.entries, {
+                it.trendDisplayName()
+            }, chart.lotteryType) {
+                onAction(TrendChartAction.ChangeLotteryType(it))
+            }
+            Row {
+                LotteryTrendArea.entries.forEach { area ->
+                    TrendTab(area.displayName(chart.lotteryType), chart.area == area, Modifier.width(44.dp)) {
+                        onAction(TrendChartAction.ChangeArea(area))
+                    }
+                }
+            }
+            TrendChoiceMenu("${chart.sampleSize.count}期", "样本期数", TrendSampleSize.entries, {
+                "最近 ${it.count} 期"
+            }, chart.sampleSize) {
+                onAction(TrendChartAction.ChangeSampleSize(it))
+            }
+            inlineTools()
+        }
+        TrendToolButton(
+            if (fullscreen) LotteryIcons.ExitFullscreen else LotteryIcons.Fullscreen,
+            if (fullscreen) "退出全屏" else "全屏看走势",
+            onClick = onFullscreen,
+        )
+    }
+}
+
+/** 横屏将数据页签并入工具栏，竖屏均分一行触控区域。 */
+@Composable
+private fun RowScope.TrendDataViewTabs(
+    selected: TrendDataView,
+    onSelect: (TrendDataView) -> Unit,
+    inline: Boolean,
+) {
+    TrendDataView.entries.forEach { view ->
+        TrendTab(
+            label =
+                when (view) {
+                    TrendDataView.NUMBERS -> "号码走势"
+                    TrendDataView.SHAPES -> "开奖形态"
+                    TrendDataView.STATISTICS -> "号码统计"
+                },
+            selected = selected == view,
+            modifier = if (inline) Modifier.width(78.dp) else Modifier.weight(1f),
+            onClick = { onSelect(view) },
+        )
+    }
+}
+
+/** 带当前选中标记的紧凑选项菜单。 */
+@Composable
+private fun <T> TrendChoiceMenu(
+    label: String,
+    description: String,
+    options: List<T>,
+    text: (T) -> String,
+    selected: T,
+    onSelect: (T) -> Unit,
+) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        TextButton(
+            onClick = { open = true },
+            contentPadding = PaddingValues(horizontal = 8.dp),
+            modifier =
+                Modifier.semantics {
+                    contentDescription =
+                        description
+                },
+        ) {
+            Text(label, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+            Icon(LotteryIcons.Expand, null, Modifier.padding(start = 2.dp).size(14.dp))
+        }
+        DropdownMenu(open, { open = false }) {
+            options.forEach { option ->
+                DropdownMenuItem(text = { Text(text(option)) }, trailingIcon = {
+                    if (option ==
+                        selected
+                    ) {
+                        Icon(LotteryIcons.Done, null)
+                    }
+                }, onClick = {
+                    open = false
+                    onSelect(option)
+                })
+            }
         }
     }
 }
 
-/**
- * 在保留筛选控件的同时展示官方历史开奖加载或失败状态。
- *
- * @param modifier 加载状态区域布局修饰符。
- * @param content 当前加载状态。
- * @param isLandscape 当前是否为横屏视口。
- * @param onRetry 用户明确发起重试的操作。
- */
+/** 下划线页签保持固定高度，选中状态不改变布局。 */
+@Composable
+internal fun TrendTab(
+    label: String,
+    selected: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    Column(
+        modifier.height(44.dp).clickable(role = androidx.compose.ui.semantics.Role.Tab, onClick = onClick).semantics {
+            this.selected =
+                selected
+        },
+    ) {
+        Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+            Text(
+                label,
+                fontSize = 13.sp,
+                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(
+                    2.dp,
+                ).background(if (selected) MaterialTheme.colorScheme.primary else Color.Transparent),
+        )
+    }
+}
+
+/** 图标按钮在鼠标悬停或长按时显示中文提示，并保留移动端触控尺寸。 */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun TrendToolButton(
+    icon: ImageVector,
+    description: String,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    TooltipBox(positionProvider = TooltipDefaults.rememberPlainTooltipPositionProvider(), tooltip = {
+        PlainTooltip { Text(description) }
+    }, state = rememberTooltipState()) {
+        IconButton(onClick, modifier.size(44.dp)) { Icon(icon, description, Modifier.size(20.dp)) }
+    }
+}
+
+/** 将低频显示选项收进菜单，避免持续挤占表格高度。 */
+@Composable
+private fun TrendDisplayMenu(
+    view: TrendDataView,
+    compact: Boolean,
+    omissions: Boolean,
+    lines: Boolean,
+    onCompact: (Boolean) -> Unit,
+    onOmissions: (Boolean) -> Unit,
+    onLines: (Boolean) -> Unit,
+) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        TrendToolButton(LotteryIcons.DisplaySettings, "走势显示设置") { open = true }
+        DropdownMenu(open, { open = false }) {
+            TrendCheckboxOption("紧凑显示", compact, onCompact)
+            if (view == TrendDataView.NUMBERS) {
+                TrendCheckboxOption("显示遗漏", omissions, onOmissions)
+                TrendCheckboxOption("显示连线", lines, onLines)
+            }
+        }
+    }
+}
+
+/** 整行可点选的二元显示设置。 */
+@Composable
+private fun TrendCheckboxOption(
+    label: String,
+    checked: Boolean,
+    onChange: (Boolean) -> Unit,
+) {
+    DropdownMenuItem(
+        text = { Text(label) },
+        trailingIcon = { Checkbox(checked, null) },
+        onClick = { onChange(!checked) },
+    )
+}
+
+/** 在页底显示被追踪号码的统计，未追踪时显示最新一期本区域开奖。 */
+@Composable
+private fun TrendSelectionBar(
+    chart: TrendChartState,
+    selectedNumber: Int?,
+    onClear: () -> Unit,
+    onLatest: () -> Unit,
+) {
+    val snapshot = requireNotNull(chart.snapshot)
+    val statistic = snapshot.statistics.firstOrNull { it.number == selectedNumber }
+    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+    Row(Modifier.fillMaxWidth().height(44.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            Modifier.weight(1f).horizontalScroll(rememberScrollState()).padding(start = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            if (statistic != null) {
+                Text(
+                    "${statistic.number.twoDigits()}号",
+                    color = trendHitColor(chart.lotteryType, chart.area),
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 13.sp,
+                )
+                Text(
+                    "出现 ${statistic.hitCount}  /  当前遗漏 ${statistic.currentOmission}  /  最大 ${statistic.maxOmission}",
+                    fontSize = 12.sp,
+                )
+            } else {
+                Text(
+                    "最新 ${snapshot.lastIssue.value}",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    snapshot.rows
+                        .last()
+                        .cells
+                        .filter {
+                            it.isHit
+                        }.joinToString("  ") {
+                            it.number.twoDigits()
+                        },
+                    color = trendHitColor(chart.lotteryType, chart.area),
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 13.sp,
+                )
+            }
+        }
+        if (statistic != null) TrendToolButton(LotteryIcons.Clear, "取消号码追踪", onClick = onClear)
+        TrendToolButton(LotteryIcons.Latest, "定位最新一期", onClick = onLatest)
+    }
+}
+
+/** 加载失败时保留所有筛选与明确重试操作，不显示演示数据。 */
 @Composable
 private fun TrendLoadStatus(
     modifier: Modifier,
     content: TrendChartContent,
-    isLandscape: Boolean,
     onRetry: () -> Unit,
 ) {
-    Box(
-        modifier = modifier.fillMaxWidth(),
-        contentAlignment = Alignment.Center,
-    ) {
+    Box(modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
         Column(
-            modifier =
-                Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 24.dp, vertical = if (isLandscape) 12.dp else 32.dp),
+            Modifier.padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            when (content) {
-                TrendChartContent.Loading -> {
-                    CircularProgressIndicator(modifier = Modifier.size(if (isLandscape) 28.dp else 40.dp))
-                    Spacer(Modifier.height(if (isLandscape) 10.dp else 18.dp))
-                    Text("正在加载官方历史开奖", style = MaterialTheme.typography.titleMedium)
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        "以最新已发布期为起点，向前读取 500 期",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        textAlign = TextAlign.Center,
-                    )
+            if (content is TrendChartContent.Failed) {
+                Text("历史开奖暂时不可用", color = MaterialTheme.colorScheme.error)
+                Text(content.message, textAlign = TextAlign.Center, style = MaterialTheme.typography.bodyMedium)
+                Button(onRetry) {
+                    Icon(LotteryIcons.Refresh, null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("重试")
                 }
-
-                is TrendChartContent.Failed -> {
-                    Text(
-                        "历史开奖暂时不可用",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.error,
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        content.message,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        textAlign = TextAlign.Center,
-                    )
-                    Spacer(Modifier.height(if (isLandscape) 10.dp else 18.dp))
-                    Button(onClick = onRetry, shape = MaterialTheme.shapes.small) {
-                        Icon(LotteryIcons.Refresh, contentDescription = null)
-                        Spacer(Modifier.width(8.dp))
-                        Text("重试")
-                    }
-                }
-
-                is TrendChartContent.Ready -> {
-                    return@Column
-                }
+            } else {
+                CircularProgressIndicator(Modifier.size(32.dp))
+                Text("正在加载官方历史开奖", style = MaterialTheme.typography.bodyMedium)
             }
         }
     }
 }
 
-/**
- * 竖屏使用紧凑筛选区并继续支持矩阵横向浏览。
- *
- * @param chart 当前走势图配置与快照。
- * @param layout 当前表格稳定尺寸。
- * @param horizontalScrollState 所有号码行共享的横向位置。
- * @param onAction 修改走势图配置。
- */
+/** 显示可追溯数据来源、缺期情况和不会被误读为预测的统计边界。 */
 @Composable
-private fun PortraitTrendContent(
+private fun TrendSourceDialog(
     chart: TrendChartState,
-    layout: TrendTableLayout,
-    horizontalScrollState: ScrollState,
-    onAction: (TrendChartAction) -> Unit,
+    onDismiss: () -> Unit,
 ) {
-    val snapshot = requireNotNull(chart.snapshot)
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp),
-    ) {
-        item(key = "configuration") {
-            TrendControls(chart = chart, isLandscape = false, onAction = onAction)
-            Spacer(Modifier.height(8.dp))
-            TrendSnapshotStatus(chart = chart, isLandscape = false)
-            Spacer(Modifier.height(10.dp))
-        }
-        item(key = "table-header") {
-            TrendTableHeader(
-                snapshot = snapshot,
-                layout = layout,
-                horizontalScrollState = horizontalScrollState,
-            )
-        }
-        item(key = "statistics") {
-            TrendStatisticsTable(
-                lotteryType = snapshot.lotteryType,
-                area = snapshot.area,
-                statistics = snapshot.statistics,
-                layout = layout,
-                horizontalScrollState = horizontalScrollState,
-            )
-        }
-        trendDrawItems(
-            snapshot = snapshot,
-            layout = layout,
-            horizontalScrollState = horizontalScrollState,
-        )
-        item(key = "responsible-use") { ResponsibleTrendNotice() }
-    }
-}
-
-/**
- * 横屏固定分区与号码表头，只纵向滚动开奖号和统计行。
- *
- * @param chart 当前走势图配置与快照。
- * @param layout 当前表格稳定尺寸。
- * @param horizontalScrollState 所有号码行共享的横向位置。
- * @param onAction 修改走势图配置。
- */
-@Composable
-private fun LandscapeTrendContent(
-    chart: TrendChartState,
-    layout: TrendTableLayout,
-    horizontalScrollState: ScrollState,
-    onAction: (TrendChartAction) -> Unit,
-) {
-    val snapshot = requireNotNull(chart.snapshot)
-    val lastNumber =
-        snapshot.statistics
-            .last()
-            .number
-            .toTwoDigits()
-    Column(
-        modifier =
-            Modifier
-                .fillMaxSize()
-                .semantics {
-                    contentDescription =
-                        if (layout.showsAllNumbers) {
-                            "横屏完整号码矩阵，01至${lastNumber}全部可见"
-                        } else {
-                            "横屏号码矩阵，01至${lastNumber}需要横向浏览"
-                        }
-                },
-    ) {
-        TrendControls(chart = chart, isLandscape = true, onAction = onAction)
-        TrendSnapshotStatus(chart = chart, isLandscape = true)
-        TrendTableHeader(
-            snapshot = snapshot,
-            layout = layout,
-            horizontalScrollState = horizontalScrollState,
-        )
-        LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
-            item(key = "statistics") {
-                TrendStatisticsTable(
-                    lotteryType = snapshot.lotteryType,
-                    area = snapshot.area,
-                    statistics = snapshot.statistics,
-                    layout = layout,
-                    horizontalScrollState = horizontalScrollState,
+    val ready = chart.content as? TrendChartContent.Ready
+    val spec = chart.lotteryType.trendAreaSpec(chart.area)
+    val smallUpperBound = spec.numberRange.last / 2
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("数据与统计口径") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(ready?.sourceName ?: "官方历史开奖尚未就绪")
+                ready?.let {
+                    val fetchedTime =
+                        Instant
+                            .fromEpochMilliseconds(it.fetchedAtEpochMillis)
+                            .toLocalDateTime(TimeZone.of("Asia/Shanghai"))
+                    val range = "${it.snapshot.firstIssue.value} 至 ${it.snapshot.lastIssue.value}"
+                    Text("$range，共 ${it.snapshot.actualSampleCount} 期")
+                    Text("加载时间：${fetchedTime.date} ${fetchedTime.time}（北京时间）")
+                    val missing = it.snapshot.issueGaps.sumOf { gap -> gap.missingCount }
+                    Text(if (missing == 0) "样本内未发现同年度期号缺口。" else "样本缺少 $missing 期；遗漏按已有记录计算，不能视为完整连续遗漏。")
+                }
+                Text("出现次数、当前遗漏和最大遗漏均限于所选样本；样本前的连续遗漏未知。")
+                Text(
+                    "当前区域：小号 01 至 ${smallUpperBound.twoDigits()}，" +
+                        "大号 ${(smallUpperBound + 1).twoDigits()} 至 ${spec.numberRange.last.twoDigits()}。" +
+                        "重号与前一期比较，缺期和样本首期不计算。",
                 )
+                Text("历史分布不代表未来规律，不构成购彩建议。")
             }
-            trendDrawItems(
-                snapshot = snapshot,
-                layout = layout,
-                horizontalScrollState = horizontalScrollState,
-            )
-            item(key = "responsible-use") { ResponsibleTrendNotice() }
-        }
-    }
+        },
+        confirmButton = { TextButton(onDismiss) { Text("关闭") } },
+    )
 }
 
-/**
- * 向惰性列表追加全部开奖行，供横竖屏共享同一绘制逻辑。
- *
- * @param snapshot 当前走势快照。
- * @param layout 当前表格稳定尺寸。
- * @param horizontalScrollState 所有号码行共享的横向位置。
- */
-private fun LazyListScope.trendDrawItems(
-    snapshot: LotteryTrendSnapshot,
-    layout: TrendTableLayout,
-    horizontalScrollState: ScrollState,
-) {
-    itemsIndexed(
-        items = snapshot.rows,
-        key = { _, row -> row.issue.value },
-    ) { index, row ->
-        TrendTableDrawRow(
-            lotteryType = snapshot.lotteryType,
-            area = snapshot.area,
-            row = row,
-            previousRow = snapshot.rows.getOrNull(index - 1),
-            nextRow = snapshot.rows.getOrNull(index + 1),
-            rowIndex = index,
-            layout = layout,
-            horizontalScrollState = horizontalScrollState,
-        )
-    }
-}
-
-/**
- * 绘制紧凑的彩种、区域和样本筛选区。
- *
- * @param chart 当前走势图配置与快照。
- * @param isLandscape 当前是否为横屏视口。
- * @param onAction 修改走势图配置。
- */
-@Composable
-private fun TrendControls(
-    chart: TrendChartState,
-    isLandscape: Boolean,
-    onAction: (TrendChartAction) -> Unit,
-) {
-    val lotterySelector: @Composable () -> Unit = {
-        LotteryTypeTrendSelector(
-            modifier = Modifier.fillMaxWidth(),
-            selected = chart.lotteryType,
-            onSelected = { onAction(TrendChartAction.ChangeLotteryType(it)) },
-        )
-    }
-    val areaSelector: @Composable () -> Unit = {
-        TrendAreaSelector(
-            modifier = Modifier.fillMaxWidth(),
-            lotteryType = chart.lotteryType,
-            selected = chart.area,
-            onSelected = { onAction(TrendChartAction.ChangeArea(it)) },
-        )
-    }
-    val sampleSelector: @Composable () -> Unit = {
-        TrendSampleSizeSelector(
-            modifier = Modifier.fillMaxWidth(),
-            selected = chart.sampleSize,
-            onSelected = { onAction(TrendChartAction.ChangeSampleSize(it)) },
-        )
-    }
-    if (isLandscape) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            TrendControlGroup("彩种", Modifier.weight(1.15f), lotterySelector)
-            TrendControlGroup("区域", Modifier.weight(1f), areaSelector)
-            TrendControlGroup("期数", Modifier.weight(1.25f), sampleSelector)
-        }
-    } else {
-        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            TrendControlGroup("彩种", Modifier.fillMaxWidth(), lotterySelector)
-            TrendControlGroup("区域", Modifier.fillMaxWidth(), areaSelector)
-            TrendControlGroup("期数", Modifier.fillMaxWidth(), sampleSelector)
-        }
-    }
-}
-
-/**
- * 为一组紧凑筛选控件提供固定标签列。
- *
- * @param label 筛选组标签。
- * @param modifier 当前筛选组布局修饰符。
- * @param content 筛选控件内容。
- */
-@Composable
-private fun TrendControlGroup(
-    label: String,
-    modifier: Modifier,
-    content: @Composable () -> Unit,
-) {
-    Row(
-        modifier = modifier,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = label,
-            modifier = Modifier.width(44.dp),
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Box(modifier = Modifier.weight(1f)) { content() }
-    }
-}
-
-/**
- * 使用分段控件选择当前走势彩种。
- *
- * @param modifier 当前控件布局修饰符。
- * @param selected 当前彩种。
- * @param onSelected 彩种切换操作。
- */
+/** 保留数学研究使用的彩种分段选择器。 */
 @Composable
 internal fun LotteryTypeTrendSelector(
     modifier: Modifier,
     selected: LotteryType,
     onSelected: (LotteryType) -> Unit,
 ) {
-    val options = listOf(LotteryType.SUPER_LOTTO, LotteryType.DOUBLE_COLOR_BALL)
-    SingleChoiceSegmentedButtonRow(modifier = modifier) {
-        options.forEachIndexed { index, lotteryType ->
+    SingleChoiceSegmentedButtonRow(modifier) {
+        LotteryType.entries.forEachIndexed { index, type ->
             SegmentedButton(
-                selected = lotteryType == selected,
-                onClick = { onSelected(lotteryType) },
-                shape = SegmentedButtonDefaults.itemShape(index, options.size),
-                label = { Text(lotteryType.displayName()) },
+                selected = selected == type,
+                onClick = { onSelected(type) },
+                shape = SegmentedButtonDefaults.itemShape(index, LotteryType.entries.size),
+                label = { Text(type.trendDisplayName()) },
             )
         }
     }
 }
 
-/**
- * 使用分段控件选择当前号码区域。
- *
- * @param modifier 当前控件布局修饰符。
- * @param lotteryType 当前彩种。
- * @param selected 当前号码区域。
- * @param onSelected 号码区域切换操作。
- */
-@Composable
-private fun TrendAreaSelector(
-    modifier: Modifier,
-    lotteryType: LotteryType,
-    selected: LotteryTrendArea,
-    onSelected: (LotteryTrendArea) -> Unit,
-) {
-    val options = listOf(LotteryTrendArea.PRIMARY, LotteryTrendArea.SECONDARY)
-    SingleChoiceSegmentedButtonRow(modifier = modifier) {
-        options.forEachIndexed { index, area ->
-            SegmentedButton(
-                selected = area == selected,
-                onClick = { onSelected(area) },
-                shape = SegmentedButtonDefaults.itemShape(index, options.size),
-                label = { Text(area.displayName(lotteryType)) },
-            )
-        }
-    }
-}
-
-/**
- * 使用单选筛选项选择冻结的最近样本范围。
- *
- * @param modifier 当前控件布局修饰符。
- * @param selected 当前样本范围。
- * @param onSelected 样本范围切换操作。
- */
-@Composable
-private fun TrendSampleSizeSelector(
-    modifier: Modifier,
-    selected: TrendSampleSize,
-    onSelected: (TrendSampleSize) -> Unit,
-) {
-    val listState = rememberLazyListState()
-    val coroutineScope = rememberCoroutineScope()
-    LazyRow(
-        modifier = modifier,
-        state = listState,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        itemsIndexed(items = TrendSampleSize.entries, key = { _, item -> item.count }) {
-            index,
-            sampleSize,
-            ->
-            FilterChip(
-                selected = sampleSize == selected,
-                onClick = {
-                    onSelected(sampleSize)
-                    coroutineScope.launch { listState.animateScrollToItem(index) }
-                },
-                label = { Text("${sampleSize.count} 期") },
-            )
-        }
-    }
-}
-
-/**
- * 使用紧凑状态条展示官方来源、样本范围、连续性和加载时间。
- *
- * @param chart 当前走势图配置与快照。
- * @param isLandscape 当前是否为横屏视口。
- */
-@Composable
-private fun TrendSnapshotStatus(
-    chart: TrendChartState,
-    isLandscape: Boolean,
-) {
-    val ready = chart.content as? TrendChartContent.Ready ?: return
-    val snapshot = ready.snapshot
-    val missingIssueCount = snapshot.issueGaps.sumOf { it.missingCount }
-    val title = "${snapshot.lotteryType.displayName()} · ${snapshot.area.displayName(snapshot.lotteryType)}"
-    val range =
-        "${snapshot.actualSampleCount} 期 · ${snapshot.firstIssue.value} 至 ${snapshot.lastIssue.value}"
-    val continuity =
-        if (missingIssueCount == 0) "样本内期号连续" else "样本内缺少 $missingIssueCount 期"
-    val source =
-        "官方历史开奖 · ${ready.sourceName} · ${formatTrendFetchedTime(ready.fetchedAtEpochMillis, isLandscape)}"
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f),
-    ) {
-        if (isLandscape) {
-            Row(
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                val summary =
-                    if (missingIssueCount == 0) {
-                        "$title · $range"
-                    } else {
-                        "$title · $range · $continuity"
-                    }
-                Text(
-                    summary,
-                    modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.bodySmall,
-                    color =
-                        if (missingIssueCount == 0) {
-                            MaterialTheme.colorScheme.onSurface
-                        } else {
-                            MaterialTheme.colorScheme.error
-                        },
-                    maxLines = 1,
-                )
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    source,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                )
-            }
-        } else {
-            Column(
-                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
-            ) {
-                Text(title, style = MaterialTheme.typography.titleMedium)
-                Text(
-                    range,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Text(
-                    continuity,
-                    style = MaterialTheme.typography.bodySmall,
-                    color =
-                        if (missingIssueCount == 0) {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        } else {
-                            MaterialTheme.colorScheme.error
-                        },
-                )
-                Text(
-                    source,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-    }
-}
-
-/** 将会话抓取时间格式化为北京时间。 */
-private fun formatTrendFetchedTime(
-    epochMillis: Long,
-    isCompact: Boolean,
-): String {
-    val dateTime = Instant.fromEpochMilliseconds(epochMillis).toLocalDateTime(CHINA_TIME_ZONE)
-    val value = dateTime.toString().replace('T', ' ').take(FETCHED_TIME_TEXT_LENGTH)
-    return if (isCompact) value.drop(COMPACT_FETCHED_TIME_PREFIX_LENGTH) else value
-}
-
-/** 展示走势图必须保留的理性使用边界。 */
-@Composable
-private fun ResponsibleTrendNotice() {
-    Text(
-        "历史分布不代表未来规律，不构成购彩建议。",
-        modifier = Modifier.padding(top = 12.dp, bottom = 4.dp),
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
-}
-
-/** 根据方向和可用宽度返回不会发生布局跳动的表格尺寸。 */
-private fun trendTableLayout(
-    availableWidth: Dp,
-    numberCount: Int,
-    isLandscape: Boolean,
-): TrendTableLayout {
-    require(numberCount > 0)
-    val issueColumnWidth =
-        if (isLandscape) LANDSCAPE_ISSUE_COLUMN_WIDTH else PORTRAIT_ISSUE_COLUMN_WIDTH
-    val matrixWidth =
-        if (availableWidth > issueColumnWidth) availableWidth - issueColumnWidth else 0.dp
-    val cellWidth =
-        if (isLandscape) {
-            (matrixWidth / numberCount.toFloat()).coerceIn(
-                LANDSCAPE_MIN_CELL_WIDTH,
-                LANDSCAPE_MAX_CELL_WIDTH,
-            )
-        } else {
-            PORTRAIT_CELL_WIDTH
-        }
-    val showsAllNumbers =
-        cellWidth * numberCount <= matrixWidth + TREND_LAYOUT_TOLERANCE
-    val hitBallSize =
-        if (isLandscape) {
-            minOf(22.dp, cellWidth - 2.dp).coerceAtLeast(12.dp)
-        } else {
-            26.dp
-        }
-    return TrendTableLayout(
-        issueColumnWidth = issueColumnWidth,
-        cellWidth = cellWidth,
-        zoneHeaderHeight = if (isLandscape) 22.dp else 24.dp,
-        numberHeaderHeight = if (isLandscape) 28.dp else 34.dp,
-        drawRowHeight = if (isLandscape) 28.dp else 36.dp,
-        statisticRowHeight = if (isLandscape) 32.dp else 42.dp,
-        hitBallSize = hitBallSize,
-        showsAllNumbers = showsAllNumbers,
-    )
-}
-
-/** 绘制固定期号列与可同步横向滚动的号码表头。 */
-@Composable
-private fun TrendTableHeader(
-    snapshot: LotteryTrendSnapshot,
-    layout: TrendTableLayout,
-    horizontalScrollState: ScrollState,
-) {
-    val areaTint = trendAreaTint(snapshot.lotteryType, snapshot.area)
-    TrendZoneHeader(
-        lotteryType = snapshot.lotteryType,
-        area = snapshot.area,
-        lastNumber = snapshot.statistics.last().number,
-        areaTint = areaTint,
-        layout = layout,
-        horizontalScrollState = horizontalScrollState,
-    )
-    FixedLeadingTrendRow(
-        height = layout.numberHeaderHeight,
-        issueColumnWidth = layout.issueColumnWidth,
-        leadingText = "期号",
-        leadingDescription = "期号列",
-        leadingBackground = MaterialTheme.colorScheme.surfaceVariant,
-        description =
-            "期号与${snapshot.statistics.first().number.toTwoDigits()}至" +
-                "${snapshot.statistics.last().number.toTwoDigits()}号码列",
-        horizontalScrollState = horizontalScrollState,
-    ) {
-        Row(modifier = Modifier.width(layout.cellWidth * snapshot.statistics.size)) {
-            val zones =
-                trendNumberZones(
-                    lotteryType = snapshot.lotteryType,
-                    area = snapshot.area,
-                    lastNumber = snapshot.statistics.last().number,
-                )
-            snapshot.statistics.forEach { statistic ->
-                val zoneIndex = zones.indexOfFirst { statistic.number <= it.lastNumber }
-                TrendHeaderCell(
-                    number = statistic.number,
-                    cellWidth = layout.cellWidth,
-                    background = areaTint.copy(alpha = if (zoneIndex % 2 == 0) 0.92f else 0.68f),
-                )
-            }
-        }
-    }
-}
-
-/**
- * 绘制一区、二区、三区等官方常见号码分区表头。
- *
- * @param lotteryType 当前彩种。
- * @param area 当前号码区域。
- * @param lastNumber 当前区域末尾号码。
- * @param areaTint 当前号码区域底色。
- * @param layout 当前表格稳定尺寸。
- * @param horizontalScrollState 所有号码行共享的横向位置。
- */
-@Composable
-private fun TrendZoneHeader(
-    lotteryType: LotteryType,
-    area: LotteryTrendArea,
-    lastNumber: Int,
-    areaTint: Color,
-    layout: TrendTableLayout,
-    horizontalScrollState: ScrollState,
-) {
-    val zones = trendNumberZones(lotteryType, area, lastNumber)
-    FixedLeadingTrendRow(
-        height = layout.zoneHeaderHeight,
-        issueColumnWidth = layout.issueColumnWidth,
-        leadingText = "分区",
-        leadingDescription = "号码分区",
-        leadingBackground = MaterialTheme.colorScheme.surfaceVariant,
-        description = zones.joinToString("，") { "${it.label}${it.firstNumber}至${it.lastNumber}" },
-        horizontalScrollState = horizontalScrollState,
-    ) {
-        Row(modifier = Modifier.width(layout.cellWidth * lastNumber)) {
-            zones.forEachIndexed { index, zone ->
-                Box(
-                    modifier =
-                        Modifier
-                            .width(layout.cellWidth * zone.numberCount)
-                            .fillMaxHeight()
-                            .background(areaTint.copy(alpha = if (index % 2 == 0) 0.98f else 0.72f))
-                            .border(0.5.dp, MaterialTheme.colorScheme.outlineVariant)
-                            .clearAndSetSemantics {
-                                contentDescription =
-                                    "${zone.label} ${zone.firstNumber.toTwoDigits()}至" +
-                                    zone.lastNumber.toTwoDigits()
-                            },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        zone.label,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                    )
-                }
-            }
-        }
-    }
-}
-
-/**
- * 绘制一个表头号码格。
- *
- * @param number 当前列号码。
- * @param cellWidth 当前号码格宽度。
- * @param background 当前分区底色。
- */
-@Composable
-private fun TrendHeaderCell(
-    number: Int,
-    cellWidth: Dp,
-    background: Color,
-) {
-    Box(
-        modifier =
-            Modifier
-                .width(cellWidth)
-                .fillMaxHeight()
-                .background(background)
-                .border(0.5.dp, MaterialTheme.colorScheme.outlineVariant)
-                .clearAndSetSemantics {
-                    contentDescription = "号码 ${number.toTwoDigits()}"
-                },
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            number.toTwoDigits(),
-            style = trendGridTextStyle(FontWeight.SemiBold),
-            color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 1,
-        )
-    }
-}
-
-/** 绘制单期开奖走势行和相邻期同排序位置的低饱和连线。 */
-@Composable
-private fun TrendTableDrawRow(
-    lotteryType: LotteryType,
-    area: LotteryTrendArea,
-    row: TrendDrawRow,
-    previousRow: TrendDrawRow?,
-    nextRow: TrendDrawRow?,
-    rowIndex: Int,
-    layout: TrendTableLayout,
-    horizontalScrollState: ScrollState,
-) {
-    val hitColor = trendHitColor(lotteryType, area)
-    val hitContentColor = trendHitContentColor(lotteryType, area)
-    val areaTint = trendAreaTint(lotteryType, area)
-    val rowBackground = areaTint.copy(alpha = if (rowIndex % 2 == 0) 0.72f else 0.46f)
-    val hitNumbers = row.cells.filter { it.isHit }.map { it.number }
-    FixedLeadingTrendRow(
-        height = layout.drawRowHeight,
-        issueColumnWidth = layout.issueColumnWidth,
-        leadingText = row.issue.value,
-        leadingDescription = "期号 ${row.issue.value}",
-        leadingBackground =
-            if (rowIndex % 2 == 0) {
-                MaterialTheme.colorScheme.surface
-            } else {
-                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
-            },
-        description = "第 ${row.issue.value} 期，命中 ${hitNumbers.joinToString("、") { it.toTwoDigits() }}",
-        horizontalScrollState = horizontalScrollState,
-    ) {
-        TrendNumberGridRow(
-            row = row,
-            previousRow = previousRow,
-            nextRow = nextRow,
-            background = rowBackground,
-            hitColor = hitColor,
-            hitContentColor = hitContentColor,
-            layout = layout,
-            zones = trendNumberZones(lotteryType, area, row.cells.last().number),
-        )
-    }
-}
-
-/** 绘制号码格、遗漏数字、网格与相邻期连线。 */
-@Composable
-private fun TrendNumberGridRow(
-    row: TrendDrawRow,
-    previousRow: TrendDrawRow?,
-    nextRow: TrendDrawRow?,
-    background: Color,
-    hitColor: Color,
-    hitContentColor: Color,
-    layout: TrendTableLayout,
-    zones: List<TrendNumberZone>,
-) {
-    val cellCount = row.cells.size
-    val currentHitIndices = row.hitIndices()
-    val previousHitIndices = previousRow?.hitIndices().orEmpty()
-    val nextHitIndices = nextRow?.hitIndices().orEmpty()
-    val gridColor = MaterialTheme.colorScheme.outlineVariant
-    Box(
-        modifier =
-            Modifier
-                .width(layout.cellWidth * cellCount)
-                .fillMaxHeight()
-                .background(background),
-    ) {
-        Canvas(modifier = Modifier.fillMaxSize().clearAndSetSemantics {}) {
-            val cellWidth = layout.cellWidth.toPx()
-            for (index in 0..cellCount) {
-                val x = index * cellWidth
-                drawLine(
-                    color = gridColor,
-                    start = Offset(x, 0f),
-                    end = Offset(x, size.height),
-                    strokeWidth = 0.5.dp.toPx(),
-                )
-            }
-            drawLine(
-                color = gridColor,
-                start = Offset(0f, 0f),
-                end = Offset(size.width, 0f),
-                strokeWidth = 0.5.dp.toPx(),
-            )
-            zones.dropLast(1).forEach { zone ->
-                val x = zone.lastNumber * cellWidth
-                drawLine(
-                    color = gridColor.copy(alpha = 0.95f),
-                    start = Offset(x, 0f),
-                    end = Offset(x, size.height),
-                    strokeWidth = 1.5.dp.toPx(),
-                )
-            }
-            drawLine(
-                color = gridColor,
-                start = Offset(0f, size.height),
-                end = Offset(size.width, size.height),
-                strokeWidth = 0.5.dp.toPx(),
-            )
-            previousHitIndices.zip(currentHitIndices).forEach { (previous, current) ->
-                drawLine(
-                    color = hitColor.copy(alpha = 0.28f),
-                    start = Offset((previous + 0.5f) * cellWidth, 0f),
-                    end = Offset((current + 0.5f) * cellWidth, size.height / 2f),
-                    strokeWidth = 1.5.dp.toPx(),
-                )
-            }
-            currentHitIndices.zip(nextHitIndices).forEach { (current, next) ->
-                drawLine(
-                    color = hitColor.copy(alpha = 0.28f),
-                    start = Offset((current + 0.5f) * cellWidth, size.height / 2f),
-                    end = Offset((next + 0.5f) * cellWidth, size.height),
-                    strokeWidth = 1.5.dp.toPx(),
-                )
-            }
-        }
-        Row(modifier = Modifier.fillMaxSize()) {
-            row.cells.forEach { cell ->
-                Box(
-                    modifier =
-                        Modifier
-                            .width(layout.cellWidth)
-                            .fillMaxHeight()
-                            .clearAndSetSemantics {},
-                    contentAlignment = Alignment.Center,
-                ) {
-                    if (cell.isHit) {
-                        Surface(
-                            modifier = Modifier.size(layout.hitBallSize),
-                            shape = CircleShape,
-                            color = hitColor,
-                            contentColor = hitContentColor,
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Text(
-                                    cell.number.toTwoDigits(),
-                                    style = trendGridTextStyle(FontWeight.Bold),
-                                    maxLines = 1,
-                                )
-                            }
-                        }
-                    } else {
-                        Text(
-                            cell.omission.toString(),
-                            style = trendGridTextStyle(FontWeight.Normal),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.82f),
-                            maxLines = 1,
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-/** 绘制出现次数、当前遗漏和最大遗漏三行统计。 */
-@Composable
-private fun TrendStatisticsTable(
-    lotteryType: LotteryType,
-    area: LotteryTrendArea,
-    statistics: List<TrendNumberStatistics>,
-    layout: TrendTableLayout,
-    horizontalScrollState: ScrollState,
-) {
-    val background = trendAreaTint(lotteryType, area)
-    StatisticTrendRow(
-        visibleLabel = "出现\n次数",
-        accessibilityLabel = "出现次数",
-        values = statistics.map { it.hitCount },
-        background = background,
-        layout = layout,
-        horizontalScrollState = horizontalScrollState,
-    )
-    StatisticTrendRow(
-        visibleLabel = "当前\n遗漏",
-        accessibilityLabel = "当前遗漏",
-        values = statistics.map { it.currentOmission },
-        background = background,
-        layout = layout,
-        horizontalScrollState = horizontalScrollState,
-    )
-    StatisticTrendRow(
-        visibleLabel = "最大\n遗漏",
-        accessibilityLabel = "最大遗漏",
-        values = statistics.map { it.maxOmission },
-        background = background,
-        layout = layout,
-        horizontalScrollState = horizontalScrollState,
-    )
-}
-
-/** 绘制一行固定标签和完整号码统计值。 */
-@Composable
-private fun StatisticTrendRow(
-    visibleLabel: String,
-    accessibilityLabel: String,
-    values: List<Int>,
-    background: Color,
-    layout: TrendTableLayout,
-    horizontalScrollState: ScrollState,
-) {
-    FixedLeadingTrendRow(
-        height = layout.statisticRowHeight,
-        issueColumnWidth = layout.issueColumnWidth,
-        leadingText = visibleLabel,
-        leadingDescription = accessibilityLabel,
-        leadingBackground = MaterialTheme.colorScheme.surfaceVariant,
-        description =
-            "$accessibilityLabel，" +
-                values.mapIndexed { index, value -> "${(index + 1).toTwoDigits()}号$value" }.joinToString("，"),
-        horizontalScrollState = horizontalScrollState,
-    ) {
-        Row(modifier = Modifier.width(layout.cellWidth * values.size)) {
-            values.forEach { value ->
-                Box(
-                    modifier =
-                        Modifier
-                            .width(layout.cellWidth)
-                            .fillMaxHeight()
-                            .background(background)
-                            .border(0.5.dp, MaterialTheme.colorScheme.outlineVariant)
-                            .clearAndSetSemantics {},
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        value.toString(),
-                        style = trendGridTextStyle(FontWeight.SemiBold),
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                    )
-                }
-            }
-        }
-    }
-}
-
-/** 绘制固定左列与共享滚动位置的右侧表格区域。 */
-@Composable
-private fun FixedLeadingTrendRow(
-    height: Dp,
-    issueColumnWidth: Dp,
-    leadingText: String,
-    leadingDescription: String,
-    leadingBackground: Color,
-    description: String,
-    horizontalScrollState: ScrollState,
-    content: @Composable () -> Unit,
-) {
-    Row(
-        modifier =
-            Modifier
-                .fillMaxWidth()
-                .height(height)
-                .semantics { contentDescription = description },
-    ) {
-        Box(
-            modifier =
-                Modifier
-                    .width(issueColumnWidth)
-                    .fillMaxHeight()
-                    .background(leadingBackground)
-                    .border(0.5.dp, MaterialTheme.colorScheme.outlineVariant)
-                    .clearAndSetSemantics { contentDescription = leadingDescription },
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                leadingText,
-                style = trendGridTextStyle(FontWeight.SemiBold),
-                textAlign = TextAlign.Center,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 2,
-            )
-        }
-        Box(
-            modifier =
-                Modifier
-                    .weight(1f)
-                    .fillMaxHeight()
-                    .horizontalScroll(horizontalScrollState),
-        ) {
-            content()
-        }
-    }
-}
-
-/** 返回不随辅助字号膨胀、能稳定容纳两位数字的网格文字样式。 */
-@Composable
-private fun trendGridTextStyle(fontWeight: FontWeight): TextStyle {
-    val fontScale = LocalDensity.current.fontScale
-    return MaterialTheme.typography.labelLarge.copy(
-        fontSize = 9.sp / fontScale,
-        lineHeight = 11.sp / fontScale,
-        letterSpacing = 0.sp,
-        fontWeight = fontWeight,
-    )
-}
-
-/** 返回当前号码区域的官方常见连续分区。 */
-private fun trendNumberZones(
-    lotteryType: LotteryType,
-    area: LotteryTrendArea,
-    lastNumber: Int,
-): List<TrendNumberZone> =
-    when {
-        area == LotteryTrendArea.SECONDARY -> {
-            listOf(
-                TrendNumberZone(
-                    label = area.displayName(lotteryType),
-                    firstNumber = 1,
-                    lastNumber = lastNumber,
-                ),
-            )
-        }
-
-        lotteryType == LotteryType.SUPER_LOTTO -> {
-            listOf(
-                TrendNumberZone("一区", 1, 12),
-                TrendNumberZone("二区", 13, 24),
-                TrendNumberZone("三区", 25, lastNumber),
-            )
-        }
-
-        else -> {
-            listOf(
-                TrendNumberZone("一区", 1, 11),
-                TrendNumberZone("二区", 12, 22),
-                TrendNumberZone("三区", 23, lastNumber),
-            )
-        }
-    }
-
-/** 返回彩种和号码区域对应的命中颜色。 */
+/** 返回区域对应的高对比命中颜色。 */
 internal fun trendHitColor(
     lotteryType: LotteryType,
     area: LotteryTrendArea,
 ): Color =
-    when (lotteryType) {
-        LotteryType.SUPER_LOTTO -> {
-            when (area) {
-                LotteryTrendArea.PRIMARY -> SuperLottoPrimaryBlue
-                LotteryTrendArea.SECONDARY -> SuperLottoSecondaryAmber
-            }
-        }
-
-        LotteryType.DOUBLE_COLOR_BALL -> {
-            when (area) {
-                LotteryTrendArea.PRIMARY -> DoubleColorBallPrimaryRed
-                LotteryTrendArea.SECONDARY -> DoubleColorBallSecondaryBlue
-            }
-        }
+    when {
+        lotteryType == LotteryType.DOUBLE_COLOR_BALL && area == LotteryTrendArea.PRIMARY -> Color(0xFFC83C3C)
+        lotteryType == LotteryType.SUPER_LOTTO && area == LotteryTrendArea.SECONDARY -> Color(0xFFAC7600)
+        else -> Color(0xFF2875B7)
     }
 
-/** 返回命中圆点上的高对比文字颜色。 */
+/** 命中球统一使用白色文字，深黄色后区也保持足够对比度。 */
 internal fun trendHitContentColor(
     lotteryType: LotteryType,
     area: LotteryTrendArea,
-): Color =
-    if (lotteryType == LotteryType.SUPER_LOTTO && area == LotteryTrendArea.SECONDARY) {
-        Color(0xFF332400)
-    } else {
-        Color.White
-    }
+): Color = Color.White
 
-/** 返回彩种和号码区域对应的低饱和表格底色。 */
-private fun trendAreaTint(
-    lotteryType: LotteryType,
-    area: LotteryTrendArea,
-): Color =
-    when (lotteryType) {
-        LotteryType.SUPER_LOTTO -> {
-            when (area) {
-                LotteryTrendArea.PRIMARY -> SuperLottoPrimaryTint
-                LotteryTrendArea.SECONDARY -> SuperLottoSecondaryTint
-            }
-        }
+/** 彩种中文名称。 */
+internal fun LotteryType.trendDisplayName(): String = if (this == LotteryType.SUPER_LOTTO) "大乐透" else "双色球"
 
-        LotteryType.DOUBLE_COLOR_BALL -> {
-            when (area) {
-                LotteryTrendArea.PRIMARY -> DoubleColorBallPrimaryTint
-                LotteryTrendArea.SECONDARY -> DoubleColorBallSecondaryTint
-            }
-        }
-    }
-
-/** 返回彩种中文名称。 */
-private fun LotteryType.displayName(): String =
-    when (this) {
-        LotteryType.SUPER_LOTTO -> "大乐透"
-        LotteryType.DOUBLE_COLOR_BALL -> "双色球"
-    }
-
-/** 返回当前彩种下号码区域的官方常用名称。 */
+/** 当前彩种号码区域的中文名称。 */
 internal fun LotteryTrendArea.displayName(lotteryType: LotteryType): String =
     when (lotteryType) {
-        LotteryType.SUPER_LOTTO -> {
-            when (this) {
-                LotteryTrendArea.PRIMARY -> "前区"
-                LotteryTrendArea.SECONDARY -> "后区"
-            }
-        }
-
-        LotteryType.DOUBLE_COLOR_BALL -> {
-            when (this) {
-                LotteryTrendArea.PRIMARY -> "红球"
-                LotteryTrendArea.SECONDARY -> "蓝球"
-            }
-        }
+        LotteryType.SUPER_LOTTO -> if (this == LotteryTrendArea.PRIMARY) "前区" else "后区"
+        LotteryType.DOUBLE_COLOR_BALL -> if (this == LotteryTrendArea.PRIMARY) "红球" else "蓝球"
     }
 
-/** 返回当前行按号码升序排列的命中列索引。 */
-private fun TrendDrawRow.hitIndices(): List<Int> =
-    cells.mapIndexedNotNull { index, cell -> index.takeIf { cell.isHit } }
-
-/** 把号码格式化为固定两位文本。 */
-private fun Int.toTwoDigits(): String = toString().padStart(2, '0')
+/** 号码固定两位，统计值不调用此格式化函数。 */
+internal fun Int.twoDigits(): String = toString().padStart(2, '0')

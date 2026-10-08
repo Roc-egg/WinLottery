@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.widthIn
@@ -65,6 +66,7 @@ private val MAX_CONTENT_WIDTH = 960.dp
  * @param onMainDestinationSelected 一级目的地切换操作。
  * @param scrollableContent 是否由外壳提供纵向滚动；惰性列表页面应设为 `false`。
  * @param compactChrome 是否使用适合手机横屏的紧凑顶部导航与正文边距。
+ * @param immersiveContent 是否仅保留安全区域，将整个视口交给带有自身导航的工作台。
  * @param content 页面正文。
  */
 @Composable
@@ -81,6 +83,7 @@ fun AppShell(
     onMainDestinationSelected: (MainDestination) -> Unit = {},
     scrollableContent: Boolean = true,
     compactChrome: Boolean = false,
+    immersiveContent: Boolean = false,
     content: @Composable () -> Unit,
 ) {
     Surface(
@@ -95,6 +98,10 @@ fun AppShell(
                     .navigationBarsPadding()
                     .imePadding(),
         ) {
+            if (immersiveContent) {
+                Box(Modifier.fillMaxSize().safeDrawingPadding()) { content() }
+                return@BoxWithConstraints
+            }
             val usesSideNavigation =
                 mainDestination != null && maxWidth >= WIDE_NAVIGATION_THRESHOLD
             val usesCompactNavigation =
@@ -378,7 +385,7 @@ private fun MainNavigationRail(
 }
 
 /** 返回一级目的地的简体中文标签。 */
-private fun MainDestination.label(): String =
+internal fun MainDestination.label(): String =
     when (this) {
         MainDestination.VERIFICATION -> "核对"
         MainDestination.NUMBER_PICKER -> "选号"

@@ -77,6 +77,10 @@ kotlin {
             implementation(libs.kotlin.test)
             implementation(libs.kotlinx.coroutinesTest)
         }
+        jvmTest.dependencies {
+            // 离屏界面回归需要宿主平台的 Skia 运行库，不进入移动端产物。
+            implementation(compose.desktop.currentOs)
+        }
     }
 }
 

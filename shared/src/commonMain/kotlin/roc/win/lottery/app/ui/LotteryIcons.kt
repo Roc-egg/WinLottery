@@ -6,6 +6,7 @@ import com.composables.icons.lucide.BrainCircuit
 import com.composables.icons.lucide.Camera
 import com.composables.icons.lucide.ChartNoAxesCombined
 import com.composables.icons.lucide.Check
+import com.composables.icons.lucide.ChevronDown
 import com.composables.icons.lucide.CircleStop
 import com.composables.icons.lucide.ClipboardCheck
 import com.composables.icons.lucide.Dices
@@ -19,18 +20,41 @@ import com.composables.icons.lucide.Image
 import com.composables.icons.lucide.Info
 import com.composables.icons.lucide.KeyRound
 import com.composables.icons.lucide.Lucide
+import com.composables.icons.lucide.Maximize
+import com.composables.icons.lucide.Menu
+import com.composables.icons.lucide.Minimize
 import com.composables.icons.lucide.Minus
+import com.composables.icons.lucide.MoveDown
 import com.composables.icons.lucide.Pencil
 import com.composables.icons.lucide.Plus
 import com.composables.icons.lucide.RefreshCw
 import com.composables.icons.lucide.Search
 import com.composables.icons.lucide.Send
 import com.composables.icons.lucide.ShieldCheck
+import com.composables.icons.lucide.SlidersHorizontal
 import com.composables.icons.lucide.Trash2
 import com.composables.icons.lucide.X
 
 /** 从 Lucide 图标集集中暴露应用使用的图标。 */
 object LotteryIcons {
+    /** 展开选项菜单。 */
+    val Expand: ImageVector = Lucide.ChevronDown
+
+    /** 全屏工作台中的应用导航。 */
+    val Navigation: ImageVector = Lucide.Menu
+
+    /** 进入全屏数据工作台。 */
+    val Fullscreen: ImageVector = Lucide.Maximize
+
+    /** 退出全屏数据工作台。 */
+    val ExitFullscreen: ImageVector = Lucide.Minimize
+
+    /** 定位走势图最新一期。 */
+    val Latest: ImageVector = Lucide.MoveDown
+
+    /** 走势图显示设置。 */
+    val DisplaySettings: ImageVector = Lucide.SlidersHorizontal
+
     /** 返回箭头。 */
     val Back: ImageVector = Lucide.ArrowLeft
 
