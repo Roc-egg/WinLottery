@@ -10,7 +10,7 @@ plugins {
 val desktopPackageName = "WinLottery"
 
 /** Android、iOS、macOS 与 Windows 统一使用的语义版本号。 */
-val desktopPackageVersion = "1.3.1"
+val desktopPackageVersion = "1.3.2"
 
 /** Windows 安装包跨版本复用的稳定升级标识。 */
 val desktopWindowsUpgradeUuid = "BB1BC520-8D33-30F8-AA0A-352A3E2186A0"
