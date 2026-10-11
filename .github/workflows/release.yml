@@ -315,7 +315,7 @@ jobs:
       - name: 上传 Apple 平台发布候选产物
         # 即使后续校验失败，也保留已经完成的安装包供排查和恢复发布。
         if: ${{ !cancelled() && steps.ios_package.outcome == 'success' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: WinLottery-${{ needs.metadata.outputs.tag }}-apple
           path: release-assets/
@@ -425,7 +425,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: 上传发布候选产物
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: WinLottery-${{ needs.metadata.outputs.tag }}-android
           path: release-assets/
@@ -513,7 +513,7 @@ jobs:
             ForEach-Object { Write-Output $_.FullName; Get-Content -LiteralPath $_.FullName }
 
       - name: 上传 Windows 发布候选产物
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: WinLottery-${{ needs.metadata.outputs.tag }}-windows
           path: release-assets/
@@ -612,7 +612,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: 上传完整发布候选产物
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: WinLottery-${{ needs.metadata.outputs.tag }}-release
           path: release-assets/
