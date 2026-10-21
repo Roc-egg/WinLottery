@@ -54,6 +54,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.backhandler.BackHandler
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
@@ -63,13 +64,17 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
+import kotlinx.datetime.LocalDateTime
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
+import roc.win.lottery.app.HistoricalDrawRefreshStatus
 import roc.win.lottery.app.MainDestination
 import roc.win.lottery.app.TrendChartAction
 import roc.win.lottery.app.TrendChartContent
 import roc.win.lottery.app.TrendChartState
 import roc.win.lottery.app.TrendWorkspaceView
+import roc.win.lottery.app.currentOmissionText
+import roc.win.lottery.app.maxOmissionText
 import roc.win.lottery.app.trendNumberZones
 import roc.win.lottery.domain.LotteryTrendArea
 import roc.win.lottery.domain.LotteryType
@@ -131,6 +136,8 @@ fun TrendScreen(
         val landscape = maxWidth > maxHeight
         val shortLandscape = landscape && maxHeight < 500.dp
         val compact = compactPreference ?: shortLandscape
+        // 窄屏或大字号时底栏核对状态另起一行，避免挤压样本说明。
+        val inlineRefreshLabel = maxWidth >= 360.dp * LocalDensity.current.fontScale.coerceAtLeast(1f)
         AppShell(
             title = "走势",
             mainDestination = MainDestination.TRENDS,
@@ -140,6 +147,8 @@ fun TrendScreen(
             compactChrome = landscape,
             immersiveContent = fullscreen && isBasic,
             actions = {
+                // 基本走势的刷新入口在工具栏中，全屏时也能使用。
+                if (!isBasic) TrendRefreshButton(chart) { onAction(TrendChartAction.Refresh) }
                 TextButton(onClick = {
                     onAction(
                         TrendChartAction.ChangeView(
@@ -244,45 +253,67 @@ fun TrendScreen(
                             }
                         }
                     }
-                    Row(
+                    val refreshLabel = chart.historyRefreshLabel()
+                    Column(
                         Modifier
                             .fillMaxWidth()
                             .clickable {
                                 showSource = true
                             }.padding(horizontal = 10.dp, vertical = if (shortLandscape) 3.dp else 5.dp),
-                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        val missing = snapshot?.issueGaps?.sumOf { it.missingCount } ?: 0
-                        Text(
-                            if (missing >
-                                0
-                            ) {
-                                "样本缺 $missing 期 · 统计有缺口"
-                            } else {
-                                "官方历史开奖 · ${snapshot?.actualSampleCount ?: chart.sampleSize.count}期"
-                            },
-                            Modifier.weight(1f),
-                            fontSize = 10.sp,
-                            color =
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            val missing = snapshot?.issueGaps?.sumOf { it.missingCount } ?: 0
+                            Text(
                                 if (missing >
                                     0
                                 ) {
-                                    MaterialTheme.colorScheme.error
+                                    "样本缺 $missing 期 · 统计有缺口"
                                 } else {
-                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                    "官方历史开奖 · ${snapshot?.actualSampleCount ?: chart.sampleSize.count}期"
                                 },
-                        )
-                        Text("历史不预测未来", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Icon(LotteryIcons.Info, "数据来源与统计口径", Modifier.padding(start = 5.dp).size(14.dp))
+                                Modifier.weight(1f),
+                                fontSize = 10.sp,
+                                color =
+                                    if (missing >
+                                        0
+                                    ) {
+                                        MaterialTheme.colorScheme.error
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    },
+                                overflow = TextOverflow.Ellipsis,
+                                maxLines = 1,
+                            )
+                            if (inlineRefreshLabel) {
+                                refreshLabel?.let { TrendRefreshLabel(chart, it, Modifier.padding(end = 8.dp)) }
+                            }
+                            Text(
+                                "历史不预测未来",
+                                fontSize = 10.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                            )
+                            Icon(LotteryIcons.Info, "数据来源与统计口径", Modifier.padding(start = 5.dp).size(14.dp))
+                        }
+                        if (!inlineRefreshLabel) refreshLabel?.let { TrendRefreshLabel(chart, it) }
                     }
                 }
             }
         }
     }
-    if (showSource) TrendSourceDialog(chart) { showSource = false }
+    if (showSource) {
+        TrendSourceDialog(
+            chart = chart,
+            onRefresh = {
+                showSource = false
+                onAction(TrendChartAction.Refresh)
+            },
+            onDismiss = { showSource = false },
+        )
+    }
 }
 
-/** 在单行中放置导航、彩种、区域、期数与全屏入口；窄屏和大字号允许筛选横向浏览。 */
+/** 在单行中放置导航、彩种、区域、期数、刷新与全屏入口；窄屏和大字号允许筛选横向浏览。 */
 @Composable
 private fun TrendToolbar(
     chart: TrendChartState,
@@ -334,6 +365,7 @@ private fun TrendToolbar(
             }
             inlineTools()
         }
+        TrendRefreshButton(chart) { onAction(TrendChartAction.Refresh) }
         TrendToolButton(
             if (fullscreen) LotteryIcons.ExitFullscreen else LotteryIcons.Fullscreen,
             if (fullscreen) "退出全屏" else "全屏看走势",
@@ -446,12 +478,13 @@ internal fun TrendToolButton(
     icon: ImageVector,
     description: String,
     modifier: Modifier = Modifier,
+    enabled: Boolean = true,
     onClick: () -> Unit,
 ) {
     TooltipBox(positionProvider = TooltipDefaults.rememberPlainTooltipPositionProvider(), tooltip = {
         PlainTooltip { Text(description) }
     }, state = rememberTooltipState()) {
-        IconButton(onClick, modifier.size(44.dp)) { Icon(icon, description, Modifier.size(20.dp)) }
+        IconButton(onClick, modifier.size(44.dp), enabled = enabled) { Icon(icon, description, Modifier.size(20.dp)) }
     }
 }
 
@@ -518,7 +551,7 @@ private fun TrendSelectionBar(
                     fontSize = 13.sp,
                 )
                 Text(
-                    "出现 ${statistic.hitCount}  /  当前遗漏 ${statistic.currentOmission}  /  最大 ${statistic.maxOmission}",
+                    "出现 ${statistic.hitCount}  /  当前遗漏 ${statistic.currentOmissionText}  /  最大 ${statistic.maxOmissionText}",
                     fontSize = 12.sp,
                 )
             } else {
@@ -580,6 +613,7 @@ private fun TrendLoadStatus(
 @Composable
 private fun TrendSourceDialog(
     chart: TrendChartState,
+    onRefresh: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     val ready = chart.content as? TrendChartContent.Ready
@@ -592,17 +626,32 @@ private fun TrendSourceDialog(
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(ready?.sourceName ?: "官方历史开奖尚未就绪")
                 ready?.let {
-                    val fetchedTime =
-                        Instant
-                            .fromEpochMilliseconds(it.fetchedAtEpochMillis)
-                            .toLocalDateTime(TimeZone.of("Asia/Shanghai"))
+                    val fetchedTime = it.fetchedAtEpochMillis.toChinaDateTime()
                     val range = "${it.snapshot.firstIssue.value} 至 ${it.snapshot.lastIssue.value}"
                     Text("$range，共 ${it.snapshot.actualSampleCount} 期")
-                    Text("加载时间：${fetchedTime.date} ${fetchedTime.time}（北京时间）")
+                    Text("最近核对：${fetchedTime.year}-${fetchedTime.monthDayMinute()}（北京时间）")
                     val missing = it.snapshot.issueGaps.sumOf { gap -> gap.missingCount }
                     Text(if (missing == 0) "样本内未发现同年度期号缺口。" else "样本缺少 $missing 期；遗漏按已有记录计算，不能视为完整连续遗漏。")
                 }
-                Text("出现次数、当前遗漏和最大遗漏均限于所选样本；样本前的连续遗漏未知。")
+                when (val refresh = chart.historyRefresh) {
+                    HistoricalDrawRefreshStatus.Idle -> {
+                        Unit
+                    }
+
+                    HistoricalDrawRefreshStatus.Refreshing -> {
+                        Text("正在与官网核对最新开奖，期间继续显示本机数据。")
+                    }
+
+                    is HistoricalDrawRefreshStatus.Notice -> {
+                        Text(refresh.message)
+                    }
+
+                    is HistoricalDrawRefreshStatus.Failed -> {
+                        Text("最近一次核对失败：${refresh.message}；当前显示本机已保存的数据。", color = MaterialTheme.colorScheme.error)
+                    }
+                }
+                Text("开奖号码保存在本机，距上次核对超过 30 分钟时进入页面会自动增量核对；可在“关于与隐私”中清除。")
+                Text("出现次数限于所选样本；当前遗漏和最大遗漏会延续计算本机 500 期内更早的历史，标 ≥ 表示在已取得历史中从未开出，真实值至少为该数。")
                 Text(
                     "当前区域：小号 01 至 ${smallUpperBound.twoDigits()}，" +
                         "大号 ${(smallUpperBound + 1).twoDigits()} 至 ${spec.numberRange.last.twoDigits()}。" +
@@ -612,8 +661,74 @@ private fun TrendSourceDialog(
             }
         },
         confirmButton = { TextButton(onDismiss) { Text("关闭") } },
+        dismissButton = {
+            TextButton(onRefresh, enabled = chart.canRefreshHistory) { Text("立即刷新") }
+        },
     )
 }
+
+/** 与官网增量核对本机历史开奖的按钮，核对中显示进度。 */
+@Composable
+private fun TrendRefreshButton(
+    chart: TrendChartState,
+    onRefresh: () -> Unit,
+) {
+    if (chart.historyRefresh is HistoricalDrawRefreshStatus.Refreshing) {
+        Box(Modifier.size(44.dp), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator(
+                Modifier.size(20.dp).semantics { contentDescription = "正在核对最新开奖" },
+                strokeWidth = 2.dp,
+            )
+        }
+    } else {
+        TrendToolButton(LotteryIcons.Refresh, "与官网核对最新开奖", enabled = chart.canRefreshHistory, onClick = onRefresh)
+    }
+}
+
+/** 底栏中的核对状态文字，失败时使用错误色。 */
+@Composable
+private fun TrendRefreshLabel(
+    chart: TrendChartState,
+    label: String,
+    modifier: Modifier = Modifier,
+) {
+    Text(
+        label,
+        modifier,
+        fontSize = 10.sp,
+        color =
+            if (chart.historyRefresh is HistoricalDrawRefreshStatus.Failed) {
+                MaterialTheme.colorScheme.error
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
+        maxLines = 1,
+    )
+}
+
+/** 已展示开奖且没有进行中的核对时才允许手动刷新。 */
+private val TrendChartState.canRefreshHistory: Boolean
+    get() = content is TrendChartContent.Ready && historyRefresh !is HistoricalDrawRefreshStatus.Refreshing
+
+/** 底栏中简短的核对状态；尚未展示开奖时不显示。 */
+private fun TrendChartState.historyRefreshLabel(): String? {
+    val ready = content as? TrendChartContent.Ready ?: return null
+    val updated = "更新于 ${ready.fetchedAtEpochMillis.toChinaDateTime().monthDayMinute()}"
+    return when (historyRefresh) {
+        HistoricalDrawRefreshStatus.Refreshing -> "核对中…"
+        is HistoricalDrawRefreshStatus.Failed -> "更新失败"
+        is HistoricalDrawRefreshStatus.Notice -> "$updated · 有提示"
+        HistoricalDrawRefreshStatus.Idle -> updated
+    }
+}
+
+/** 把毫秒时间戳换算为北京时间。 */
+private fun Long.toChinaDateTime(): LocalDateTime =
+    Instant.fromEpochMilliseconds(this).toLocalDateTime(TimeZone.of("Asia/Shanghai"))
+
+/** 格式化为 `MM-dd HH:mm`。 */
+private fun LocalDateTime.monthDayMinute(): String =
+    "${(month.ordinal + 1).twoDigits()}-${day.twoDigits()} ${hour.twoDigits()}:${minute.twoDigits()}"
 
 /** 保留数学研究使用的彩种分段选择器。 */
 @Composable

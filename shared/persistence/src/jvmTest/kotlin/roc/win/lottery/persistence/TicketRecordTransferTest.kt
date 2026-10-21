@@ -6,7 +6,11 @@ import androidx.room3.useWriterConnection
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import okio.ByteString.Companion.encodeUtf8
 import roc.win.lottery.domain.BetLine
 import roc.win.lottery.domain.ConfirmedTicket
@@ -280,6 +284,94 @@ class TicketRecordTransferTest {
                 )
             }
         }
+
+    /** 导出包写入票据表结构版本而不是 Room 数据库版本，数据库新增无关表后旧版应用仍可导入。 */
+    @Test
+    fun exportWritesTicketSchemaVersionIndependentOfDatabaseVersion() {
+        val export =
+            TicketRecordTransferCodec().encode(
+                listOf(record(FIRST_RECORD_ID, "测试票", createdAtEpochMillis = 10L)),
+                EXPORTED_AT_EPOCH_MILLIS,
+            )
+        val payload = payloadOf(export.content.decodeToString())
+
+        assertEquals(TICKET_RECORD_SCHEMA_VERSION, payload.getValue("roomSchemaVersion").jsonPrimitive.int)
+        assertTrue(WIN_LOTTERY_DATABASE_VERSION > TICKET_RECORD_SCHEMA_VERSION)
+    }
+
+    /** 票据模式 1 的逻辑包必须能导入已升级到新数据库版本的本机库。 */
+    @Test
+    fun ticketSchemaVersionOnePackageImportsIntoUpgradedDatabase() =
+        runTest {
+            withFixture { target ->
+                val content =
+                    packageWithTicketSchemaVersion(
+                        TicketRecordTransferCodec().encode(
+                            listOf(record(FIRST_RECORD_ID, "旧版导出票", createdAtEpochMillis = 10L)),
+                            EXPORTED_AT_EPOCH_MILLIS,
+                        ),
+                        version = 1,
+                    )
+
+                val result = target.store.importPackage(content)
+
+                assertEquals(TicketRecordImportResult.Completed(1, 0, 0), result)
+                assertEquals("旧版导出票", target.store.findById(FIRST_RECORD_ID)?.displayName)
+            }
+        }
+
+    /** 来自更新版本应用的票据模式必须零写入拒绝并提示升级；未知的旧版本同样拒绝。 */
+    @Test
+    fun unsupportedTicketSchemaVersionsAreRejectedWithoutWrites() =
+        runTest {
+            withFixture { target ->
+                val export =
+                    TicketRecordTransferCodec().encode(
+                        listOf(record(FIRST_RECORD_ID, "测试票", createdAtEpochMillis = 10L)),
+                        EXPORTED_AT_EPOCH_MILLIS,
+                    )
+
+                val newer =
+                    assertFailsWith<TicketRecordImportException> {
+                        target.store.inspectImport(
+                            packageWithTicketSchemaVersion(export, TICKET_RECORD_SCHEMA_VERSION + 1),
+                        )
+                    }
+                assertTrue(newer.message.orEmpty().contains("更新版本"))
+                assertFailsWith<TicketRecordImportException> {
+                    target.store.importPackage(packageWithTicketSchemaVersion(export, 0))
+                }
+                assertTrue(
+                    target.store.records
+                        .first()
+                        .isEmpty(),
+                )
+            }
+        }
+
+    /** 解析逻辑包中参与摘要的负载对象。 */
+    private fun payloadOf(text: String): JsonObject =
+        Json
+            .parseToJsonElement(text)
+            .jsonObject
+            .getValue("payload")
+            .jsonObject
+
+    /** 改写负载中的票据模式版本并重新计算摘要，使版本校验成为唯一的拒绝原因。 */
+    private fun packageWithTicketSchemaVersion(
+        export: TicketRecordExport,
+        version: Int,
+    ): ByteArray {
+        val payload =
+            JsonObject(payloadOf(export.content.decodeToString()) + ("roomSchemaVersion" to JsonPrimitive(version)))
+        val payloadText = payload.toString()
+        return JsonObject(
+            mapOf(
+                "payload" to payload,
+                "payloadSha256" to JsonPrimitive(payloadText.encodeUtf8().sha256().hex()),
+            ),
+        ).toString().encodeToByteArray()
+    }
 
     /** 在独立临时目录中打开真实 Room 数据库并负责关闭和清理。 */
     private suspend fun withFixture(block: suspend (TransferDatabaseFixture) -> Unit) {

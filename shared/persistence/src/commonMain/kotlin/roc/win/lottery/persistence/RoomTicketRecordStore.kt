@@ -58,6 +58,36 @@ internal class RoomTicketRecordStore(
         return record
     }
 
+    /** 在写事务中删除旧投注行并按原 UUID 写入校正后的票面。 */
+    override suspend fun replaceTicket(
+        id: String,
+        ticket: ConfirmedTicket,
+    ): StoredTicketRecord? {
+        requireValidTicket(ticket)
+        val normalizedId = validateUuid(id)
+        val now = clock.now().toEpochMilliseconds()
+        require(now >= 0L) { "记录时间不能早于 Unix 纪元" }
+        return database.withWriteTransaction {
+            val existing =
+                dao.findById(normalizedId)?.let(::mapFromDatabase) ?: return@withWriteTransaction null
+            val displayName =
+                if (existing.displayName == existing.ticket.defaultDisplayName()) {
+                    ticket.defaultDisplayName()
+                } else {
+                    existing.displayName
+                }
+            val record =
+                existing.copy(
+                    displayName = displayName,
+                    ticket = ticket.withoutOriginalText(),
+                    updatedAtEpochMillis = maxOf(now, existing.createdAtEpochMillis),
+                )
+            dao.delete(normalizedId)
+            dao.insert(record.toDatabaseRows())
+            record
+        }
+    }
+
     /** 返回指定 UUID 的合法记录。 */
     override suspend fun findById(id: String): StoredTicketRecord? =
         dao.findById(validateUuid(id))?.let(::mapFromDatabase)

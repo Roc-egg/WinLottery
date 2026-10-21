@@ -134,6 +134,60 @@ class RoomTicketRecordStoreTest {
             }
         }
 
+    /** 替换票面后应保留 UUID、采集方式和创建时间，替换全部投注行并按新期号刷新默认名称。 */
+    @Test
+    fun replaceTicketKeepsIdentityAndReplacesBetLines() =
+        runTest {
+            withFixture { fixture ->
+                val saved =
+                    fixture.store.save(
+                        ticket = ticket(listOf(betLine(), secondBetLine()), paidAmountFen = 400L),
+                        acquisitionSource = TicketAcquisitionSource.CAMERA,
+                    )
+                val corrected =
+                    ticket(listOf(secondBetLine()), paidAmountFen = 200L)
+                        .copy(issue = confirmed(Issue("26092")))
+
+                val replaced = assertNotNull(fixture.store.replaceTicket(saved.id, corrected))
+                val loaded = assertNotNull(fixture.store.findById(saved.id))
+
+                assertEquals(replaced, loaded)
+                assertEquals(saved.id, loaded.id)
+                assertEquals(TicketAcquisitionSource.CAMERA, loaded.acquisitionSource)
+                assertEquals(saved.createdAtEpochMillis, loaded.createdAtEpochMillis)
+                assertTrue(loaded.updatedAtEpochMillis >= saved.updatedAtEpochMillis)
+                assertEquals("大乐透 26092", loaded.displayName)
+                assertEquals(Issue("26092"), loaded.ticket.issue.value)
+                assertEquals(1, fixture.database.countBetLines())
+                assertEquals(listOf(loaded), fixture.store.records.first())
+            }
+        }
+
+    /** 用户改过的名称在替换票面后保留；不存在的记录返回 `null` 且不写入。 */
+    @Test
+    fun replaceTicketKeepsCustomNameAndIgnoresMissingRecord() =
+        runTest {
+            withFixture { fixture ->
+                val saved =
+                    fixture.store.save(
+                        ticket = ticket(listOf(betLine()), paidAmountFen = 200L),
+                        acquisitionSource = TicketAcquisitionSource.SYSTEM_PICKER,
+                        displayName = "收藏票",
+                    )
+                val corrected = ticket(listOf(secondBetLine()), paidAmountFen = 200L)
+
+                assertEquals("收藏票", fixture.store.replaceTicket(saved.id, corrected)?.displayName)
+                assertNull(fixture.store.replaceTicket(MISSING_RECORD_ID, corrected))
+                assertEquals(
+                    1,
+                    fixture.store.records
+                        .first()
+                        .size,
+                )
+                assertEquals(1, fixture.database.countBetLines())
+            }
+        }
+
     /** 删除主记录后外键级联必须同步删除其全部投注行。 */
     @Test
     fun deleteCascadesToBetLines() =

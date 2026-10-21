@@ -1,12 +1,19 @@
 package roc.win.lottery
 
+import android.app.Application
 import android.content.pm.ApplicationInfo
 import android.os.Build
 import android.util.Log
 import androidx.activity.ComponentActivity
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewModelScope
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
 import roc.win.lottery.app.AndroidTicketRecordFileExchange
 import roc.win.lottery.app.AppContainer
 import roc.win.lottery.app.LogOcrConfidenceDiagnostics
+import roc.win.lottery.app.LotteryAppSession
 import roc.win.lottery.app.OcrConfidenceDiagnostics
 import roc.win.lottery.app.withOneShotConflictInjection
 import roc.win.lottery.data.AndroidSuperLottoPdfTextExtractor
@@ -14,7 +21,7 @@ import roc.win.lottery.data.OfficialDrawRepository
 import roc.win.lottery.data.ResponsesAiAnalysisProvider
 import roc.win.lottery.domain.LotteryPrizeCalculator
 import roc.win.lottery.domain.TicketValidator
-import roc.win.lottery.persistence.createAndroidTicketRecordStore
+import roc.win.lottery.persistence.createAndroidLocalStorage
 import roc.win.lottery.recognition.AndroidAppPaths
 import roc.win.lottery.recognition.AndroidLuminanceImageDecoder
 import roc.win.lottery.recognition.AndroidPhotoPickerImageAcquirer
@@ -37,54 +44,111 @@ class AndroidPlatform : Platform {
 actual fun getPlatform(): Platform = AndroidPlatform()
 
 /**
- * 创建已接入 Android 图片采集、本地 OCR 和真实开奖查询的移动容器。
+ * 跨 Android 配置变更保留应用会话的 ViewModel。
  *
- * @param activity 用于注册系统选图结果和读取应用私有目录的宿主 Activity。
- * @return 使用真实本地识别、保守解析器、官网开奖仓库和本地规则引擎的应用容器。
+ * 识别会话、网络客户端和数据库只在首次创建界面时建立一次；Activity 最终结束时统一释放。
+ * 系统选择器回调与具体 Activity 绑定，每个新的界面 Activity 都要通过 [attach] 重新注册。
+ *
+ * @param application 访问私有目录、模型资源和系统内容提供方的应用对象。
+ * @param debugConflictIssue Debug 包一次性冲突验收注入的期号，Release 包忽略。
  */
-fun createAndroidRecognitionContainer(activity: ComponentActivity): AppContainer {
-    val appPaths = AndroidAppPaths(activity.applicationContext)
-    val isDebuggable = activity.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
-    val officialDrawRepository =
-        OfficialDrawRepository(
-            superLottoPdfTextExtractor =
-                AndroidSuperLottoPdfTextExtractor(activity.applicationContext),
+class AndroidLotteryAppViewModel(
+    application: Application,
+    debugConflictIssue: String?,
+) : ViewModel() {
+    /** 应用私有临时票图目录。 */
+    private val appPaths = AndroidAppPaths(application)
+
+    /** 跨 Activity 重建保留的系统选图与拍照采集器。 */
+    private val imageAcquirer = AndroidPhotoPickerImageAcquirer(application, appPaths)
+
+    /** 跨 Activity 重建保留的逻辑票据包文件交换器。 */
+    private val ticketRecordFileExchange = AndroidTicketRecordFileExchange(application)
+
+    /** 跨配置变更保留的应用会话，界面操作在 ViewModel 作用域内执行。 */
+    val session: LotteryAppSession =
+        LotteryAppSession(
+            container = createAndroidContainer(application, debugConflictIssue),
+            scope = viewModelScope,
         )
-    return AppContainer(
-        platform = AndroidPlatform(),
-        imageAcquirer = AndroidPhotoPickerImageAcquirer(activity, appPaths),
-        imageQualityAnalyzer =
-            ImageQualityAnalyzerChain(
-                listOf(
-                    ImageDimensionQualityAnalyzer(),
-                    PixelImageQualityAnalyzer(AndroidLuminanceImageDecoder()),
+
+    /** 把系统选择器回调注册到新的界面 Activity，必须在其进入启动状态前调用。 */
+    fun attach(activity: ComponentActivity) {
+        imageAcquirer.attach(activity)
+        ticketRecordFileExchange.attach(activity)
+    }
+
+    /** Activity 最终结束时释放识别会话、网络客户端、数据库连接和临时票图。 */
+    override fun onCleared() {
+        session.close()
+    }
+
+    /** 创建使用真实本地识别、保守解析器、官网开奖仓库和本地规则引擎的应用容器。 */
+    private fun createAndroidContainer(
+        application: Application,
+        debugConflictIssue: String?,
+    ): AppContainer {
+        val isDebuggable = application.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
+        val localStorage = createAndroidLocalStorage(application)
+        val officialDrawRepository =
+            OfficialDrawRepository(
+                superLottoPdfTextExtractor = AndroidSuperLottoPdfTextExtractor(application),
+            )
+        return AppContainer(
+            platform = AndroidPlatform(),
+            imageAcquirer = imageAcquirer,
+            imageQualityAnalyzer =
+                ImageQualityAnalyzerChain(
+                    listOf(
+                        ImageDimensionQualityAnalyzer(),
+                        PixelImageQualityAnalyzer(AndroidLuminanceImageDecoder()),
+                    ),
                 ),
-            ),
-        ticketRecognizer = AndroidPpOcrTicketRecognizer(activity.applicationContext),
-        ticketParser = ConservativeTicketParser(),
-        drawRepository =
-            officialDrawRepository.withOneShotConflictInjection(
-                rawIssue = activity.intent.getStringExtra(DEBUG_CONFLICT_ISSUE_EXTRA),
-                isDebugEnabled = isDebuggable,
-            ),
-        historicalDrawRepository = officialDrawRepository,
-        aiAnalysisProvider = ResponsesAiAnalysisProvider(),
-        prizeCalculator = LotteryPrizeCalculator(),
-        appPaths = appPaths,
-        ticketValidator = TicketValidator(),
-        isDemo = true,
-        usesRealImageAcquisition = true,
-        usesRealRecognition = true,
-        usesRealDrawData = true,
-        ticketRecordStore = createAndroidTicketRecordStore(activity.applicationContext),
-        ticketRecordFileExchange = AndroidTicketRecordFileExchange(activity),
-        ocrConfidenceDiagnostics = createAndroidOcrConfidenceDiagnostics(activity),
-    )
+            ticketRecognizer = AndroidPpOcrTicketRecognizer(application),
+            ticketParser = ConservativeTicketParser(),
+            drawRepository =
+                officialDrawRepository.withOneShotConflictInjection(
+                    rawIssue = debugConflictIssue,
+                    isDebugEnabled = isDebuggable,
+                ),
+            historicalDrawRepository = officialDrawRepository,
+            aiAnalysisProvider = ResponsesAiAnalysisProvider(),
+            prizeCalculator = LotteryPrizeCalculator(),
+            appPaths = appPaths,
+            ticketValidator = TicketValidator(),
+            isDemo = true,
+            usesRealImageAcquisition = true,
+            usesRealRecognition = true,
+            usesRealDrawData = true,
+            ticketRecordStore = localStorage.ticketRecordStore,
+            historicalDrawStore = localStorage.historicalDrawStore,
+            drawResultStore = localStorage.drawResultStore,
+            ticketRecordFileExchange = ticketRecordFileExchange,
+            ocrConfidenceDiagnostics = createAndroidOcrConfidenceDiagnostics(isDebuggable),
+        )
+    }
+}
+
+/**
+ * 取得当前 Activity 跨配置变更保留的应用会话，并把系统选择器回调注册到该 Activity。
+ *
+ * 必须在 Activity 的 `onCreate` 中调用。
+ */
+fun ComponentActivity.attachLotteryAppSession(): LotteryAppSession {
+    val application = application
+    val debugConflictIssue = intent.getStringExtra(DEBUG_CONFLICT_ISSUE_EXTRA)
+    val factory =
+        viewModelFactory {
+            initializer { AndroidLotteryAppViewModel(application, debugConflictIssue) }
+        }
+    val viewModel = ViewModelProvider.create(this, factory)[AndroidLotteryAppViewModel::class]
+    viewModel.attach(this)
+    return viewModel.session
 }
 
 /** 只为可调试 Android 包创建匿名置信度日志，Release 保持完全禁用。 */
-private fun createAndroidOcrConfidenceDiagnostics(activity: ComponentActivity): OcrConfidenceDiagnostics =
-    if (activity.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) {
+private fun createAndroidOcrConfidenceDiagnostics(isDebuggable: Boolean): OcrConfidenceDiagnostics =
+    if (isDebuggable) {
         LogOcrConfidenceDiagnostics { line -> Log.i(OCR_CONFIDENCE_LOG_TAG, line) }
     } else {
         OcrConfidenceDiagnostics.Disabled

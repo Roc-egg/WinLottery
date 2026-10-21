@@ -8,8 +8,11 @@ import platform.Foundation.NSURLIsExcludedFromBackupKey
 import platform.Foundation.NSUserDomainMask
 
 /** 创建 iOS Application Support 目录中且排除 iCloud 备份的结构化票据仓库。 */
+fun createIOSTicketRecordStore(): TicketRecordStore = createIOSLocalStorage().ticketRecordStore
+
+/** 创建 iOS Application Support 目录中且排除 iCloud 备份、票据和官方历史开奖共用的本机存储。 */
 @OptIn(ExperimentalForeignApi::class)
-fun createIOSTicketRecordStore(): TicketRecordStore {
+fun createIOSLocalStorage(): WinLotteryLocalStorage {
     val databaseDirectory = prepareDatabaseDirectory()
     val databasePath = "$databaseDirectory/$WIN_LOTTERY_DATABASE_FILE_NAME"
     val builder =
@@ -17,7 +20,7 @@ fun createIOSTicketRecordStore(): TicketRecordStore {
             name = databasePath,
             factory = WinLotteryDatabaseConstructor::initialize,
         )
-    return RoomTicketRecordStore(buildWinLotteryDatabase(builder))
+    return WinLotteryLocalStorage(buildWinLotteryDatabase(builder))
 }
 
 /** 创建数据库目录并把整个目录排除在系统云备份之外。 */

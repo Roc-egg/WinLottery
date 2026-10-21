@@ -15,16 +15,23 @@ import java.security.MessageDigest
 /** 使用 PP-OCRv5 与 ONNX Runtime 执行 Android 本地票面识别。 */
 class AndroidPpOcrTicketRecognizer(
     context: Context,
-) : ProgressiveTicketRecognizer {
+) : ProgressiveTicketRecognizer,
+    AutoCloseable {
     /** 只用于访问私有模型目录和只读打包资源的应用上下文。 */
     private val applicationContext = context.applicationContext
 
-    /** 延迟创建并在进程内复用的共享识别实现。 */
+    /** 首次识别时创建的 ONNX Session 持有者，关闭识别器时一并释放。 */
+    private val runtime: Lazy<AndroidPpOcrOnnxRuntime> =
+        lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+            AndroidPpOcrOnnxRuntime(AndroidPpOcrResources(applicationContext))
+        }
+
+    /** 延迟创建并在应用会话内复用的共享识别实现。 */
     private val delegate: PpOcrTicketRecognizer by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         val resources = AndroidPpOcrResources(applicationContext)
         PpOcrTicketRecognizer(
             imageDecoder = AndroidPpOcrRgbImageDecoder(),
-            runtime = AndroidPpOcrOnnxRuntime(resources),
+            runtime = runtime.value,
             characters = parsePpOcrCharacters(resources.readText(PP_OCR_DICTIONARY_FILE_NAME)),
             latinCharacters =
                 parsePpOcrCharacters(
@@ -41,6 +48,11 @@ class AndroidPpOcrTicketRecognizer(
     ): RecognitionResult {
         onProgress(RecognitionProgress(0f, "正在加载本地识别模型"))
         return delegate.recognize(imageRef, onProgress)
+    }
+
+    /** 释放已经创建的 ONNX Session；仍在执行的推理结束后才真正关闭。 */
+    override fun close() {
+        if (runtime.isInitialized()) runtime.value.close()
     }
 }
 
@@ -99,12 +111,26 @@ private class AndroidPpOcrRgbImageDecoder : PpOcrRgbImageDecoder {
 private class AndroidPpOcrOnnxRuntime(
     /** 经过哈希校验的模型资源提供器。 */
     private val resources: AndroidPpOcrResources,
-) : PpOcrOnnxRuntime {
+) : PpOcrOnnxRuntime,
+    AutoCloseable {
     /** 进程级 ONNX Runtime 环境。 */
     private val environment: OrtEnvironment = OrtEnvironment.getEnvironment()
 
     /** 每段模型只创建一个线程安全 Session。 */
     private val sessions = mutableMapOf<PpOcrModel, OrtSession>()
+
+    /** 正在使用 Session 的推理数量，由当前对象监视器保护。 */
+    private var activeRunCount = 0
+
+    /** 是否已请求关闭；关闭后不再创建或借出 Session。 */
+    private var isClosed = false
+
+    /** 标记关闭；没有进行中的推理时立即释放，否则由最后一次推理结束时释放，避免与后台推理竞争。 */
+    @Synchronized
+    override fun close() {
+        isClosed = true
+        if (activeRunCount == 0) closeSessions()
+    }
 
     /** 执行单输入、单输出 Float 模型并复制运行时输出。 */
     override fun run(
@@ -168,21 +194,46 @@ private class AndroidPpOcrOnnxRuntime(
         inputShape: IntArray,
         transform: (OnnxTensor) -> T,
     ): T {
-        val session = session(model)
-        val shape = inputShape.map(Int::toLong).toLongArray()
-        return OnnxTensor.createTensor(environment, FloatBuffer.wrap(input), shape).use { tensor ->
-            session.run(mapOf(model.inputName to tensor)).use { result ->
-                val output =
-                    result.get(model.outputName).orElseThrow {
-                        IllegalStateException("ONNX 输出缺失")
-                    } as? OnnxTensor ?: error("ONNX 输出类型错误")
-                transform(output)
+        val session = acquireSession(model)
+        try {
+            val shape = inputShape.map(Int::toLong).toLongArray()
+            return OnnxTensor.createTensor(environment, FloatBuffer.wrap(input), shape).use { tensor ->
+                session.run(mapOf(model.inputName to tensor)).use { result ->
+                    val output =
+                        result.get(model.outputName).orElseThrow {
+                            IllegalStateException("ONNX 输出缺失")
+                        } as? OnnxTensor ?: error("ONNX 输出类型错误")
+                    transform(output)
+                }
             }
+        } finally {
+            releaseSession()
         }
     }
 
-    /** 按模型标识同步创建并缓存 Session。 */
+    /** 登记一次推理并返回对应 Session；已关闭时失败，由共享识别流程转换为识别失败。 */
     @Synchronized
+    private fun acquireSession(model: PpOcrModel): OrtSession {
+        check(!isClosed) { "本地识别会话已关闭" }
+        val session = session(model)
+        activeRunCount += 1
+        return session
+    }
+
+    /** 结束一次推理；关闭请求在等待时由最后一次推理释放 Session。 */
+    @Synchronized
+    private fun releaseSession() {
+        activeRunCount -= 1
+        if (isClosed && activeRunCount == 0) closeSessions()
+    }
+
+    /** 关闭全部已创建的 Session。 */
+    private fun closeSessions() {
+        sessions.values.forEach { session -> runCatching { session.close() } }
+        sessions.clear()
+    }
+
+    /** 按模型标识创建并缓存 Session，调用方必须持有当前对象监视器。 */
     private fun session(model: PpOcrModel): OrtSession =
         sessions.getOrPut(model) {
             OrtSession.SessionOptions().use { options ->

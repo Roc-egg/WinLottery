@@ -25,6 +25,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.toLocalDateTime
 import roc.win.lottery.app.AppScreen
 import roc.win.lottery.app.PeriodVerification
 import roc.win.lottery.domain.BetLinePrizeResult
@@ -44,7 +46,9 @@ import kotlin.time.Instant
  * @param ticket 用户逐项确认的票据。
  * @param drawResult 经双数据面核对的开奖结果。
  * @param prizeCheckResult 本地规则引擎输出的逐注结果。
- * @param onRetry 主动重新查询同一期开奖。
+ * @param isFromLocalStore 开奖结果是否直接取自本机保存。
+ * @param refreshNotice 本次联网未取得新证据、改为展示本机结果时的说明。
+ * @param onRetry 忽略本机结果，重新联网核对同一期开奖。
  * @param onBack 返回票面确认页。
  * @param onDone 清除当前流程并返回首页。
  */
@@ -53,6 +57,8 @@ fun VerificationResultScreen(
     ticket: ConfirmedTicket,
     drawResult: DrawResult,
     prizeCheckResult: PrizeCheckResult,
+    isFromLocalStore: Boolean = false,
+    refreshNotice: String? = null,
     onRetry: () -> Unit,
     onBack: () -> Unit,
     onDone: () -> Unit,
@@ -63,6 +69,21 @@ fun VerificationResultScreen(
         onNavigate = onBack,
     ) {
         VerificationSummary(prizeCheckResult)
+        if (isFromLocalStore || refreshNotice != null) {
+            Spacer(Modifier.height(12.dp))
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = MaterialTheme.shapes.small,
+                color = MaterialTheme.colorScheme.secondaryContainer,
+            ) {
+                Text(
+                    refreshNotice ?: drawResult.localSourceText(),
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                )
+            }
+        }
         Spacer(Modifier.height(24.dp))
         Text("开奖号码", style = MaterialTheme.typography.titleLarge)
         Spacer(Modifier.height(12.dp))
@@ -113,7 +134,7 @@ fun VerificationResultScreen(
             modifier = Modifier.fillMaxWidth().height(52.dp),
             shape = MaterialTheme.shapes.small,
         ) {
-            Text("重新查询本期")
+            Text("重新联网核对本期")
         }
         Spacer(Modifier.height(10.dp))
         Button(
@@ -132,7 +153,8 @@ fun VerificationResultScreen(
  * @param ticket 用户逐项确认的票据。
  * @param status 本次官网查询的不可用状态。
  * @param message 仓库返回的恢复说明。
- * @param onRetry 主动重新查询同一期开奖。
+ * @param wasQueried 本次是否实际向官网发起查询。
+ * @param onRetry 主动联网查询同一期开奖。
  * @param onBack 返回票面确认页。
  * @param onDone 清除当前流程并返回首页。
  */
@@ -141,6 +163,7 @@ fun DrawUnavailableScreen(
     ticket: ConfirmedTicket,
     status: DrawStatus,
     message: String,
+    wasQueried: Boolean = true,
     onRetry: () -> Unit,
     onBack: () -> Unit,
     onDone: () -> Unit,
@@ -171,6 +194,7 @@ fun DrawUnavailableScreen(
                     "彩种" to ticket.lotteryType.value.displayName(),
                     "期号" to ticket.issue.value.value,
                     "查询状态" to status.displayName(),
+                    "官网查询" to if (wasQueried) "本次已发起" else "本次未发起",
                 ),
         )
         Spacer(Modifier.height(20.dp))
@@ -204,7 +228,8 @@ fun DrawUnavailableScreen(
  * 展示一张多期票的逐期开奖状态和保守整票汇总。
  *
  * @param result 控制器按期号顺序保存的多期结果。
- * @param onRetry 只重查证据不足或奖金尚未完整的期次。
+ * @param onRetry 保留已完成期次，只联网核对证据不足或奖金尚未完整的期次。
+ * @param onForceRefresh 忽略本机结果，全部期次重新联网核对。
  * @param onBack 返回票面确认页。
  * @param onDone 清除当前流程并返回首页。
  */
@@ -212,6 +237,7 @@ fun DrawUnavailableScreen(
 fun MultiPeriodVerificationScreen(
     result: AppScreen.MultiPeriodVerificationResult,
     onRetry: () -> Unit,
+    onForceRefresh: () -> Unit,
     onBack: () -> Unit,
     onDone: () -> Unit,
 ) {
@@ -266,12 +292,30 @@ fun MultiPeriodVerificationScreen(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.height(28.dp))
-        Button(
-            onClick = onRetry,
-            modifier = Modifier.fillMaxWidth().height(52.dp),
-            shape = MaterialTheme.shapes.small,
-        ) {
-            Text(if (result.unresolvedPeriodCount > 0) "重查未完成期次" else "重新查询全部期次")
+        if (result.unresolvedPeriodCount > 0) {
+            Button(
+                onClick = onRetry,
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+                shape = MaterialTheme.shapes.small,
+            ) {
+                Text("重查未完成期次")
+            }
+            Spacer(Modifier.height(10.dp))
+            OutlinedButton(
+                onClick = onForceRefresh,
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+                shape = MaterialTheme.shapes.small,
+            ) {
+                Text("重新联网核对全部期次")
+            }
+        } else {
+            Button(
+                onClick = onForceRefresh,
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+                shape = MaterialTheme.shapes.small,
+            ) {
+                Text("重新联网核对全部期次")
+            }
         }
         Spacer(Modifier.height(10.dp))
         OutlinedButton(
@@ -374,6 +418,13 @@ private fun PeriodVerificationItem(result: PeriodVerification) {
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    if (result.isFromLocalStore) {
+                        Text(
+                            result.drawResult.localSourceText(),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.secondary,
+                        )
+                    }
                 }
 
                 is PeriodVerification.Unavailable -> {
@@ -728,6 +779,19 @@ private fun Long.toEvidenceTime(): String =
     } else {
         Instant.fromEpochMilliseconds(this).toString()
     }
+
+/** 说明开奖结果取自本机保存，并给出最近一次联网核对的北京时间。 */
+private fun DrawResult.localSourceText(): String {
+    val time =
+        Instant
+            .fromEpochMilliseconds(
+                evidence.fetchedAtEpochMillis,
+            ).toLocalDateTime(TimeZone.of("Asia/Shanghai"))
+    val text =
+        "${(time.month.ordinal + 1).toString().padStart(2, '0')}-${time.day.toString().padStart(2, '0')} " +
+            "${time.hour.toString().padStart(2, '0')}:${time.minute.toString().padStart(2, '0')}"
+    return "使用本机保存的开奖 · 核对于 $text"
+}
 
 /** 限制长查询地址的展示长度，避免挤压移动端布局。 */
 private fun String.compactUrl(): String =

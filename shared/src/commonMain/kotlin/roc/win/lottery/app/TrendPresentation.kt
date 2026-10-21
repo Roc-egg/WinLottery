@@ -131,3 +131,17 @@ internal fun List<TrendNumberStatistics>.orderedBy(order: TrendStatisticOrder): 
             )
         }
     }
+
+/** 当前遗漏的展示文本；已取得历史内从未开出时以 `≥` 标明只是下限。 */
+internal val TrendNumberStatistics.currentOmissionText: String
+    get() = omissionText(currentOmission, isCurrentOmissionLowerBound)
+
+/** 最大遗漏的展示文本；来自起点未知的遗漏段时以 `≥` 标明只是下限。 */
+internal val TrendNumberStatistics.maxOmissionText: String
+    get() = omissionText(maxOmission, isMaxOmissionLowerBound)
+
+/** 把遗漏值格式化为确定值或下限。 */
+internal fun omissionText(
+    value: Int,
+    isLowerBound: Boolean,
+): String = if (isLowerBound) "≥$value" else value.toString()

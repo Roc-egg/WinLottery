@@ -32,12 +32,18 @@ import roc.win.lottery.domain.AiAnalysisRequest
 class ResponsesAiAnalysisProvider internal constructor(
     private val httpClient: HttpClient,
     private val outputValidator: AiAnalysisOutputValidator,
-) : AiAnalysisProvider {
+) : AiAnalysisProvider,
+    AutoCloseable {
     /** 创建只使用禁止重定向、重试和日志的生产网络客户端。 */
     constructor() : this(
         httpClient = createPlatformAiHttpClient(),
         outputValidator = AiAnalysisOutputValidator(),
     )
+
+    /** 应用会话结束时关闭 AI 专用网络客户端。 */
+    override fun close() {
+        httpClient.close()
+    }
 
     /** 生成与实际 POST 请求体完全一致的无密钥确认预览。 */
     override fun preview(

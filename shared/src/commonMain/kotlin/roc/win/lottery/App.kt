@@ -4,7 +4,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -12,11 +11,10 @@ import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.backhandler.BackHandler
 import androidx.compose.ui.tooling.preview.Preview
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import roc.win.lottery.app.AppContainer
 import roc.win.lottery.app.AppScreen
-import roc.win.lottery.app.LotteryAppController
+import roc.win.lottery.app.LotteryAppSession
 import roc.win.lottery.app.MainDestination
 import roc.win.lottery.app.TicketReviewAction
 import roc.win.lottery.app.theme.LotteryTheme
@@ -38,17 +36,34 @@ import roc.win.lottery.persistence.StoredTicketRecord
 import roc.win.lottery.recognition.ImageAcquisitionSource
 
 /**
- * 四端共享应用入口。
+ * 四端共享应用入口，会话随根组合创建和释放。
  *
  * @param container 可由平台宿主替换的应用依赖，预览和未接入平台默认使用开发 Fake。
  */
 @Composable
 @Preview
 fun App(container: AppContainer = remember { AppContainer.createDemo(getPlatform()) }) {
-    val controller = remember(container) { LotteryAppController(container) }
-    val uiState by controller.uiState.collectAsState()
     val scope = rememberCoroutineScope()
-    val aiRequestJob = remember(controller) { mutableStateOf<Job?>(null) }
+    val session = remember(container) { LotteryAppSession(container, scope) }
+    DisposableEffect(session) {
+        onDispose { session.close() }
+    }
+    App(session)
+}
+
+/**
+ * 使用平台宿主管理寿命的应用会话绘制四端共享界面。
+ *
+ * 组合销毁时不关闭会话，Android Activity 因配置变更重建后可以继续展示同一流程状态。
+ *
+ * @param session 平台宿主持有的应用会话。
+ */
+@Composable
+fun App(session: LotteryAppSession) {
+    val container = session.container
+    val controller = session.controller
+    val uiState by controller.uiState.collectAsState()
+    val scope = session.scope
     val ticketRecordStore = container.ticketRecordStore
     val availableMainDestinations =
         remember(ticketRecordStore, container.aiAnalysisProvider, container.historicalDrawRepository) {
@@ -70,8 +85,8 @@ fun App(container: AppContainer = remember { AppContainer.createDemo(getPlatform
         }
     val cancelAiRequest: () -> Unit = {
         controller.cancelAiAnalysisRequest()
-        aiRequestJob.value?.cancel()
-        aiRequestJob.value = null
+        session.aiRequestJob?.cancel()
+        session.aiRequestJob = null
     }
     val onMainDestinationSelected: (MainDestination) -> Unit = { destination ->
         if (uiState.screen is AppScreen.AiAnalysis && destination != MainDestination.AI_ANALYSIS) {
@@ -111,14 +126,6 @@ fun App(container: AppContainer = remember { AppContainer.createDemo(getPlatform
                     )
             }
         }
-
-    DisposableEffect(container) {
-        onDispose {
-            controller.cancelAiAnalysisRequest()
-            aiRequestJob.value?.cancel()
-            container.close()
-        }
-    }
 
     SystemBackHandler(enabled = uiState.screen != AppScreen.Home) {
         if (uiState.screen is AppScreen.AiAnalysis) {
@@ -178,10 +185,11 @@ fun App(container: AppContainer = remember { AppContainer.createDemo(getPlatform
                         scope.launch { controller.updateAiAnalysisSettings(settings) }
                     },
                     onRetryHistory = { scope.launch { controller.retryAiAnalysisHistory() } },
+                    onRefreshHistory = { scope.launch { controller.refreshAiAnalysisHistory() } },
                     onPreparePreview = controller::prepareAiAnalysisPreview,
                     onDismissPreview = controller::dismissAiAnalysisPreview,
                     onConfirmPreview = { fingerprint ->
-                        aiRequestJob.value =
+                        session.aiRequestJob =
                             scope.launch {
                                 controller.confirmAiAnalysisPreview(fingerprint)
                             }
@@ -303,7 +311,9 @@ fun App(container: AppContainer = remember { AppContainer.createDemo(getPlatform
                     ticket = screen.ticket,
                     drawResult = screen.drawResult,
                     prizeCheckResult = screen.prizeCheckResult,
-                    onRetry = { scope.launch { controller.retryDrawQuery() } },
+                    isFromLocalStore = screen.isFromLocalStore,
+                    refreshNotice = screen.refreshNotice,
+                    onRetry = { scope.launch { controller.retryDrawQuery(forceRefresh = true) } },
                     onBack = { scope.launch { controller.navigateBack() } },
                     onDone = { scope.launch { controller.navigateHome() } },
                 )
@@ -314,6 +324,7 @@ fun App(container: AppContainer = remember { AppContainer.createDemo(getPlatform
                     ticket = screen.ticket,
                     status = screen.status,
                     message = screen.message,
+                    wasQueried = screen.wasQueried,
                     onRetry = { scope.launch { controller.retryDrawQuery() } },
                     onBack = { scope.launch { controller.navigateBack() } },
                     onDone = { scope.launch { controller.navigateHome() } },
@@ -324,6 +335,7 @@ fun App(container: AppContainer = remember { AppContainer.createDemo(getPlatform
                 MultiPeriodVerificationScreen(
                     result = screen,
                     onRetry = { scope.launch { controller.retryDrawQuery() } },
+                    onForceRefresh = { scope.launch { controller.retryDrawQuery(forceRefresh = true) } },
                     onBack = { scope.launch { controller.navigateBack() } },
                     onDone = { scope.launch { controller.navigateHome() } },
                 )
@@ -338,8 +350,12 @@ fun App(container: AppContainer = remember { AppContainer.createDemo(getPlatform
                 )
             }
 
-            AppScreen.About -> {
-                AboutScreen(onBack = { scope.launch { controller.navigateBack() } })
+            is AppScreen.About -> {
+                AboutScreen(
+                    screen = screen,
+                    onBack = { scope.launch { controller.navigateBack() } },
+                    onClearHistory = { scope.launch { controller.clearHistoricalDrawCache() } },
+                )
             }
         }
     }

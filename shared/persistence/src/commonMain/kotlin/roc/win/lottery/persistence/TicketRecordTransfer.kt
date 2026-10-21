@@ -117,7 +117,7 @@ internal class TicketRecordTransferCodec(
             TicketTransferPayload(
                 format = TICKET_RECORD_TRANSFER_FORMAT,
                 formatVersion = CURRENT_TICKET_RECORD_TRANSFER_FORMAT_VERSION,
-                roomSchemaVersion = WIN_LOTTERY_DATABASE_VERSION,
+                roomSchemaVersion = TICKET_RECORD_SCHEMA_VERSION,
                 exportedAtEpochMillis = exportedAtEpochMillis,
                 recordCount = records.size,
                 records = records.sortedBy(StoredTicketRecord::id).map(::toTransferRecord),
@@ -158,8 +158,12 @@ internal class TicketRecordTransferCodec(
         importRequire(payload.formatVersion == CURRENT_TICKET_RECORD_TRANSFER_FORMAT_VERSION) {
             "不支持导入格式版本 ${payload.formatVersion}"
         }
-        importRequire(payload.roomSchemaVersion == WIN_LOTTERY_DATABASE_VERSION) {
-            "不支持导入文件的数据库模式版本 ${payload.roomSchemaVersion}"
+        // 只校验票据表结构的兼容范围，不与 Room 数据库版本做相等比较；新增无关表不影响备份互通。
+        importRequire(payload.roomSchemaVersion <= TICKET_RECORD_SCHEMA_VERSION) {
+            "导入文件来自更新版本的应用（票据模式 ${payload.roomSchemaVersion}），请升级应用后再导入"
+        }
+        importRequire(payload.roomSchemaVersion in SUPPORTED_TICKET_RECORD_SCHEMA_VERSIONS) {
+            "不支持导入文件的票据模式版本 ${payload.roomSchemaVersion}"
         }
         importRequire(payload.exportedAtEpochMillis >= 0L) { "导出时间不合法" }
         importRequire(payload.recordCount in 0..MAX_TICKET_RECORD_IMPORT_COUNT) {
@@ -332,7 +336,7 @@ private data class TicketTransferPayload(
     val format: String,
     /** 逻辑文件格式版本。 */
     val formatVersion: Int,
-    /** 导出端 Room 模式版本。 */
+    /** 导出端票据表结构版本；历史字段名保留以兼容既有逻辑包，与 Room 数据库版本无关。 */
     val roomSchemaVersion: Int,
     /** 导出时间，Unix 毫秒。 */
     val exportedAtEpochMillis: Long,
@@ -434,6 +438,16 @@ const val TICKET_RECORD_TRANSFER_FORMAT = "win-lottery-tickets"
 
 /** 当前逻辑导入导出格式版本。 */
 const val CURRENT_TICKET_RECORD_TRANSFER_FORMAT_VERSION = 1
+
+/**
+ * 当前票据表结构版本，只在 `ticket_records` 或 `ticket_bet_lines` 结构变化时递增。
+ *
+ * 写入逻辑包的 `roomSchemaVersion` 字段；数据库为其他数据新增表时保持不变，新旧应用的备份因此可以互相导入。
+ */
+const val TICKET_RECORD_SCHEMA_VERSION = 1
+
+/** 当前应用可以导入的票据表结构版本范围。 */
+val SUPPORTED_TICKET_RECORD_SCHEMA_VERSIONS: IntRange = 1..TICKET_RECORD_SCHEMA_VERSION
 
 /** 单个导入文件允许的最大原始字节数。 */
 const val MAX_TICKET_RECORD_IMPORT_BYTES = 5 * 1024 * 1024

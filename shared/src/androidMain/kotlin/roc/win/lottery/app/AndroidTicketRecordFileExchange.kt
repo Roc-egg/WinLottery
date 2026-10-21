@@ -1,10 +1,14 @@
 package roc.win.lottery.app
 
+import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.activity.ComponentActivity
+import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts.CreateDocument
 import androidx.activity.result.contract.ActivityResultContracts.OpenDocument
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
 import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -14,32 +18,61 @@ import okio.source
 import java.io.IOException
 import kotlin.coroutines.resume
 
-/** 使用 Android 系统文件选择器即时导入或导出逻辑票据包。 */
+/**
+ * 使用 Android 系统文件选择器即时导入或导出逻辑票据包。
+ *
+ * 实例跨 Activity 配置变更保留，每个新的界面 Activity 都必须调用 [attach] 重新注册系统结果回调。
+ */
 class AndroidTicketRecordFileExchange(
-    /** 注册 Activity Result 并访问所选内容的宿主 Activity。 */
-    private val activity: ComponentActivity,
+    /** 访问所选内容使用的上下文，只保留其应用上下文。 */
+    context: Context,
 ) : TicketRecordFileExchange {
+    /** 不随界面 Activity 重建而失效的应用上下文。 */
+    private val applicationContext = context.applicationContext
+
     /** 等待系统导入文件选择结果的单个请求。 */
     private var pendingImportSelection: CancellableContinuation<AndroidFileSelectionResult>? = null
 
     /** 等待系统导出位置选择结果的单个请求。 */
     private var pendingExportSelection: CancellableContinuation<AndroidFileSelectionResult>? = null
 
-    /** 必须在 Activity 进入启动状态前完成注册的系统导入文件选择器。 */
-    private val importLauncher =
-        activity.registerForActivityResult(OpenDocument()) { uri ->
-            resumeImportSelection(
-                uri?.let(AndroidFileSelectionResult::Selected) ?: AndroidFileSelectionResult.Cancelled,
-            )
-        }
+    /** 当前界面 Activity 注册的系统导入文件选择器；没有可用界面时为空。 */
+    private var importLauncher: ActivityResultLauncher<Array<String>>? = null
 
-    /** 必须在 Activity 进入启动状态前完成注册的系统导出位置选择器。 */
-    private val exportLauncher =
-        activity.registerForActivityResult(CreateDocument(JSON_MIME_TYPE)) { uri ->
-            resumeExportSelection(
-                uri?.let(AndroidFileSelectionResult::Selected) ?: AndroidFileSelectionResult.Cancelled,
-            )
-        }
+    /** 当前界面 Activity 注册的系统导出位置选择器；没有可用界面时为空。 */
+    private var exportLauncher: ActivityResultLauncher<String>? = null
+
+    /**
+     * 把系统文件选择结果回调注册到当前界面 Activity，必须在 Activity 进入启动状态前调用。
+     *
+     * 使用固定键注册：Activity 因配置变更重建时，系统会把重建前发起的选择结果交给新注册的回调。
+     */
+    fun attach(activity: ComponentActivity) {
+        val registry = activity.activityResultRegistry
+        val openDocument =
+            registry.register(IMPORT_RESULT_KEY, activity, OpenDocument()) { uri ->
+                resumeImportSelection(
+                    uri?.let(AndroidFileSelectionResult::Selected) ?: AndroidFileSelectionResult.Cancelled,
+                )
+            }
+        val createDocument =
+            registry.register(EXPORT_RESULT_KEY, activity, CreateDocument(JSON_MIME_TYPE)) { uri ->
+                resumeExportSelection(
+                    uri?.let(AndroidFileSelectionResult::Selected) ?: AndroidFileSelectionResult.Cancelled,
+                )
+            }
+        importLauncher = openDocument
+        exportLauncher = createDocument
+        activity.lifecycle.addObserver(
+            object : DefaultLifecycleObserver {
+                /** 界面销毁后不再持有其启动器，避免保留已销毁的 Activity。 */
+                override fun onDestroy(owner: LifecycleOwner) {
+                    if (importLauncher === openDocument) importLauncher = null
+                    if (exportLauncher === createDocument) exportLauncher = null
+                }
+            },
+        )
+    }
 
     /** 选择一个固定扩展名文件，并在后台线程按共享上限即时读取。 */
     override suspend fun readImportPackage(): TicketRecordFileReadResult =
@@ -92,7 +125,7 @@ class AndroidTicketRecordFileExchange(
                     if (pendingImportSelection === continuation) pendingImportSelection = null
                 }
                 runCatching {
-                    importLauncher.launch(IMPORT_MIME_TYPES)
+                    checkNotNull(importLauncher) { "导入选择器尚未注册" }.launch(IMPORT_MIME_TYPES)
                 }.onFailure {
                     pendingImportSelection = null
                     if (continuation.isActive) {
@@ -114,7 +147,7 @@ class AndroidTicketRecordFileExchange(
                     if (pendingExportSelection === continuation) pendingExportSelection = null
                 }
                 runCatching {
-                    exportLauncher.launch(suggestedFileName)
+                    checkNotNull(exportLauncher) { "导出选择器尚未注册" }.launch(suggestedFileName)
                 }.onFailure {
                     pendingExportSelection = null
                     if (continuation.isActive) {
@@ -133,7 +166,7 @@ class AndroidTicketRecordFileExchange(
                     return@withContext TicketRecordFileReadResult.Failure("请选择 .wltickets.json 逻辑票据包")
                 }
                 val input =
-                    activity.contentResolver.openInputStream(uri)
+                    applicationContext.contentResolver.openInputStream(uri)
                         ?: return@withContext TicketRecordFileReadResult.Failure("无法读取所选逻辑票据包")
                 val content = input.source().buffer().use { source -> source.readTicketRecordImportContent() }
                 if (content == null) {
@@ -158,7 +191,7 @@ class AndroidTicketRecordFileExchange(
         withContext(Dispatchers.IO) {
             try {
                 val output =
-                    activity.contentResolver.openOutputStream(uri, WRITE_MODE)
+                    applicationContext.contentResolver.openOutputStream(uri, WRITE_MODE)
                         ?: return@withContext TicketRecordFileWriteResult.Failure("无法写入所选位置")
                 output.use { stream ->
                     stream.write(content)
@@ -176,7 +209,7 @@ class AndroidTicketRecordFileExchange(
 
     /** 查询文档提供方声明的显示文件名。 */
     private fun queryDisplayName(uri: Uri): String? =
-        activity.contentResolver
+        applicationContext.contentResolver
             .query(uri, DISPLAY_NAME_PROJECTION, null, null, null)
             ?.use { cursor ->
                 val columnIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
@@ -199,6 +232,12 @@ class AndroidTicketRecordFileExchange(
 
     /** Android 系统文件交互常量。 */
     private companion object {
+        /** 系统导入文件选择结果在 Activity 结果注册表中的固定键。 */
+        const val IMPORT_RESULT_KEY = "roc.win.lottery.records.import"
+
+        /** 系统导出位置选择结果在 Activity 结果注册表中的固定键。 */
+        const val EXPORT_RESULT_KEY = "roc.win.lottery.records.export"
+
         /** JSON 文档的标准 MIME 类型。 */
         const val JSON_MIME_TYPE = "application/json"
 

@@ -128,11 +128,15 @@ sealed interface AppScreen {
      * @property ticket 用户确认且用于精确查询的票据。
      * @property drawResult 经双数据面核对的开奖结果。
      * @property prizeCheckResult 本地规则引擎生成的逐注测算结果。
+     * @property isFromLocalStore 开奖结果是否直接取自本机保存，本次没有联网。
+     * @property refreshNotice 本次联网未取得新证据、改为展示本机结果时的说明。
      */
     data class VerificationResult(
         val ticket: ConfirmedTicket,
         val drawResult: DrawResult,
         val prizeCheckResult: PrizeCheckResult,
+        val isFromLocalStore: Boolean = false,
+        val refreshNotice: String? = null,
     ) : AppScreen
 
     /**
@@ -141,11 +145,13 @@ sealed interface AppScreen {
      * @property ticket 用户确认且用于精确查询的票据。
      * @property status 本次查询的明确不可用状态。
      * @property message 仓库返回的安全恢复说明。
+     * @property wasQueried 本次是否实际向官网发起查询；按开奖日程判断未到时间时为 `false`。
      */
     data class DrawUnavailable(
         val ticket: ConfirmedTicket,
         val status: DrawStatus,
         val message: String,
+        val wasQueried: Boolean = true,
     ) : AppScreen
 
     /**
@@ -220,8 +226,16 @@ sealed interface AppScreen {
         val message: String,
     ) : AppScreen
 
-    /** 关于与隐私页。 */
-    data object About : AppScreen
+    /**
+     * 关于与隐私页。
+     *
+     * @property isClearingHistory 是否正在清除本机历史开奖数据。
+     * @property historyMessage 最近一次清除操作的结果说明。
+     */
+    data class About(
+        val isClearingHistory: Boolean = false,
+        val historyMessage: String? = null,
+    ) : AppScreen
 }
 
 /** 一张多期票中单个开奖期次的核对状态。 */
@@ -255,11 +269,13 @@ sealed interface PeriodVerification {
      * @property issue 当前精确期号。
      * @property drawResult 官方统一开奖结果，辅助数据面可用时已完成交叉核对。
      * @property prizeCheckResult 本期逐注测算结果。
+     * @property isFromLocalStore 开奖结果是否取自本机保存，本轮没有为该期联网。
      */
     data class Verified(
         override val issue: Issue,
         val drawResult: DrawResult,
         val prizeCheckResult: PrizeCheckResult,
+        val isFromLocalStore: Boolean = false,
     ) : PeriodVerification
 
     /**

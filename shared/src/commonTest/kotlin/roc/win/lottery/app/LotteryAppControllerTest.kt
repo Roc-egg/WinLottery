@@ -1,10 +1,14 @@
 package roc.win.lottery.app
 
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
+import kotlinx.datetime.LocalDateTime
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.toInstant
 import roc.win.lottery.Platform
 import roc.win.lottery.data.DrawQueryResult
 import roc.win.lottery.data.DrawRepository
@@ -32,6 +36,8 @@ import roc.win.lottery.domain.TicketDraft
 import roc.win.lottery.domain.TicketValidator
 import roc.win.lottery.domain.TrendSampleSize
 import roc.win.lottery.persistence.CURRENT_TICKET_RECORD_DATA_VERSION
+import roc.win.lottery.persistence.DrawResultStore
+import roc.win.lottery.persistence.HistoricalDrawStore
 import roc.win.lottery.persistence.StoredTicketRecord
 import roc.win.lottery.persistence.TicketAcquisitionSource
 import roc.win.lottery.persistence.TicketRecordExport
@@ -61,6 +67,7 @@ import roc.win.lottery.recognition.TicketFieldRegion
 import roc.win.lottery.recognition.TicketParseResult
 import roc.win.lottery.recognition.TicketParser
 import roc.win.lottery.recognition.TicketRecognizer
+import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
@@ -68,6 +75,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Clock
 
 /** 应用确认闸门和流程状态测试。 */
 class LotteryAppControllerTest {
@@ -234,6 +242,41 @@ class LotteryAppControllerTest {
                 TicketAcquisitionSource.SYSTEM_PICKER,
                 ticketRecordStore.savedRecords.single().acquisitionSource,
             )
+        }
+
+    /** 返回校正票面后再次确认时必须原地替换同一条记录，不能保留旧票面或另存一条。 */
+    @Test
+    fun correctedTicketReplacesSavedRecordAfterReturn() =
+        runTest {
+            val repository = SequenceDrawRepository(DrawQueryResult.Success(verifiedDraw()))
+            val ticketRecordStore = TrackingTicketRecordStore()
+            val controller =
+                createController(
+                    repository = repository,
+                    usesRealDrawData = true,
+                    ticketRecordStore = ticketRecordStore,
+                )
+            controller.startAnalysis(ImageAcquisitionSource.SYSTEM_PICKER)
+
+            controller.confirmTicket()
+            assertIs<AppScreen.VerificationResult>(controller.uiState.value.screen)
+            val savedRecordId = ticketRecordStore.savedRecords.single().id
+            controller.navigateBack()
+            assertIs<AppScreen.Review>(controller.uiState.value.screen)
+            controller.updateTicketReview(TicketReviewAction.ChangeMultiplier(2))
+            controller.updateTicketReview(TicketReviewAction.UseCalculatedAmount)
+            val correctedReview = assertIs<AppScreen.Review>(controller.uiState.value.screen)
+            assertTrue(correctedReview.evaluation.canConfirm)
+            val correctedTicket = checkNotNull(correctedReview.evaluation.ticket)
+            controller.confirmTicket()
+
+            assertIs<AppScreen.VerificationResult>(controller.uiState.value.screen)
+            assertEquals(1, ticketRecordStore.saveCallCount)
+            assertEquals(1, ticketRecordStore.replaceCallCount)
+            val savedRecord = ticketRecordStore.currentRecords.single()
+            assertEquals(savedRecordId, savedRecord.id)
+            assertEquals(correctedTicket, savedRecord.ticket)
+            assertEquals(2, savedRecord.ticket.multiplier.value)
         }
 
     /** 并发点击确认时第二次调用必须被流程代次闸门拒绝。 */
@@ -1380,6 +1423,67 @@ class LotteryAppControllerTest {
             analysisJob.join()
         }
 
+    /** 识别中返回必须真正取消识别协程，且不取消发起操作的界面协程。 */
+    @Test
+    fun navigatingBackDuringRecognitionCancelsRecognizer() =
+        runTest {
+            val recognitionStarted = CompletableDeferred<Unit>()
+            var recognitionCancelled = false
+            val recognizer =
+                TicketRecognizer {
+                    recognitionStarted.complete(Unit)
+                    try {
+                        awaitCancellation()
+                    } finally {
+                        recognitionCancelled = true
+                    }
+                }
+            val controller =
+                createController(
+                    repository = CountingDrawRepository(),
+                    ticketRecognizer = recognizer,
+                )
+
+            val analysisJob = launch { controller.startAnalysis(ImageAcquisitionSource.SYSTEM_PICKER) }
+            recognitionStarted.await()
+            controller.navigateBack()
+            analysisJob.join()
+
+            assertTrue(recognitionCancelled)
+            assertFalse(analysisJob.isCancelled)
+            assertEquals(AppScreen.Home, controller.uiState.value.screen)
+        }
+
+    /** 开奖查询中返回必须真正取消网络请求，并恢复查询来源的确认页。 */
+    @Test
+    fun navigatingBackDuringDrawQueryCancelsRequest() =
+        runTest {
+            val queryStarted = CompletableDeferred<Unit>()
+            var queryCancelled = false
+            val repository =
+                DrawRepository { _, _ ->
+                    queryStarted.complete(Unit)
+                    try {
+                        awaitCancellation()
+                    } finally {
+                        queryCancelled = true
+                    }
+                }
+            val controller = createController(repository = repository, usesRealDrawData = true)
+            controller.startAnalysis(ImageAcquisitionSource.SYSTEM_PICKER)
+            assertIs<AppScreen.Review>(controller.uiState.value.screen)
+
+            val confirmJob = launch { controller.confirmTicket() }
+            queryStarted.await()
+            assertIs<AppScreen.DrawQuery>(controller.uiState.value.screen)
+            controller.navigateBack()
+            confirmJob.join()
+
+            assertTrue(queryCancelled)
+            assertFalse(confirmJob.isCancelled)
+            assertIs<AppScreen.Review>(controller.uiState.value.screen)
+        }
+
     /** 分辨率不足时必须在 OCR 前阻断，并清理已经落盘的临时图片。 */
     @Test
     fun lowResolutionStopsBeforeRecognitionAndClearsTemporaryImage() =
@@ -1565,6 +1669,200 @@ class LotteryAppControllerTest {
             assertEquals(listOf("b1-demo-ticket"), paths.deletedImageIds)
         }
 
+    /** 本机历史开奖未过期时进入走势页直接展示，不联网。 */
+    @Test
+    fun trendUsesFreshPersistedHistoryWithoutNetwork() =
+        runTest {
+            val clock = MutableTestClock()
+            val history = ScriptedHistoryRepository(clock)
+            val controller =
+                createHistoryController(
+                    clock = clock,
+                    history = history,
+                    store =
+                        InMemoryHistoricalDrawStore(
+                            listOf(storedAt(clock, LotteryType.SUPER_LOTTO, ageMillis = 0L)),
+                        ),
+                )
+
+            controller.showTrendChart()
+
+            val chart = currentTrendChart(controller)
+            assertEquals("26500", assertIs<TrendChartContent.Ready>(chart.content).snapshot.lastIssue.value)
+            assertIs<TrendResearchContent.Ready>(chart.researchContent)
+            assertEquals(HistoricalDrawRefreshStatus.Idle, chart.historyRefresh)
+            assertTrue(history.requests.isEmpty())
+        }
+
+    /** 本机数据过期时先展示本机走势，再在同一次操作中只用一次请求补入最新开奖。 */
+    @Test
+    fun staleTrendShowsCachedDataThenAppendsNewDraws() =
+        runTest {
+            val clock = MutableTestClock()
+            val history = ScriptedHistoryRepository(clock, newestOrdinal = 503)
+            val gate = CompletableDeferred<Unit>()
+            history.gate = gate
+            val controller =
+                createHistoryController(
+                    clock = clock,
+                    history = history,
+                    store =
+                        InMemoryHistoricalDrawStore(
+                            listOf(storedAt(clock, LotteryType.SUPER_LOTTO, STALE_HISTORY_AGE)),
+                        ),
+                )
+
+            val entering = launch { controller.showTrendChart() }
+            history.started.await()
+
+            val refreshing = currentTrendChart(controller)
+            assertEquals("26500", assertIs<TrendChartContent.Ready>(refreshing.content).snapshot.lastIssue.value)
+            assertEquals(HistoricalDrawRefreshStatus.Refreshing, refreshing.historyRefresh)
+            gate.complete(Unit)
+            entering.join()
+
+            val refreshed = currentTrendChart(controller)
+            assertEquals("26503", assertIs<TrendChartContent.Ready>(refreshed.content).snapshot.lastIssue.value)
+            val research = assertIs<TrendResearchContent.Ready>(refreshed.researchContent)
+            assertEquals("26503", research.analysis.candidate.trainingLastIssue.value)
+            assertEquals(HistoricalDrawRefreshStatus.Idle, refreshed.historyRefresh)
+            assertEquals(listOf(LotteryType.SUPER_LOTTO to 100), history.requests)
+        }
+
+    /** 增量核对断网时继续展示本机走势，并标注核对失败原因。 */
+    @Test
+    fun offlineRefreshKeepsCachedTrendWithFailureStatus() =
+        runTest {
+            val clock = MutableTestClock()
+            val history = ScriptedHistoryRepository(clock)
+            history.failureMessage = "测试断网"
+            val controller =
+                createHistoryController(
+                    clock = clock,
+                    history = history,
+                    store =
+                        InMemoryHistoricalDrawStore(
+                            listOf(storedAt(clock, LotteryType.SUPER_LOTTO, STALE_HISTORY_AGE)),
+                        ),
+                )
+
+            controller.showTrendChart()
+
+            val chart = currentTrendChart(controller)
+            assertEquals("26500", assertIs<TrendChartContent.Ready>(chart.content).snapshot.lastIssue.value)
+            assertEquals(HistoricalDrawRefreshStatus.Failed("测试断网"), chart.historyRefresh)
+        }
+
+    /** 手动刷新在本机数据未过期时也只做一次增量核对。 */
+    @Test
+    fun manualRefreshRequestsIncrementalEvenWhenFresh() =
+        runTest {
+            val clock = MutableTestClock()
+            val history = ScriptedHistoryRepository(clock)
+            val controller =
+                createHistoryController(
+                    clock = clock,
+                    history = history,
+                    store =
+                        InMemoryHistoricalDrawStore(
+                            listOf(storedAt(clock, LotteryType.SUPER_LOTTO, ageMillis = 0L)),
+                        ),
+                )
+            controller.showTrendChart()
+            assertTrue(history.requests.isEmpty())
+            history.newestOrdinal = 501
+
+            controller.updateTrendChart(TrendChartAction.Refresh)
+
+            assertEquals(listOf(LotteryType.SUPER_LOTTO to 100), history.requests)
+            val chart = currentTrendChart(controller)
+            assertEquals("26501", assertIs<TrendChartContent.Ready>(chart.content).snapshot.lastIssue.value)
+        }
+
+    /** 增量核对期间切换彩种不污染界面；切回时直接使用已刷新的本机数据，不再联网。 */
+    @Test
+    fun lotterySwitchDuringRefreshKeepsRefreshedCache() =
+        runTest {
+            val clock = MutableTestClock()
+            val history = ScriptedHistoryRepository(clock, newestOrdinal = 503)
+            val gate = CompletableDeferred<Unit>()
+            history.gate = gate
+            val controller =
+                createHistoryController(
+                    clock = clock,
+                    history = history,
+                    store =
+                        InMemoryHistoricalDrawStore(
+                            listOf(
+                                storedAt(clock, LotteryType.SUPER_LOTTO, STALE_HISTORY_AGE),
+                                storedAt(clock, LotteryType.DOUBLE_COLOR_BALL, ageMillis = 0L),
+                            ),
+                        ),
+                )
+
+            val entering = launch { controller.showTrendChart() }
+            history.started.await()
+            controller.updateTrendChart(TrendChartAction.ChangeLotteryType(LotteryType.DOUBLE_COLOR_BALL))
+            gate.complete(Unit)
+            entering.join()
+
+            val switched = currentTrendChart(controller)
+            assertEquals(LotteryType.DOUBLE_COLOR_BALL, switched.lotteryType)
+            assertEquals("2026500", assertIs<TrendChartContent.Ready>(switched.content).snapshot.lastIssue.value)
+            controller.updateTrendChart(TrendChartAction.ChangeLotteryType(LotteryType.SUPER_LOTTO))
+
+            val back = currentTrendChart(controller)
+            assertEquals("26503", assertIs<TrendChartContent.Ready>(back.content).snapshot.lastIssue.value)
+            assertEquals(listOf(LotteryType.SUPER_LOTTO to 100), history.requests)
+        }
+
+    /** 在关于页清除本机历史开奖后不影响其他状态，再次进入走势页会完整重新加载。 */
+    @Test
+    fun clearingHistoricalDrawCacheFromAboutForcesFullReload() =
+        runTest {
+            val clock = MutableTestClock()
+            val history = ScriptedHistoryRepository(clock)
+            val store = InMemoryHistoricalDrawStore(listOf(storedAt(clock, LotteryType.SUPER_LOTTO, ageMillis = 0L)))
+            val controller = createHistoryController(clock = clock, history = history, store = store)
+            controller.showTrendChart()
+            controller.showAbout()
+
+            controller.clearHistoricalDrawCache()
+
+            val about = assertIs<AppScreen.About>(controller.uiState.value.screen)
+            assertFalse(about.isClearingHistory)
+            assertTrue(about.historyMessage.orEmpty().contains("已清除"))
+            assertTrue(store.sets.isEmpty())
+            controller.showTrendChart()
+            assertEquals(listOf(LotteryType.SUPER_LOTTO to 500), history.requests)
+            val chart = currentTrendChart(controller)
+            assertEquals("26500", assertIs<TrendChartContent.Ready>(chart.content).snapshot.lastIssue.value)
+        }
+
+    /** 创建接入本机历史缓存和可脚本官网仓库的控制器。 */
+    private fun createHistoryController(
+        clock: MutableTestClock,
+        history: ScriptedHistoryRepository,
+        store: InMemoryHistoricalDrawStore,
+    ): LotteryAppController =
+        createController(
+            repository = CountingDrawRepository(),
+            historicalDrawRepository = history,
+            historicalDrawStore = store,
+            clock = clock,
+        )
+
+    /** 返回当前走势页状态。 */
+    private fun currentTrendChart(controller: LotteryAppController): TrendChartState =
+        assertIs<AppScreen.Trends>(controller.uiState.value.screen).chart
+
+    /** 生成以第 500 期结尾、按指定年龄核对过的本机集合。 */
+    private fun storedAt(
+        clock: MutableTestClock,
+        lotteryType: LotteryType,
+        ageMillis: Long,
+    ) = testStoredHistory(lotteryType, newestOrdinal = 500, fetchedAtEpochMillis = clock.nowEpochMillis - ageMillis)
+
     /** 创建使用可计数仓库和真实保守解析器的开发控制器。 */
     private fun createController(
         repository: DrawRepository,
@@ -1579,6 +1877,9 @@ class LotteryAppControllerTest {
         ticketRecordFileExchange: TicketRecordFileExchange? = null,
         ocrConfidenceDiagnostics: OcrConfidenceDiagnostics = OcrConfidenceDiagnostics.Disabled,
         historicalDrawRepository: HistoricalDrawRepository? = null,
+        historicalDrawStore: HistoricalDrawStore? = null,
+        clock: Clock = MutableTestClock(),
+        drawResultStore: DrawResultStore? = null,
     ): LotteryAppController {
         val platform =
             object : Platform {
@@ -1597,6 +1898,8 @@ class LotteryAppControllerTest {
                 ticketParser = ticketParser,
                 drawRepository = repository,
                 historicalDrawRepository = historicalDrawRepository,
+                historicalDrawStore = historicalDrawStore,
+                drawResultStore = drawResultStore,
                 prizeCalculator = LotteryPrizeCalculator(),
                 appPaths = appPaths,
                 ticketValidator = TicketValidator(),
@@ -1608,6 +1911,9 @@ class LotteryAppControllerTest {
                 ticketRecordFileExchange = ticketRecordFileExchange,
                 ocrConfidenceDiagnostics = ocrConfidenceDiagnostics,
             ),
+            // 测试在调用协程内同步执行计算，保持虚拟时间调度与断言时序稳定。
+            computationContext = EmptyCoroutineContext,
+            clock = clock,
         )
     }
 
@@ -1660,6 +1966,279 @@ class LotteryAppControllerTest {
             )
         }
     }
+
+    /** 第二次查询时已开奖期次直接取自本机，只补查未开奖期次；全部完成后不再联网。 */
+    @Test
+    fun multiPeriodRequeryUsesStoredResultsAndOnlyQueriesPendingIssues() =
+        runTest {
+            val store = InMemoryDrawResultStore()
+            val repository =
+                StagedDrawRepository(
+                    "26090" to DrawQueryResult.Success(drawFor("26090")),
+                    "26091" to DrawQueryResult.Success(drawFor("26091")),
+                )
+            val draft = validDraft().copy(issue = "26090", periodCount = 4, paidAmountFen = 1_200L)
+
+            val first = confirmWithDrawResultStore(draft, repository, store)
+            val firstScreen = assertIs<AppScreen.MultiPeriodVerificationResult>(first.uiState.value.screen)
+            assertEquals(2, firstScreen.verifiedPeriodCount)
+            assertEquals(listOf("26090", "26091", "26092"), repository.queriedIssues)
+            assertEquals(1, repository.drawnIssuesCalls)
+            assertEquals(listOf("26090", "26091"), store.all.map { it.issue.value }.sorted())
+            assertTrue(
+                firstScreen.periodResults.filterIsInstance<PeriodVerification.Verified>().none { it.isFromLocalStore },
+            )
+
+            repository.resetCounters()
+            val second = confirmWithDrawResultStore(draft, repository, store)
+            val secondScreen = assertIs<AppScreen.MultiPeriodVerificationResult>(second.uiState.value.screen)
+            assertEquals(listOf("26092"), repository.queriedIssues)
+            assertEquals(1, repository.drawnIssuesCalls)
+            assertTrue(
+                secondScreen.periodResults
+                    .take(2)
+                    .all { assertIs<PeriodVerification.Verified>(it).isFromLocalStore },
+            )
+
+            repository.results["26092"] = DrawQueryResult.Success(drawFor("26092"))
+            repository.results["26093"] = DrawQueryResult.Success(drawFor("26093"))
+            repository.resetCounters()
+            val third = confirmWithDrawResultStore(draft, repository, store)
+            assertTrue(assertIs<AppScreen.MultiPeriodVerificationResult>(third.uiState.value.screen).isConclusive)
+            assertEquals(listOf("26092", "26093"), repository.queriedIssues)
+
+            repository.resetCounters()
+            val fourth = confirmWithDrawResultStore(draft, repository, store)
+            val fourthScreen = assertIs<AppScreen.MultiPeriodVerificationResult>(fourth.uiState.value.screen)
+            assertTrue(fourthScreen.isConclusive)
+            assertEquals(emptyList(), repository.queriedIssues)
+            assertEquals(0, repository.drawnIssuesCalls)
+            assertTrue(fourthScreen.periodResults.all { assertIs<PeriodVerification.Verified>(it).isFromLocalStore })
+        }
+
+    /** 按开奖日程未到最早开奖时刻时不联网，并停止后续期次；用户主动重试或到点后才联网。 */
+    @Test
+    fun scheduleSkipsNetworkUntilEarliestDrawTime() =
+        runTest {
+            // 26091 期于 2026-08-12（周三）开奖，下一期最早为 08-15（周六）21:25。
+            val clock = MutableTestClock(beijingMillis(2026, 8, 15, 21, 24))
+            val store = InMemoryDrawResultStore(listOf(drawFor("26091")))
+            val single = StagedDrawRepository()
+
+            val controller = confirmWithDrawResultStore(validDraft().copy(issue = "26092"), single, store, clock)
+
+            val notDue = assertIs<AppScreen.DrawUnavailable>(controller.uiState.value.screen)
+            assertEquals(DrawStatus.NOT_PUBLISHED, notDue.status)
+            assertFalse(notDue.wasQueried)
+            assertTrue(notDue.message.contains("未到开奖时间"), notDue.message)
+            assertTrue(notDue.message.contains("08-15（周六）21:25"), notDue.message)
+            assertEquals(emptyList(), single.queriedIssues)
+
+            controller.retryDrawQuery()
+            assertTrue(assertIs<AppScreen.DrawUnavailable>(controller.uiState.value.screen).wasQueried)
+            assertEquals(listOf("26092"), single.queriedIssues)
+
+            val multi = StagedDrawRepository()
+            val multiController =
+                confirmWithDrawResultStore(
+                    validDraft().copy(issue = "26091", periodCount = 3, paidAmountFen = 900L),
+                    multi,
+                    store,
+                    clock,
+                )
+            val screen = assertIs<AppScreen.MultiPeriodVerificationResult>(multiController.uiState.value.screen)
+            assertTrue(assertIs<PeriodVerification.Verified>(screen.periodResults[0]).isFromLocalStore)
+            val skipped = assertIs<PeriodVerification.Unavailable>(screen.periodResults[1])
+            assertFalse(skipped.wasQueried)
+            assertTrue(skipped.message.contains("未到开奖时间"), skipped.message)
+            assertFalse(assertIs<PeriodVerification.Unavailable>(screen.periodResults[2]).wasQueried)
+            assertEquals(emptyList(), multi.queriedIssues)
+            assertEquals(0, multi.drawnIssuesCalls)
+
+            clock.nowEpochMillis = beijingMillis(2026, 8, 15, 21, 25)
+            val due = StagedDrawRepository()
+            confirmWithDrawResultStore(validDraft().copy(issue = "26092"), due, store, clock)
+            assertEquals(listOf("26092"), due.queriedIssues)
+        }
+
+    /** 本票命中但金额待定的期次每次重查直到确认；号码已定且本票未中奖的期次直接使用本机结果。 */
+    @Test
+    fun pendingPayoutIsRequeriedUntilConfirmedWhileNonWinningNumbersAreFinal() =
+        runTest {
+            val store = InMemoryDrawResultStore(listOf(drawFor("26091", status = DrawStatus.FINAL_NUMBERS)))
+            val repository = StagedDrawRepository("26091" to DrawQueryResult.Success(drawFor("26091")))
+
+            val first = confirmWithDrawResultStore(validDraft(), repository, store)
+            assertFalse(assertIs<AppScreen.VerificationResult>(first.uiState.value.screen).isFromLocalStore)
+            assertEquals(listOf("26091"), repository.queriedIssues)
+            assertEquals(DrawStatus.FINAL_PAYOUT, store.get(LotteryType.SUPER_LOTTO, "26091")?.status)
+
+            repository.resetCounters()
+            val second = confirmWithDrawResultStore(validDraft(), repository, store)
+            assertTrue(assertIs<AppScreen.VerificationResult>(second.uiState.value.screen).isFromLocalStore)
+            assertEquals(emptyList(), repository.queriedIssues)
+
+            val missed =
+                drawFor("26091", status = DrawStatus.FINAL_NUMBERS)
+                    .copy(primaryNumbers = listOf(1, 3, 5, 8, 10), secondaryNumbers = listOf(1, 2))
+            val untouched = StagedDrawRepository()
+            val third = confirmWithDrawResultStore(validDraft(), untouched, InMemoryDrawResultStore(listOf(missed)))
+            val result = assertIs<AppScreen.VerificationResult>(third.uiState.value.screen)
+            assertEquals(PrizeCheckStatus.NO_WIN, result.prizeCheckResult.status)
+            assertTrue(result.isFromLocalStore)
+            assertEquals(emptyList(), untouched.queriedIssues)
+        }
+
+    /** 断网时保留本机结果并提示；尚未发布不删除本机结果；官网冲突时删除本机结果。 */
+    @Test
+    fun failedRefreshKeepsStoredResultAndConflictDeletesIt() =
+        runTest {
+            val store = InMemoryDrawResultStore(listOf(drawFor("26091", status = DrawStatus.FINAL_NUMBERS)))
+            val repository =
+                StagedDrawRepository(
+                    "26091" to DrawQueryResult.Unavailable(DrawStatus.NETWORK_UNAVAILABLE, "测试网络不可用"),
+                )
+
+            val controller = confirmWithDrawResultStore(validDraft(), repository, store)
+            val kept = assertIs<AppScreen.VerificationResult>(controller.uiState.value.screen)
+            assertTrue(kept.isFromLocalStore)
+            assertTrue(kept.refreshNotice.orEmpty().contains("测试网络不可用"))
+
+            repository.results["26091"] = DrawQueryResult.Unavailable(DrawStatus.NOT_PUBLISHED, "该期开奖结果尚未发布")
+            controller.retryDrawQuery(forceRefresh = true)
+            assertEquals(
+                DrawStatus.NOT_PUBLISHED,
+                assertIs<AppScreen.DrawUnavailable>(controller.uiState.value.screen).status,
+            )
+            assertTrue(store.get(LotteryType.SUPER_LOTTO, "26091") != null)
+
+            repository.results["26091"] = DrawQueryResult.Unavailable(DrawStatus.CONFLICT, "两个官方数据面号码不一致")
+            controller.retryDrawQuery()
+            assertEquals(
+                DrawStatus.CONFLICT,
+                assertIs<AppScreen.DrawUnavailable>(controller.uiState.value.screen).status,
+            )
+            assertNull(store.get(LotteryType.SUPER_LOTTO, "26091"))
+            assertEquals(listOf(Issue("26091")), store.deletedIssues)
+        }
+
+    /** 重新联网核对忽略本机结果并覆盖；全部完成的多期票重查时全部期次重新联网。 */
+    @Test
+    fun forceRefreshIgnoresStoredResultsAndOverwritesThem() =
+        runTest {
+            val stored = drawFor("26091")
+            val refreshed = stored.copy(evidence = stored.evidence.copy(fetchedAtEpochMillis = 99L))
+            val store = InMemoryDrawResultStore(listOf(stored))
+            val repository = StagedDrawRepository("26091" to DrawQueryResult.Success(refreshed))
+
+            val controller = confirmWithDrawResultStore(validDraft(), repository, store)
+            assertTrue(assertIs<AppScreen.VerificationResult>(controller.uiState.value.screen).isFromLocalStore)
+            assertEquals(emptyList(), repository.queriedIssues)
+
+            controller.retryDrawQuery(forceRefresh = true)
+            assertFalse(assertIs<AppScreen.VerificationResult>(controller.uiState.value.screen).isFromLocalStore)
+            assertEquals(listOf("26091"), repository.queriedIssues)
+            assertEquals(refreshed, store.get(LotteryType.SUPER_LOTTO, "26091"))
+
+            val multiStore = InMemoryDrawResultStore(listOf(drawFor("26090"), drawFor("26091")))
+            val multi =
+                StagedDrawRepository(
+                    "26090" to DrawQueryResult.Success(drawFor("26090")),
+                    "26091" to DrawQueryResult.Success(drawFor("26091")),
+                )
+            val multiController =
+                confirmWithDrawResultStore(
+                    validDraft().copy(issue = "26090", periodCount = 2, paidAmountFen = 600L),
+                    multi,
+                    multiStore,
+                )
+            assertTrue(
+                assertIs<AppScreen.MultiPeriodVerificationResult>(multiController.uiState.value.screen).isConclusive,
+            )
+            assertEquals(emptyList(), multi.queriedIssues)
+            assertEquals(0, multi.drawnIssuesCalls)
+
+            multiController.retryDrawQuery()
+            assertEquals(listOf("26090", "26091"), multi.queriedIssues)
+            assertEquals(1, multi.drawnIssuesCalls)
+        }
+
+    /** 演示数据不写入本机开奖缓存。 */
+    @Test
+    fun demoDrawDataIsNeverStored() =
+        runTest {
+            val store = InMemoryDrawResultStore()
+            val controller =
+                createController(
+                    repository = CountingDrawRepository(),
+                    ticketParser = TicketParser { TicketParseResult.ReadyForReview(validDraft()) },
+                    drawResultStore = store,
+                )
+            controller.startAnalysis(ImageAcquisitionSource.SYSTEM_PICKER)
+
+            controller.confirmTicket()
+
+            assertIs<AppScreen.DemoComplete>(controller.uiState.value.screen)
+            assertEquals(0, store.saveCount)
+        }
+
+    /** 关于页清除同时删除已开奖查询结果，提示保留“已清除”。 */
+    @Test
+    fun clearingFromAboutAlsoClearsStoredDrawResults() =
+        runTest {
+            val store = InMemoryDrawResultStore(listOf(drawFor("26091")))
+            val controller =
+                createController(
+                    repository = StagedDrawRepository(),
+                    usesRealDrawData = true,
+                    drawResultStore = store,
+                )
+            controller.showAbout()
+
+            controller.clearHistoricalDrawCache()
+
+            assertEquals(emptyList(), store.all)
+            val about = assertIs<AppScreen.About>(controller.uiState.value.screen)
+            assertTrue(about.historyMessage.orEmpty().contains("已清除"))
+        }
+
+    /** 以真实数据模式和指定本机缓存完成一次新票确认查询，模拟每次重新打开应用。 */
+    private suspend fun confirmWithDrawResultStore(
+        draft: TicketDraft,
+        repository: DrawRepository,
+        store: InMemoryDrawResultStore,
+        clock: Clock = MutableTestClock(),
+    ): LotteryAppController {
+        val controller =
+            createController(
+                repository = repository,
+                usesRealDrawData = true,
+                ticketParser = TicketParser { TicketParseResult.ReadyForReview(draft) },
+                clock = clock,
+                drawResultStore = store,
+            )
+        controller.startAnalysis(ImageAcquisitionSource.SYSTEM_PICKER)
+        controller.confirmTicket()
+        return controller
+    }
+
+    /** 以测试票号码为基础构造指定期次的开奖。 */
+    private fun drawFor(
+        issue: String,
+        status: DrawStatus = DrawStatus.FINAL_PAYOUT,
+    ): DrawResult = verifiedDraw().copy(issue = Issue(issue), status = status)
+
+    /** 返回北京时间对应的 Unix 毫秒。 */
+    private fun beijingMillis(
+        year: Int,
+        month: Int,
+        day: Int,
+        hour: Int,
+        minute: Int,
+    ): Long =
+        LocalDateTime(year, month, day, hour, minute)
+            .toInstant(TimeZone.of("Asia/Shanghai"))
+            .toEpochMilliseconds()
 
     /** 创建与合法测试票完全匹配的双证据大乐透开奖结果。 */
     private fun verifiedDraw(): DrawResult =
@@ -1847,6 +2426,53 @@ class LotteryAppControllerTest {
         }
     }
 
+    /** 按期号返回预置结果、其余期号视为尚未发布的仓库，记录单期查询和期号列表调用。 */
+    private class StagedDrawRepository(
+        vararg initial: Pair<String, DrawQueryResult>,
+    ) : DrawRepository {
+        /** 按期号预置的查询结果，测试可随时修改。 */
+        val results = mutableMapOf(*initial)
+
+        /** 按调用顺序记录的单期查询期号。 */
+        val queriedIssues = mutableListOf<String>()
+
+        /** 已开奖期号列表的调用次数。 */
+        var drawnIssuesCalls: Int = 0
+            private set
+
+        /** 清空调用记录。 */
+        fun resetCounters() {
+            queriedIssues.clear()
+            drawnIssuesCalls = 0
+        }
+
+        /** 返回预置结果或尚未发布。 */
+        override suspend fun getDraw(
+            lotteryType: LotteryType,
+            issue: Issue,
+        ): DrawQueryResult {
+            queriedIssues += issue.value
+            return results[issue.value]
+                ?: DrawQueryResult.Unavailable(DrawStatus.NOT_PUBLISHED, "该期开奖结果尚未发布")
+        }
+
+        /** 返回从起始期号开始、预置为成功的连续期号。 */
+        override suspend fun getDrawnIssues(
+            lotteryType: LotteryType,
+            firstIssue: Issue,
+            maxCount: Int,
+        ): List<Issue> {
+            drawnIssuesCalls += 1
+            return results
+                .filterValues { it is DrawQueryResult.Success }
+                .keys
+                .sorted()
+                .dropWhile { it != firstIssue.value }
+                .take(maxCount)
+                .map(::Issue)
+        }
+    }
+
     /** 模拟年度换期前后官网已开奖期次变化的多期仓库。 */
     private inner class YearBoundaryDrawRepository : DrawRepository {
         /** 官网当前已开奖的期号，测试可模拟新年度开奖。 */
@@ -1939,6 +2565,10 @@ class LotteryAppControllerTest {
         var saveCallCount: Int = 0
             private set
 
+        /** 已收到的票面替换调用次数。 */
+        var replaceCallCount: Int = 0
+            private set
+
         /** 已收到的导入预检调用次数。 */
         var inspectImportCallCount: Int = 0
             private set
@@ -1993,6 +2623,24 @@ class LotteryAppControllerTest {
             savedRecords += record
             mutableRecords.value = listOf(record) + mutableRecords.value
             return record
+        }
+
+        /** 按 UUID 替换内存记录的票面，不存在时返回 `null`。 */
+        override suspend fun replaceTicket(
+            id: String,
+            ticket: ConfirmedTicket,
+        ): StoredTicketRecord? {
+            replaceCallCount += 1
+            if (failSave) {
+                throw IllegalStateException("测试替换失败")
+            }
+            val existing = mutableRecords.value.firstOrNull { it.id == id } ?: return null
+            val replaced = existing.copy(ticket = ticket, updatedAtEpochMillis = existing.updatedAtEpochMillis + 1L)
+            mutableRecords.value = mutableRecords.value.map { record -> if (record.id == id) replaced else record }
+            savedRecords.indices
+                .filter { index -> savedRecords[index].id == id }
+                .forEach { index -> savedRecords[index] = replaced }
+            return replaced
         }
 
         /** 返回指定 UUID 的当前内存记录。 */
@@ -2254,3 +2902,6 @@ class LotteryAppControllerTest {
         const val TEST_RECORD_ID = "00000000-0000-4000-8000-000000000001"
     }
 }
+
+/** 超过自动核对间隔的本机历史开奖年龄，单位为毫秒。 */
+private const val STALE_HISTORY_AGE = 31L * 60L * 1_000L

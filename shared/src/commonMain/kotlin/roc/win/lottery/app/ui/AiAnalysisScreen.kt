@@ -48,6 +48,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -60,6 +62,7 @@ import roc.win.lottery.app.AiAnalysisSessionResult
 import roc.win.lottery.app.AiAnalysisSettings
 import roc.win.lottery.app.AiAnalysisWorkspaceState
 import roc.win.lottery.app.AiHistoryAvailability
+import roc.win.lottery.app.HistoricalDrawRefreshStatus
 import roc.win.lottery.app.MainDestination
 import roc.win.lottery.data.AiProviderRequestPreview
 import roc.win.lottery.domain.AiAnalysisCandidate
@@ -77,6 +80,7 @@ import kotlin.time.Instant
  * @param onMainDestinationSelected 一级目的地切换操作。
  * @param onSettingsChange 修改非敏感分析配置。
  * @param onRetryHistory 主动重试当前彩种的官方历史开奖加载。
+ * @param onRefreshHistory 主动与官网增量核对本机保存的历史开奖。
  * @param onPreparePreview 使用当前会话密钥构建精确发送预览。
  * @param onDismissPreview 返回修改并销毁本次待确认请求。
  * @param onConfirmPreview 消费当前指纹并发送至多一次请求。
@@ -89,6 +93,7 @@ fun AiAnalysisScreen(
     onMainDestinationSelected: (MainDestination) -> Unit,
     onSettingsChange: (AiAnalysisSettings) -> Unit,
     onRetryHistory: () -> Unit,
+    onRefreshHistory: () -> Unit,
     onPreparePreview: (String) -> Boolean,
     onDismissPreview: () -> Unit,
     onConfirmPreview: (String) -> Unit,
@@ -114,7 +119,7 @@ fun AiAnalysisScreen(
                     Text("公开历史数据分析", style = MaterialTheme.typography.headlineMedium)
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        "模型只观察当前会话的官方历史开奖；候选号码不代表概率优势。",
+                        "模型只观察本机保存的官方历史开奖；候选号码不代表概率优势。",
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -145,7 +150,9 @@ fun AiAnalysisScreen(
                     Spacer(Modifier.height(22.dp))
                     AiHistoryStatus(
                         history = workspace.history,
+                        refresh = workspace.historyRefresh,
                         onRetry = onRetryHistory,
+                        onRefresh = onRefreshHistory,
                     )
                     workspace.errorMessage?.let { message ->
                         Spacer(Modifier.height(14.dp))
@@ -254,7 +261,7 @@ private fun AiPrivacyBoundary() {
             Spacer(Modifier.width(12.dp))
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(
-                    "密钥、历史快照和分析结果不写入本机记录或导出包。",
+                    "密钥、发送快照和分析结果不写入本机记录或导出包。",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSecondaryContainer,
                 )
@@ -437,11 +444,13 @@ private fun AiCandidateCountControl(
     }
 }
 
-/** 展示当前彩种的官方历史开奖加载状态。 */
+/** 展示当前彩种的官方历史开奖加载状态，以及与官网增量核对的进度。 */
 @Composable
 private fun AiHistoryStatus(
     history: AiHistoryAvailability,
+    refresh: HistoricalDrawRefreshStatus,
     onRetry: () -> Unit,
+    onRefresh: () -> Unit,
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -473,10 +482,53 @@ private fun AiHistoryStatus(
                             style = MaterialTheme.typography.titleMedium,
                         )
                         Text(
-                            "${history.sourceName} · ${formatAiTime(history.fetchedAtEpochMillis)}",
+                            "${history.sourceName} · 核对于 ${formatAiTime(history.fetchedAtEpochMillis)}",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                        when (refresh) {
+                            HistoricalDrawRefreshStatus.Idle -> {
+                                Unit
+                            }
+
+                            HistoricalDrawRefreshStatus.Refreshing -> {
+                                Text(
+                                    "正在与官网核对最新开奖",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+
+                            is HistoricalDrawRefreshStatus.Notice -> {
+                                Text(
+                                    refresh.message,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+
+                            is HistoricalDrawRefreshStatus.Failed -> {
+                                Text(
+                                    "更新失败，继续使用本机数据：${refresh.message}",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.error,
+                                )
+                            }
+                        }
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    if (refresh is HistoricalDrawRefreshStatus.Refreshing) {
+                        CircularProgressIndicator(
+                            modifier =
+                                Modifier
+                                    .size(24.dp)
+                                    .semantics { contentDescription = "正在核对最新开奖" },
+                            strokeWidth = 2.dp,
+                        )
+                    } else {
+                        TextButton(onClick = onRefresh) {
+                            Text("刷新")
+                        }
                     }
                 }
 

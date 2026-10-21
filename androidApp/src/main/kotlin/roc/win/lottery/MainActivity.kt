@@ -9,15 +9,15 @@ import androidx.compose.ui.tooling.preview.Preview
 
 /** Android 应用宿主，只负责装配共享 Compose 界面。 */
 class MainActivity : ComponentActivity() {
-    /** 创建 Activity 并启用边到边共享界面。 */
+    /** 创建 Activity，接回跨配置变更保留的应用会话并启用边到边共享界面。 */
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         triggerDebugCrashAcceptance(intent)
         enableEdgeToEdge()
-        val container = createAndroidRecognitionContainer(this)
+        val session = attachLotteryAppSession()
 
         setContent {
-            App(container)
+            App(session)
         }
     }
 

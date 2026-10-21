@@ -2,16 +2,18 @@ package roc.win.lottery
 
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
+import roc.win.lottery.domain.LotteryType
 import java.io.File
 import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /** 桌面真实依赖容器装配测试。 */
 class DesktopAppContainerTest {
-    /** 桌面预览版应复用本地 OCR、官网、AI、Room 和文件交换能力。 */
+    /** 桌面预览版应复用本地 OCR、官网、AI、Room（含历史开奖缓存）和文件交换能力。 */
     @Test
     fun desktopPreviewContainerUsesSharedProductionCapabilities() =
         runTest {
@@ -31,7 +33,11 @@ class DesktopAppContainerTest {
                 val ticketRecordStore = assertNotNull(container.ticketRecordStore)
                 assertNotNull(container.ticketRecordFileExchange)
                 assertEquals(emptyList(), ticketRecordStore.records.first())
+                val historicalDrawStore = assertNotNull(container.historicalDrawStore)
+                assertNull(historicalDrawStore.load(LotteryType.SUPER_LOTTO))
+                // 历史开奖表与票据共用同一个数据库文件，文件名不随模式版本变化。
                 assertTrue(File(root, "win-lottery-v1.db").exists())
+                assertEquals(listOf("win-lottery-v1.db"), root.list { _, name -> name.endsWith(".db") }?.toList())
             } finally {
                 container.close()
                 root.deleteRecursively()

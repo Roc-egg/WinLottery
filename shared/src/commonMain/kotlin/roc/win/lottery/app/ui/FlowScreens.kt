@@ -4,6 +4,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -17,6 +18,7 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
@@ -31,13 +33,23 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import roc.win.lottery.app.AppScreen
 import roc.win.lottery.app.TicketLineReviewState
 import roc.win.lottery.app.TicketNumberArea
 import roc.win.lottery.app.TicketReviewEvaluation
@@ -479,6 +491,13 @@ private fun TicketLineEditor(
                     }
                 }
             }
+            SelectedNumbersLine(
+                spec = spec,
+                primaryNumbers = line.primaryNumbers.value,
+                secondaryNumbers = line.secondaryNumbers.value,
+                primaryColor = MaterialTheme.colorScheme.primary,
+                secondaryColor = MaterialTheme.colorScheme.secondary,
+            )
             NumberAreaEditor(
                 title = spec.primaryName,
                 selectedNumbers = line.primaryNumbers.value,
@@ -512,14 +531,87 @@ private fun TicketLineEditor(
     }
 }
 
-/** 显示一个可横向滚动的号码区域。 */
+/**
+ * 在一行内完整显示本注已选号码，未选满的位置以短横线占位。
+ *
+ * 号码球尺寸按可用宽度缩放，保证手机竖屏无需横向滚动即可核对整注号码。
+ */
+@Composable
+private fun SelectedNumbersLine(
+    spec: LotteryNumberSpec,
+    primaryNumbers: List<Int>,
+    secondaryNumbers: List<Int>,
+    primaryColor: Color,
+    secondaryColor: Color,
+) {
+    val primarySlots = primaryNumbers.sorted() + List(maxOf(0, spec.primaryCount - primaryNumbers.size)) { null }
+    val secondarySlots =
+        secondaryNumbers.sorted() + List(maxOf(0, spec.secondaryCount - secondaryNumbers.size)) { null }
+    val description =
+        "已选${spec.primaryName} ${primaryNumbers.sorted().joinToString("、") { it.twoDigitText() }}，" +
+            "${spec.secondaryName} ${secondaryNumbers.sorted().joinToString("、") { it.twoDigitText() }}"
+    BoxWithConstraints(
+        modifier = Modifier.fillMaxWidth().clearAndSetSemantics { contentDescription = description },
+    ) {
+        // 加号分隔符占用一个号码位，全部号码位与间距合计不超过当前宽度。
+        val slotCount = primarySlots.size + secondarySlots.size + 1
+        val ballSize =
+            ((maxWidth - SELECTED_LINE_SPACING * (slotCount - 1)) / slotCount)
+                .coerceIn(SELECTED_LINE_MIN_BALL_SIZE, SELECTED_LINE_MAX_BALL_SIZE)
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(SELECTED_LINE_SPACING),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            primarySlots.forEach { number -> SelectedNumberBall(number, ballSize, primaryColor) }
+            Text(
+                "+",
+                modifier = Modifier.width(ballSize),
+                style = MaterialTheme.typography.titleMedium,
+                textAlign = TextAlign.Center,
+            )
+            secondarySlots.forEach { number -> SelectedNumberBall(number, ballSize, secondaryColor) }
+        }
+    }
+}
+
+/** 已选号码汇总行中的一个只读号码球；`null` 表示尚未选择的位置。 */
+@Composable
+private fun SelectedNumberBall(
+    number: Int?,
+    size: Dp,
+    color: Color,
+) {
+    Surface(
+        modifier = Modifier.size(size),
+        shape = CircleShape,
+        color = if (number == null) MaterialTheme.colorScheme.surface else color,
+        contentColor =
+            if (number == null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onPrimary,
+        border = if (number == null) BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant) else null,
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Text(
+                number?.twoDigitText() ?: "--",
+                style = MaterialTheme.typography.labelLarge,
+                maxLines = 1,
+                softWrap = false,
+            )
+        }
+    }
+}
+
+/**
+ * 按当前宽度把整个号码区排成多行网格，不再横向滚动。
+ *
+ * 号码球尺寸由最多可放下的列数决定，同一页面的两个号码区保持一致；行数确定后再均分各行号码，避免末行过短。
+ */
 @Composable
 private fun NumberAreaEditor(
     title: String,
     selectedNumbers: List<Int>,
     expectedCount: Int,
     range: IntRange,
-    selectedColor: androidx.compose.ui.graphics.Color,
+    selectedColor: Color,
     onToggle: (Int) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -527,38 +619,53 @@ private fun NumberAreaEditor(
             "$title（已选 ${selectedNumbers.size}/$expectedCount）",
             style = MaterialTheme.typography.bodyMedium,
         )
-        Row(
-            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            val lastVisibleNumber = maxOf(range.last, selectedNumbers.maxOrNull() ?: range.last)
-            (range.first..lastVisibleNumber).forEach { number ->
-                val selected = number in selectedNumbers
-                NumberBall(
-                    number = number,
-                    selected = selected,
-                    enabled = selected || (number in range && selectedNumbers.size < expectedCount),
-                    selectedColor = selectedColor,
-                    onToggle = { onToggle(number) },
-                )
+        val lastVisibleNumber = maxOf(range.last, selectedNumbers.maxOrNull() ?: range.last)
+        val numbers = (range.first..lastVisibleNumber).toList()
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+            val maximumColumns =
+                ((maxWidth + NUMBER_GRID_SPACING) / (NUMBER_GRID_TARGET_BALL_SIZE + NUMBER_GRID_SPACING))
+                    .toInt()
+                    .coerceIn(1, numbers.size)
+            val ballSize =
+                ((maxWidth - NUMBER_GRID_SPACING * (maximumColumns - 1)) / maximumColumns)
+                    .coerceAtMost(NUMBER_GRID_MAX_BALL_SIZE)
+            val rowCount = (numbers.size + maximumColumns - 1) / maximumColumns
+            val columns = (numbers.size + rowCount - 1) / rowCount
+            Column(verticalArrangement = Arrangement.spacedBy(NUMBER_GRID_SPACING)) {
+                numbers.chunked(columns).forEach { rowNumbers ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(NUMBER_GRID_SPACING)) {
+                        rowNumbers.forEach { number ->
+                            val selected = number in selectedNumbers
+                            NumberBall(
+                                number = number,
+                                size = ballSize,
+                                selected = selected,
+                                enabled = selected || (number in range && selectedNumbers.size < expectedCount),
+                                selectedColor = selectedColor,
+                                onToggle = { onToggle(number) },
+                            )
+                        }
+                    }
+                }
             }
         }
     }
 }
 
-/** 显示一个尺寸稳定、可选择的号码球。 */
+/** 显示一个尺寸由号码网格决定、可选择的号码球。 */
 @Composable
 private fun NumberBall(
     number: Int,
+    size: Dp,
     selected: Boolean,
     enabled: Boolean,
-    selectedColor: androidx.compose.ui.graphics.Color,
+    selectedColor: Color,
     onToggle: () -> Unit,
 ) {
     Surface(
         modifier =
             Modifier
-                .size(48.dp)
+                .size(size)
                 .selectable(
                     selected = selected,
                     enabled = enabled,
@@ -586,10 +693,36 @@ private fun NumberBall(
             },
     ) {
         Box(contentAlignment = Alignment.Center) {
-            Text(number.toString().padStart(2, '0'), style = MaterialTheme.typography.labelLarge)
+            Text(
+                number.twoDigitText(),
+                style = MaterialTheme.typography.labelLarge,
+                maxLines = 1,
+                softWrap = false,
+            )
         }
     }
 }
+
+/** 号码按票面习惯补足两位显示。 */
+private fun Int.twoDigitText(): String = toString().padStart(2, '0')
+
+/** 号码网格中号码球的目标最小直径；常见手机竖屏约 340dp 的卡片内宽一行正好放下 7 个号码。 */
+private val NUMBER_GRID_TARGET_BALL_SIZE = 42.dp
+
+/** 号码网格中号码球的最大直径，宽屏下保持与原横向布局一致。 */
+private val NUMBER_GRID_MAX_BALL_SIZE = 48.dp
+
+/** 号码网格行列间距。 */
+private val NUMBER_GRID_SPACING = 6.dp
+
+/** 已选号码汇总行中号码球的最小直径。 */
+private val SELECTED_LINE_MIN_BALL_SIZE = 24.dp
+
+/** 已选号码汇总行中号码球的最大直径。 */
+private val SELECTED_LINE_MAX_BALL_SIZE = 32.dp
+
+/** 已选号码汇总行的号码间距。 */
+private val SELECTED_LINE_SPACING = 4.dp
 
 /** 显示投注倍数步进器。 */
 @Composable
@@ -869,9 +1002,20 @@ fun ErrorScreen(
     }
 }
 
-/** 显示关于、隐私和 V1 支持范围。 */
+/**
+ * 显示关于、隐私和 V1 支持范围，并提供清除本机开奖缓存的入口。
+ *
+ * @param screen 当前关于页状态，包含清除进度和结果说明。
+ * @param onBack 返回上一页。
+ * @param onClearHistory 用户确认后清除本机保存的官方历史开奖。
+ */
 @Composable
-fun AboutScreen(onBack: () -> Unit) {
+fun AboutScreen(
+    screen: AppScreen.About,
+    onBack: () -> Unit,
+    onClearHistory: () -> Unit,
+) {
+    var confirmsClear by remember { mutableStateOf(false) }
     AppShell(
         title = "关于与隐私",
         navigationIcon = LotteryIcons.Back,
@@ -881,7 +1025,34 @@ fun AboutScreen(onBack: () -> Unit) {
         Spacer(Modifier.height(16.dp))
         PolicyRow("本地处理", "图片、OCR 文本和投注号码默认只在当前设备处理。")
         PolicyRow("最少查询", "查询开奖时只发送用户确认的彩种和期号。")
-        PolicyRow("本机记录", "确认后只保存结构化票据信息，不保存票图、OCR 全文或开奖结果查询。")
+        PolicyRow("本机记录", "确认后只保存结构化票据信息，不保存票图、OCR 全文或单张票的中奖结论。")
+        PolicyRow(
+            "开奖缓存",
+            "走势和 AI 分析使用的最近 500 期官方开奖只保存号码、日期、来源和核对时间；" +
+                "仅在打开页面或手动刷新时联网，距上次核对超过 30 分钟才增量补拉。" +
+                "查询开奖时，已开奖期次的官方号码和奖级金额也保存在本机，再次查询只补查未开奖或奖金待确认的期次，" +
+                "按开奖日程未到时间的期次不联网。清空票据记录不会清除这些开奖数据。",
+        )
+        Spacer(Modifier.height(12.dp))
+        OutlinedButton(
+            onClick = { confirmsClear = true },
+            enabled = !screen.isClearingHistory,
+            shape = MaterialTheme.shapes.small,
+        ) {
+            if (screen.isClearingHistory) {
+                CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                Spacer(Modifier.width(8.dp))
+            }
+            Text("清除本机开奖数据")
+        }
+        screen.historyMessage?.let { message ->
+            Spacer(Modifier.height(8.dp))
+            Text(
+                message,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
         Spacer(Modifier.height(28.dp))
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         Spacer(Modifier.height(24.dp))
@@ -899,6 +1070,31 @@ fun AboutScreen(onBack: () -> Unit) {
         )
         Spacer(Modifier.height(28.dp))
         StatusBanner("中奖测算不等于彩票验真，也不能确认撤单、作废或兑奖状态。")
+    }
+    if (confirmsClear) {
+        AlertDialog(
+            onDismissRequest = { confirmsClear = false },
+            title = { Text("清除本机开奖数据？") },
+            text = {
+                Text(
+                    "删除走势和 AI 分析使用的历史开奖，以及查询开奖时保存的已开奖结果，不影响票据记录。" +
+                        "之后进入走势或 AI 页会重新联网加载 500 期，查询开奖会重新核对每一期。",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmsClear = false
+                    onClearHistory()
+                }) {
+                    Text("清除", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmsClear = false }) {
+                    Text("取消")
+                }
+            },
+        )
     }
 }
 

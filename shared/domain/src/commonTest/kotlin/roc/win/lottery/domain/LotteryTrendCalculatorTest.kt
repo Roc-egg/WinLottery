@@ -27,9 +27,67 @@ class LotteryTrendCalculatorTest {
             snapshot.statistics[0],
         )
         assertEquals(
-            TrendNumberStatistics(number = 35, hitCount = 0, currentOmission = 3, maxOmission = 3),
+            TrendNumberStatistics(
+                number = 35,
+                hitCount = 0,
+                currentOmission = 3,
+                maxOmission = 3,
+                isCurrentOmissionLowerBound = true,
+                isMaxOmissionLowerBound = true,
+            ),
             snapshot.statistics.last(),
         )
+        assertTrue(snapshot.rows.all { row -> row.cells.last().isOmissionLowerBound })
+        assertTrue(snapshot.rows.none { row -> row.cells[0].isOmissionLowerBound })
+    }
+
+    /** 样本之前的历史必须延续进遗漏值，而不是在样本起点归零。 */
+    @Test
+    fun carriesOmissionFromHistoryBeforeSelectedSample() {
+        val draws =
+            (1..60).map { ordinal ->
+                val issue = "26${ordinal.toString().padStart(3, '0')}"
+                if (ordinal == 5) superLottoDraw(issue, primary = listOf(6, 7, 8, 9, 10)) else superLottoDraw(issue)
+            }
+
+        val snapshot = success(draws)
+
+        assertEquals("26011", snapshot.firstIssue.value)
+        val sixColumn = snapshot.rows.map { row -> row.cells.single { it.number == 6 } }
+        assertEquals(6, sixColumn.first().omission)
+        assertTrue(sixColumn.none { it.isOmissionLowerBound })
+        assertEquals(
+            TrendNumberStatistics(number = 6, hitCount = 0, currentOmission = 55, maxOmission = 55),
+            snapshot.statistics.single { it.number == 6 },
+        )
+        val neverDrawn = snapshot.statistics.single { it.number == 35 }
+        assertEquals(60, neverDrawn.currentOmission)
+        assertTrue(neverDrawn.isCurrentOmissionLowerBound)
+        assertTrue(neverDrawn.isMaxOmissionLowerBound)
+    }
+
+    /** 样本前存在可证明空档时，延续遗漏只能从空档之后开始累计并标记为下限。 */
+    @Test
+    fun omissionCarryStopsAtIssueGapBeforeSample() {
+        val beforeGap =
+            (1..5).map { ordinal ->
+                val issue = "26${ordinal.toString().padStart(3, '0')}"
+                if (ordinal == 3) superLottoDraw(issue, primary = listOf(6, 7, 8, 9, 10)) else superLottoDraw(issue)
+            }
+        val afterGap = (8..59).map { ordinal -> superLottoDraw("26${ordinal.toString().padStart(3, '0')}") }
+
+        val snapshot = success(beforeGap + afterGap)
+
+        assertEquals("26010", snapshot.firstIssue.value)
+        assertTrue(snapshot.issueGaps.isEmpty())
+        val firstSixCell =
+            snapshot.rows
+                .first()
+                .cells
+                .single { it.number == 6 }
+        assertEquals(3, firstSixCell.omission)
+        assertTrue(firstSixCell.isOmissionLowerBound)
+        assertTrue(snapshot.statistics.single { it.number == 6 }.isCurrentOmissionLowerBound)
     }
 
     /** 乱序输入必须先按期号排序，并只保留用户选择的最近期数。 */

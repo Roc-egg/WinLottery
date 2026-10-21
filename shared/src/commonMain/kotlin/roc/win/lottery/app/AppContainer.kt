@@ -8,6 +8,8 @@ import roc.win.lottery.data.HistoricalDrawRepository
 import roc.win.lottery.domain.LotteryPrizeCalculator
 import roc.win.lottery.domain.PrizeCalculator
 import roc.win.lottery.domain.TicketValidator
+import roc.win.lottery.persistence.DrawResultStore
+import roc.win.lottery.persistence.HistoricalDrawStore
 import roc.win.lottery.persistence.TicketRecordStore
 import roc.win.lottery.recognition.AppPaths
 import roc.win.lottery.recognition.ConservativeTicketParser
@@ -39,6 +41,8 @@ import roc.win.lottery.recognition.TicketRecognizer
  * @property usesRealRecognition 本地 OCR 是否由真实平台实现提供。
  * @property usesRealDrawData 开奖查询是否使用真实官网数据。
  * @property ticketRecordStore 当前平台的本机结构化票据仓库；未接入的平台为 `null`。
+ * @property historicalDrawStore 与票据共用数据库的本机官方历史开奖缓存；未接入的平台为 `null`。
+ * @property drawResultStore 与票据共用数据库的已开奖查询结果缓存；未接入的平台为 `null`。
  * @property ticketRecordFileExchange 当前平台的系统逻辑包文件接口；未接入的平台为 `null`。
  * @property ocrConfidenceDiagnostics Debug 包使用的匿名字段置信度诊断，默认禁用。
  */
@@ -59,13 +63,19 @@ class AppContainer(
     val usesRealRecognition: Boolean,
     val usesRealDrawData: Boolean,
     val ticketRecordStore: TicketRecordStore? = null,
+    val historicalDrawStore: HistoricalDrawStore? = null,
+    val drawResultStore: DrawResultStore? = null,
     val ticketRecordFileExchange: TicketRecordFileExchange? = null,
     val ocrConfidenceDiagnostics: OcrConfidenceDiagnostics = OcrConfidenceDiagnostics.Disabled,
 ) {
-    /** 清理临时票图并关闭容器持有的本机数据库连接。 */
+    /** 清理临时票图，并关闭容器持有的数据库连接、识别会话和网络客户端；两类开奖缓存随票据仓库共用的数据库一并关闭。 */
     fun close() {
         appPaths.clearTemporaryImages()
         ticketRecordStore?.close()
+        listOf(ticketRecognizer, drawRepository, historicalDrawRepository, aiAnalysisProvider)
+            .filterIsInstance<AutoCloseable>()
+            .distinct()
+            .forEach { resource -> runCatching { resource.close() } }
     }
 
     /** 创建无相机、无真实 OCR、无网络也能演示状态流的开发容器。 */

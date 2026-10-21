@@ -136,7 +136,7 @@ private fun ResearchLoadStatus(
             Text("正在计算数学研究", style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(6.dp))
             Text(
-                "读取当前会话 500 期并执行时间前推回测",
+                "读取本机保存的 500 期并执行时间前推回测",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
@@ -235,7 +235,7 @@ private fun ResearchReadyContent(
     }
 }
 
-/** 展示策略名称、版本、固定参数和当前会话官方来源。 */
+/** 展示策略名称、版本、固定参数和本机历史开奖的官方来源。 */
 @Composable
 private fun ResearchProtocolStatus(
     analysis: LotteryPredictionAnalysis,
@@ -263,7 +263,7 @@ private fun ResearchProtocolStatus(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Text(
-                "官方历史开奖 · $sourceName · 仅当前会话内计算",
+                "官方历史开奖 · $sourceName · 仅在本机计算",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

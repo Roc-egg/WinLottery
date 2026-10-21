@@ -10,6 +10,7 @@ import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.use
+import roc.win.lottery.app.HistoricalDrawRefreshStatus
 import roc.win.lottery.app.MainDestination
 import roc.win.lottery.app.TrendChartAction
 import roc.win.lottery.app.TrendChartContent
@@ -172,6 +173,43 @@ class TrendScreenRenderTest {
         }
     }
 
+    /** 核对失败时继续展示本机矩阵和底部来源，顶栏和来源说明都能再次发起刷新。 */
+    @Test
+    fun refreshFailureKeepsMatrixVisible() {
+        val actions = mutableListOf<TrendChartAction>()
+        val state =
+            mutableStateOf(
+                testState(LotteryType.SUPER_LOTTO, LotteryTrendArea.PRIMARY).copy(
+                    historyRefresh = HistoricalDrawRefreshStatus.Failed("官网响应超时"),
+                ),
+            )
+        ImageComposeScene(390, 844).use { scene ->
+            scene.setContent {
+                LotteryTheme {
+                    TrendScreen(state.value, MainDestination.entries, {}, { actions += it })
+                }
+            }
+            scene.settle()
+            scene.capture("portrait-refresh-failure")
+            assertTrue(scene.hasDescription("第 26150 期"))
+            assertTrue(scene.hasText("官方历史开奖 · 50期"))
+            assertTrue(scene.hasText("更新失败"))
+
+            scene.clickDescription("与官网核对最新开奖")
+            scene.clickDescription("数据来源与统计口径")
+            assertTrue(scene.hasText("最近一次核对失败：官网响应超时；当前显示本机已保存的数据。"))
+            scene.clickText("立即刷新")
+            assertEquals(listOf<TrendChartAction>(TrendChartAction.Refresh, TrendChartAction.Refresh), actions)
+
+            state.value = state.value.copy(historyRefresh = HistoricalDrawRefreshStatus.Refreshing)
+            scene.settle()
+            assertTrue(scene.hasDescription("正在核对最新开奖"))
+            assertFalse(scene.hasDescription("与官网核对最新开奖"))
+            assertTrue(scene.hasText("核对中…"))
+            assertTrue(scene.hasDescription("第 26150 期"))
+        }
+    }
+
     /** 构造仅用于渲染测试的确定性开奖，不进入生产代码或官方来源层。 */
     private fun testState(
         type: LotteryType,
@@ -256,7 +294,7 @@ class TrendScreenRenderTest {
                                     state.value.copy(view = action.view)
                                 }
 
-                                TrendChartAction.Retry -> {
+                                TrendChartAction.Retry, TrendChartAction.Refresh -> {
                                     state.value
                                 }
                             }

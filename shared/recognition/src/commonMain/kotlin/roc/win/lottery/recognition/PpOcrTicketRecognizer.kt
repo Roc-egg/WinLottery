@@ -2,6 +2,7 @@ package roc.win.lottery.recognition
 
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlin.math.ceil
 import kotlin.math.max
@@ -48,6 +49,8 @@ internal class PpOcrTicketRecognizer(
                 val regions =
                     buildList {
                         boxes.forEachIndexed { index, box ->
+                            // 页面取消后在下一个文字框前停止，不再继续占用 CPU 和推理会话。
+                            ensureActive()
                             recognizeTextBox(image, box)?.let { line -> add(PpOcrRecognizedRegion(box, line)) }
                             val completedBoxCount = index + 1
                             val fraction =
@@ -67,6 +70,7 @@ internal class PpOcrTicketRecognizer(
                         .refine(
                             regions = regions,
                             recognizeMergedRow = { mergedBox ->
+                                ensureActive()
                                 recognizeMergedTextBoxCandidates(
                                     image = image,
                                     box = mergedBox,
@@ -76,6 +80,7 @@ internal class PpOcrTicketRecognizer(
                             },
                             recognizeLatinMergedRow =
                                 { mergedBox ->
+                                    ensureActive()
                                     recognizeMergedTextBoxCandidates(
                                         image = image,
                                         box = mergedBox,

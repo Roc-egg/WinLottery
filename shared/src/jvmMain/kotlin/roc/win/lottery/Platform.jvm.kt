@@ -7,7 +7,7 @@ import roc.win.lottery.data.OfficialDrawRepository
 import roc.win.lottery.data.ResponsesAiAnalysisProvider
 import roc.win.lottery.domain.LotteryPrizeCalculator
 import roc.win.lottery.domain.TicketValidator
-import roc.win.lottery.persistence.createJvmTicketRecordStore
+import roc.win.lottery.persistence.createJvmLocalStorage
 import roc.win.lottery.recognition.ConservativeTicketParser
 import roc.win.lottery.recognition.DesktopAppPaths
 import roc.win.lottery.recognition.DesktopFileImageAcquirer
@@ -59,6 +59,7 @@ internal fun createDesktopAppContainer(
         OfficialDrawRepository(
             superLottoPdfTextExtractor = JvmSuperLottoPdfTextExtractor(),
         )
+    val localStorage = createJvmLocalStorage(applicationDataDirectory)
     return AppContainer(
         platform = JVMPlatform(),
         imageAcquirer = DesktopFileImageAcquirer(ownerProvider, appPaths),
@@ -81,7 +82,9 @@ internal fun createDesktopAppContainer(
         usesRealImageAcquisition = true,
         usesRealRecognition = true,
         usesRealDrawData = true,
-        ticketRecordStore = createJvmTicketRecordStore(applicationDataDirectory),
+        ticketRecordStore = localStorage.ticketRecordStore,
+        historicalDrawStore = localStorage.historicalDrawStore,
+        drawResultStore = localStorage.drawResultStore,
         ticketRecordFileExchange = DesktopTicketRecordFileExchange(ownerProvider),
     )
 }

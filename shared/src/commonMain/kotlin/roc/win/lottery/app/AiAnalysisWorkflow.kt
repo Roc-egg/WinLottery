@@ -55,7 +55,7 @@ sealed interface AiHistoryAvailability {
      * 当前彩种已有可用于快照构建的会话数据。
      *
      * @property sourceName 官方历史开奖来源展示名称。
-     * @property availableDrawCount 当前会话可用的规范化开奖总数。
+     * @property availableDrawCount 本机可用的规范化开奖总数。
      * @property fetchedAtEpochMillis 本次历史开奖加载完成时间。
      */
     data class Ready(
@@ -121,6 +121,7 @@ data class AiAnalysisSessionResult(
  * @property operation 当前精确预览或单次请求状态。
  * @property lastResult 当前进程内最近一次合法结果。
  * @property errorMessage 最近一次本地阻断或单次请求失败说明。
+ * @property historyRefresh 已展示本机历史开奖时与官网核对的进度。
  */
 data class AiAnalysisWorkspaceState(
     val settings: AiAnalysisSettings = AiAnalysisSettings(),
@@ -128,6 +129,7 @@ data class AiAnalysisWorkspaceState(
     val operation: AiAnalysisOperation = AiAnalysisOperation.Idle,
     val lastResult: AiAnalysisSessionResult? = null,
     val errorMessage: String? = null,
+    val historyRefresh: HistoricalDrawRefreshStatus = HistoricalDrawRefreshStatus.Idle,
 )
 
 /**
@@ -175,6 +177,34 @@ internal class AiAnalysisWorkflow(
                 history = if (lotteryChanged) AiHistoryAvailability.Loading else state.history,
                 operation = AiAnalysisOperation.Idle,
                 errorMessage = null,
+                historyRefresh = if (lotteryChanged) HistoricalDrawRefreshStatus.Idle else state.historyRefresh,
+            ),
+        )
+    }
+
+    /** 当前是否可以替换历史开奖；存在待确认预览或进行中的请求时替换会使其失效。 */
+    val canReplaceHistory: Boolean
+        get() = state.operation is AiAnalysisOperation.Idle
+
+    /** 只发布与官网核对的进度，不使待确认预览或进行中的请求失效。 */
+    fun showHistoryRefresh(status: HistoricalDrawRefreshStatus) {
+        if (state.historyRefresh == status) return
+        publish(state.copy(historyRefresh = status))
+    }
+
+    /** 官网没有新开奖时只更新来源和核对时间；快照内容不变，既有预览保持有效。 */
+    fun updateHistoryFetchedAt(
+        sourceName: String,
+        fetchedAtEpochMillis: Long,
+    ) {
+        val history = state.history as? AiHistoryAvailability.Ready ?: return
+        publish(
+            state.copy(
+                history =
+                    history.copy(
+                        sourceName = sourceName.ifBlank { history.sourceName },
+                        fetchedAtEpochMillis = fetchedAtEpochMillis,
+                    ),
             ),
         )
     }
@@ -188,6 +218,7 @@ internal class AiAnalysisWorkflow(
                 history = AiHistoryAvailability.Loading,
                 operation = AiAnalysisOperation.Idle,
                 errorMessage = null,
+                historyRefresh = HistoricalDrawRefreshStatus.Idle,
             ),
         )
     }
@@ -239,6 +270,7 @@ internal class AiAnalysisWorkflow(
                 history = AiHistoryAvailability.Failed(message),
                 operation = AiAnalysisOperation.Idle,
                 errorMessage = null,
+                historyRefresh = HistoricalDrawRefreshStatus.Idle,
             ),
         )
     }

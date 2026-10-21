@@ -95,6 +95,48 @@ class OfficialHistoricalDrawRepositoryTest {
             assertEquals(1, requestCount)
         }
 
+    /** 本机缓存增量核对只取最新 100 期，两个彩种都必须只发起一次请求。 */
+    @Test
+    fun incrementalWindowUsesSingleRequestPerLottery() =
+        runTest {
+            val superLottoRequests = mutableListOf<String>()
+            val superLottoIssues = (1..600).map { "26${it.toString().padStart(3, '0')}" }.reversed()
+            val superLotto =
+                repository { request ->
+                    superLottoRequests += request.url.toString()
+                    jsonResponse(superLottoPage(1, total = superLottoIssues.size, issues = superLottoIssues.take(100)))
+                }
+            var doubleColorBallPageSize: String? = null
+            var doubleColorBallRequestCount = 0
+            val doubleColorBallIssues = (1..100).map { "2026${it.toString().padStart(3, '0')}" }.reversed()
+            val doubleColorBall =
+                repository { request ->
+                    doubleColorBallRequestCount += 1
+                    doubleColorBallPageSize = request.url.parameters["pageSize"]
+                    jsonResponse(doubleColorBallPage(doubleColorBallIssues))
+                }
+
+            val superLottoWindow =
+                assertIs<HistoricalDrawQueryResult.Success>(superLotto.getLatestDraws(LotteryType.SUPER_LOTTO, 100))
+            val doubleColorBallWindow =
+                assertIs<HistoricalDrawQueryResult.Success>(
+                    doubleColorBall.getLatestDraws(LotteryType.DOUBLE_COLOR_BALL, 100),
+                )
+
+            assertEquals(1, superLottoRequests.size)
+            assertTrue(superLottoRequests.single().contains("pageNo=1"))
+            assertEquals(
+                "26600",
+                superLottoWindow.draws
+                    .last()
+                    .issue.value,
+            )
+            assertEquals(100, superLottoWindow.draws.size)
+            assertEquals(1, doubleColorBallRequestCount)
+            assertEquals("100", doubleColorBallPageSize)
+            assertEquals(100, doubleColorBallWindow.draws.size)
+        }
+
     /** 超过 500 期的请求必须在联网前被拒绝。 */
     @Test
     fun rejectsCountAboveSessionBoundaryBeforeNetwork() =

@@ -45,6 +45,7 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import roc.win.lottery.app.omissionText
 import roc.win.lottery.app.trendNumberZones
 import roc.win.lottery.domain.LotteryTrendSnapshot
 import roc.win.lottery.domain.TrendDrawRow
@@ -218,7 +219,8 @@ internal fun TrendMatrix(
                                     "第 ${row.issue.value} 期，命中 ${hits.joinToString("、") { it.twoDigits() }}" +
                                     (
                                         tracked?.let {
-                                            "，${it.number.twoDigits()}号${if (it.isHit) "开出" else "遗漏${it.omission}期"}"
+                                            val omission = omissionText(it.omission, it.isOmissionLowerBound)
+                                            "，${it.number.twoDigits()}号${if (it.isHit) "开出" else "遗漏${omission}期"}"
                                         }
                                             ?: ""
                                     )

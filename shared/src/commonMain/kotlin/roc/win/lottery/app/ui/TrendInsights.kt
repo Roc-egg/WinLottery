@@ -39,7 +39,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 import roc.win.lottery.app.TrendStatisticOrder
+import roc.win.lottery.app.currentOmissionText
 import roc.win.lottery.app.drawShapes
+import roc.win.lottery.app.maxOmissionText
 import roc.win.lottery.app.orderedBy
 import roc.win.lottery.domain.LotteryTrendArea
 import roc.win.lottery.domain.LotteryTrendSnapshot
@@ -257,7 +259,7 @@ internal fun TrendStatisticsList(
                         ).clickable { onTrackNumber(statistic.number) }
                         .semantics {
                             contentDescription = "追踪 ${statistic.number.twoDigits()}号，出现${statistic.hitCount}次，" +
-                                "当前遗漏${statistic.currentOmission}期，最大遗漏${statistic.maxOmission}期"
+                                "当前遗漏${statistic.currentOmissionText}期，最大遗漏${statistic.maxOmissionText}期"
                         },
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -290,7 +292,7 @@ internal fun TrendStatisticsList(
                         )
                     }
                     TrendStatisticValue(
-                        statistic.currentOmission.toString(),
+                        statistic.currentOmissionText,
                         Modifier.weight(1f),
                         if (order ==
                             TrendStatisticOrder.OMISSION
@@ -301,7 +303,7 @@ internal fun TrendStatisticsList(
                         },
                     )
                     TrendStatisticValue(
-                        statistic.maxOmission.toString(),
+                        statistic.maxOmissionText,
                         Modifier.weight(1f),
                         if (order ==
                             TrendStatisticOrder.MAX_OMISSION

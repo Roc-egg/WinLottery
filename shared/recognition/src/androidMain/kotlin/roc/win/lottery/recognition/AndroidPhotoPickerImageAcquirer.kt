@@ -1,14 +1,18 @@
 package roc.win.lottery.recognition
 
 import android.app.Activity
+import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
 import androidx.activity.ComponentActivity
 import androidx.activity.result.ActivityResult
+import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia
 import androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
 import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -18,16 +22,23 @@ import java.io.IOException
 import java.util.UUID
 import kotlin.coroutines.resume
 
-/** 使用 Android CameraX 或系统 Photo Picker 取得图片并生成去除 EXIF 的私有副本。 */
+/**
+ * 使用 Android CameraX 或系统 Photo Picker 取得图片并生成去除 EXIF 的私有副本。
+ *
+ * 实例跨 Activity 配置变更保留，每个新的界面 Activity 都必须调用 [attach] 重新注册系统结果回调。
+ */
 class AndroidPhotoPickerImageAcquirer(
-    /** 注册系统选择器并读取所选内容的 Activity。 */
-    private val activity: ComponentActivity,
+    /** 读取所选内容、相机能力和私有缓存目录使用的上下文，只保留其应用上下文。 */
+    context: Context,
     /** 临时票图路径管理器。 */
     private val appPaths: AndroidAppPaths,
 ) : ImageAcquirer {
+    /** 不随界面 Activity 重建而失效的应用上下文。 */
+    private val applicationContext = context.applicationContext
+
     /** 当前设备是否声明任意相机能力。 */
     override val supportsCamera: Boolean =
-        activity.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_CAMERA_ANY)
+        applicationContext.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_CAMERA_ANY)
 
     /** 等待系统图片选择器结果的单个请求。 */
     private var pendingPickerSelection: CancellableContinuation<Uri?>? = null
@@ -35,26 +46,49 @@ class AndroidPhotoPickerImageAcquirer(
     /** 等待 CameraX 拍照 Activity 结果的单个请求。 */
     private var pendingCameraCapture: CancellableContinuation<ActivityResult>? = null
 
-    /** 必须在 Activity 进入启动状态前完成注册的系统图片选择器。 */
-    private val photoPicker =
-        activity.registerForActivityResult(PickVisualMedia()) { uri ->
-            pendingPickerSelection?.let { continuation ->
-                pendingPickerSelection = null
-                if (continuation.isActive) continuation.resume(uri)
-            }
-        }
+    /** 当前界面 Activity 注册的系统图片选择器；没有可用界面时为空。 */
+    private var photoPicker: ActivityResultLauncher<PickVisualMediaRequest>? = null
 
-    /** 必须在 Activity 进入启动状态前完成注册的 CameraX 拍照结果启动器。 */
-    private val cameraCaptureLauncher =
-        activity.registerForActivityResult(StartActivityForResult()) { result ->
-            val continuation = pendingCameraCapture
-            pendingCameraCapture = null
-            if (continuation?.isActive == true) {
-                continuation.resume(result)
-            } else {
-                deleteReturnedCameraCapture(result)
+    /** 当前界面 Activity 注册的 CameraX 拍照结果启动器；没有可用界面时为空。 */
+    private var cameraCaptureLauncher: ActivityResultLauncher<Intent>? = null
+
+    /**
+     * 把系统选图和拍照结果回调注册到当前界面 Activity，必须在 Activity 进入启动状态前调用。
+     *
+     * 使用固定键注册：Activity 因配置变更重建时，系统会把重建前发起的选择结果交给新注册的回调，
+     * 继续恢复仍在等待的请求。
+     */
+    fun attach(activity: ComponentActivity) {
+        val registry = activity.activityResultRegistry
+        val picker =
+            registry.register(PHOTO_PICKER_RESULT_KEY, activity, PickVisualMedia()) { uri ->
+                pendingPickerSelection?.let { continuation ->
+                    pendingPickerSelection = null
+                    if (continuation.isActive) continuation.resume(uri)
+                }
             }
-        }
+        val camera =
+            registry.register(CAMERA_CAPTURE_RESULT_KEY, activity, StartActivityForResult()) { result ->
+                val continuation = pendingCameraCapture
+                pendingCameraCapture = null
+                if (continuation?.isActive == true) {
+                    continuation.resume(result)
+                } else {
+                    deleteReturnedCameraCapture(result)
+                }
+            }
+        photoPicker = picker
+        cameraCaptureLauncher = camera
+        activity.lifecycle.addObserver(
+            object : DefaultLifecycleObserver {
+                /** 界面销毁后不再持有其启动器，避免保留已销毁的 Activity。 */
+                override fun onDestroy(owner: LifecycleOwner) {
+                    if (photoPicker === picker) photoPicker = null
+                    if (cameraCaptureLauncher === camera) cameraCaptureLauncher = null
+                }
+            },
+        )
+    }
 
     /** 启动系统选图；成功时返回已归一方向且不含原 EXIF 的 JPEG 临时文件。 */
     override suspend fun acquire(source: ImageAcquisitionSource): ImageAcquisitionResult {
@@ -100,7 +134,8 @@ class AndroidPhotoPickerImageAcquirer(
                 if (pendingPickerSelection === continuation) pendingPickerSelection = null
             }
             runCatching {
-                photoPicker.launch(PickVisualMediaRequest(PickVisualMedia.ImageOnly))
+                checkNotNull(photoPicker) { "图片选择器尚未注册" }
+                    .launch(PickVisualMediaRequest(PickVisualMedia.ImageOnly))
             }.onFailure {
                 pendingPickerSelection = null
                 if (continuation.isActive) continuation.resume(null)
@@ -115,7 +150,8 @@ class AndroidPhotoPickerImageAcquirer(
                 if (pendingCameraCapture === continuation) pendingCameraCapture = null
             }
             runCatching {
-                cameraCaptureLauncher.launch(Intent(activity, AndroidCameraCaptureActivity::class.java))
+                checkNotNull(cameraCaptureLauncher) { "拍照启动器尚未注册" }
+                    .launch(Intent(applicationContext, AndroidCameraCaptureActivity::class.java))
             }.onFailure {
                 pendingCameraCapture = null
                 if (continuation.isActive) {
@@ -127,7 +163,7 @@ class AndroidPhotoPickerImageAcquirer(
     /** 验证拍照结果只能引用应用私有 CameraX 暂存目录中的直属 JPEG 文件。 */
     private fun validatedCameraCapture(result: ActivityResult): File? {
         val rawPath = result.data?.getStringExtra(ANDROID_CAMERA_PATH_EXTRA) ?: return null
-        val directory = File(activity.cacheDir, ANDROID_CAMERA_CAPTURE_DIRECTORY_NAME)
+        val directory = File(applicationContext.cacheDir, ANDROID_CAMERA_CAPTURE_DIRECTORY_NAME)
         return validateDirectCameraJpeg(rawPath, directory)
     }
 
@@ -138,7 +174,7 @@ class AndroidPhotoPickerImageAcquirer(
 
     /** 解码系统内容、应用 EXIF 方向并重新编码，避免原始定位信息进入临时副本。 */
     private fun importPrivateCopy(uri: Uri): ImageAcquisitionResult {
-        val resolver = activity.contentResolver
+        val resolver = applicationContext.contentResolver
         var output: File? = null
         return try {
             val normalized =
@@ -193,6 +229,12 @@ class AndroidPhotoPickerImageAcquirer(
 
         /** 私有副本 MIME 类型。 */
         const val JPEG_MIME_TYPE = "image/jpeg"
+
+        /** 系统图片选择器结果在 Activity 结果注册表中的固定键。 */
+        const val PHOTO_PICKER_RESULT_KEY = "roc.win.lottery.recognition.photoPicker"
+
+        /** CameraX 拍照结果在 Activity 结果注册表中的固定键。 */
+        const val CAMERA_CAPTURE_RESULT_KEY = "roc.win.lottery.recognition.cameraCapture"
     }
 }
 

@@ -52,7 +52,6 @@ kotlin {
         androidMain.dependencies {
             implementation(libs.androidx.activity)
             implementation(libs.compose.uiToolingPreview)
-            implementation(libs.compose.uiTooling)
         }
         commonMain.dependencies {
             implementation(project(":shared:data"))

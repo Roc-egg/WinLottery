@@ -22,17 +22,20 @@ import roc.win.lottery.domain.Issue
 import roc.win.lottery.domain.LotteryPrizeCalculator
 import roc.win.lottery.domain.LotteryType
 import roc.win.lottery.domain.TicketValidator
+import roc.win.lottery.persistence.HistoricalDrawStore
 import roc.win.lottery.recognition.ConservativeTicketParser
 import roc.win.lottery.recognition.FakeAppPaths
 import roc.win.lottery.recognition.FakeImageAcquirer
 import roc.win.lottery.recognition.FakeTicketRecognizer
 import roc.win.lottery.recognition.ImageDimensionQualityAnalyzer
+import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Clock
 
 /** AI 一级页面、走势缓存和单次请求的控制器集成测试。 */
 class AiAnalysisControllerIntegrationTest {
@@ -128,10 +131,88 @@ class AiAnalysisControllerIntegrationTest {
             assertEquals(1, historyRepository.queryCount(LotteryType.SUPER_LOTTO))
         }
 
+    /** 先进入 AI 页再进入走势页时必须复用同一份历史开奖，只发起一次请求。 */
+    @Test
+    fun aiThenTrendReusesHistoryWithoutRefetch() =
+        runTest {
+            val historyRepository = CountingHistoryRepository()
+            val controller = createController(historyRepository, RecordingAiProvider())
+
+            controller.showAiAnalysis()
+            controller.showTrendChart()
+
+            val chart = assertIs<AppScreen.Trends>(controller.uiState.value.screen).chart
+            assertIs<TrendChartContent.Ready>(chart.content)
+            assertEquals(1, historyRepository.queryCount(LotteryType.SUPER_LOTTO))
+        }
+
+    /** 后台核对取得新开奖时不得作废用户已经确认、正在进行的 AI 请求，只提示稍后刷新。 */
+    @Test
+    fun backgroundRefreshDoesNotInvalidateRequestingAi() =
+        runTest {
+            val clock = MutableTestClock()
+            val history = ScriptedHistoryRepository(clock, newestOrdinal = 503)
+            val gate = CompletableDeferred<Unit>()
+            history.gate = gate
+            val store =
+                InMemoryHistoricalDrawStore(
+                    listOf(
+                        testStoredHistory(
+                            LotteryType.SUPER_LOTTO,
+                            newestOrdinal = 500,
+                            fetchedAtEpochMillis = clock.nowEpochMillis - 31L * 60L * 1_000L,
+                        ),
+                    ),
+                )
+            val aiProvider = RecordingAiProvider(blockRequest = true)
+            val controller = createController(history, aiProvider, store, clock)
+
+            val entering = launch { controller.showAiAnalysis() }
+            history.started.await()
+            var screen = assertIs<AppScreen.AiAnalysis>(controller.uiState.value.screen)
+            assertIs<AiHistoryAvailability.Ready>(screen.workspace.history)
+            assertEquals(HistoricalDrawRefreshStatus.Refreshing, screen.workspace.historyRefresh)
+            controller.updateAiAnalysisSettings(
+                screen.workspace.settings.copy(
+                    providerName = "测试服务",
+                    endpointUrl = "https://api.example.test/v1/responses",
+                    model = "test-model-v1",
+                ),
+            )
+            assertTrue(controller.prepareAiAnalysisPreview(TEST_CONTROLLER_AI_SECRET))
+            screen = assertIs(controller.uiState.value.screen)
+            val fingerprint =
+                assertIs<AiAnalysisOperation.AwaitingConfirmation>(screen.workspace.operation)
+                    .preview
+                    .requestFingerprint
+            val request = launch { controller.confirmAiAnalysisPreview(fingerprint) }
+            aiProvider.requestStarted.await()
+
+            gate.complete(Unit)
+            entering.join()
+            screen = assertIs(controller.uiState.value.screen)
+            assertIs<AiAnalysisOperation.Requesting>(screen.workspace.operation)
+            assertIs<HistoricalDrawRefreshStatus.Notice>(screen.workspace.historyRefresh)
+            aiProvider.completeRequest()
+            request.join()
+
+            screen = assertIs(controller.uiState.value.screen)
+            assertEquals(
+                2,
+                screen.workspace.lastResult
+                    ?.analysis
+                    ?.candidates
+                    ?.size,
+            )
+            assertEquals(listOf(LotteryType.SUPER_LOTTO to 100), history.requests)
+        }
+
     /** 创建同时接入官方历史仓库和测试 AI Provider 的共享控制器。 */
     private fun createController(
         historyRepository: HistoricalDrawRepository,
         aiProvider: AiAnalysisProvider,
+        historicalDrawStore: HistoricalDrawStore? = null,
+        clock: Clock = MutableTestClock(),
     ): LotteryAppController =
         LotteryAppController(
             AppContainer(
@@ -142,6 +223,7 @@ class AiAnalysisControllerIntegrationTest {
                 ticketParser = ConservativeTicketParser(),
                 drawRepository = FakeDrawRepository(),
                 historicalDrawRepository = historyRepository,
+                historicalDrawStore = historicalDrawStore,
                 aiAnalysisProvider = aiProvider,
                 prizeCalculator = LotteryPrizeCalculator(),
                 appPaths = FakeAppPaths(),
@@ -151,6 +233,8 @@ class AiAnalysisControllerIntegrationTest {
                 usesRealRecognition = false,
                 usesRealDrawData = false,
             ),
+            computationContext = EmptyCoroutineContext,
+            clock = clock,
         )
 
     /** 控制器集成测试使用的最小平台能力。 */

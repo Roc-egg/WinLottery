@@ -148,12 +148,14 @@ data class TrendIssueGap(
  *
  * @property number 当前号码列。
  * @property isHit 当期是否开出该号码。
- * @property omission 截至当期的样本内连续遗漏值，命中时为 `0`。
+ * @property omission 截至当期的连续遗漏值，命中时为 `0`；样本开始前延续进来的遗漏使用全部已取得历史累计。
+ * @property isOmissionLowerBound 自已取得历史的最早一期起从未开出，真实遗漏至少为 [omission]。
  */
 data class TrendNumberCell(
     val number: Int,
     val isHit: Boolean,
     val omission: Int,
+    val isOmissionLowerBound: Boolean = false,
 )
 
 /**
@@ -173,15 +175,19 @@ data class TrendDrawRow(
  * 一个号码在当前样本内的统计。
  *
  * @property number 号码。
- * @property hitCount 出现次数。
- * @property currentOmission 截至最后一期的连续遗漏值。
- * @property maxOmission 当前样本内达到过的最大连续遗漏值。
+ * @property hitCount 样本内出现次数。
+ * @property currentOmission 截至最后一期的连续遗漏值，使用全部已取得历史累计。
+ * @property maxOmission 样本各期达到过的最大连续遗漏值，含样本开始前延续进来的遗漏。
+ * @property isCurrentOmissionLowerBound 已取得历史内从未开出，真实当前遗漏至少为 [currentOmission]。
+ * @property isMaxOmissionLowerBound 最大遗漏来自起点未知的遗漏段，真实值至少为 [maxOmission]。
  */
 data class TrendNumberStatistics(
     val number: Int,
     val hitCount: Int,
     val currentOmission: Int,
     val maxOmission: Int,
+    val isCurrentOmissionLowerBound: Boolean = false,
+    val isMaxOmissionLowerBound: Boolean = false,
 )
 
 /**
@@ -266,10 +272,10 @@ class LotteryTrendCalculator {
             return LotteryTrendCalculationResult.InvalidData(problems)
         }
 
-        val selectedDraws = draws.sortedBy { it.issue.value }.takeLast(sampleSize.count)
+        val sortedDraws = draws.sortedBy { it.issue.value }
         val spec = lotteryType.trendAreaSpec(area)
         return LotteryTrendCalculationResult.Success(
-            snapshot = buildSnapshot(lotteryType, area, sampleSize, spec, selectedDraws),
+            snapshot = buildSnapshot(lotteryType, area, sampleSize, spec, sortedDraws),
         )
     }
 
@@ -362,19 +368,45 @@ class LotteryTrendCalculator {
                 )
             }
 
-    /** 计算走势图矩阵、号码统计与可证明的期号空档。 */
+    /**
+     * 计算走势图矩阵、号码统计与可证明的期号空档。
+     *
+     * 遗漏值使用紧邻样本且没有可证明空档的已排序历史累计，只输出最近 [sampleSize] 期的行，
+     * 避免样本起点把延续中的遗漏截断为 0。
+     */
     private fun buildSnapshot(
         lotteryType: LotteryType,
         area: LotteryTrendArea,
         sampleSize: TrendSampleSize,
         spec: LotteryTrendAreaSpec,
-        draws: List<HistoricalDraw>,
+        sortedDraws: List<HistoricalDraw>,
     ): LotteryTrendSnapshot {
+        val sampleStartIndex = maxOf(0, sortedDraws.size - sampleSize.count)
+        val selectedDraws = sortedDraws.subList(sampleStartIndex, sortedDraws.size)
+        // 空档内的缺失期可能开出过号码，延续遗漏只能从样本前最后一个空档之后开始累计。
+        val historyStartIndex =
+            findIssueGaps(lotteryType, sortedDraws.subList(0, minOf(sampleStartIndex + 1, sortedDraws.size)))
+                .lastOrNull()
+                ?.let { gap -> sortedDraws.indexOfFirst { draw -> draw.issue == gap.nextIssue } }
+                ?: 0
         val hitCounts = IntArray(spec.numberRange.last + 1)
         val currentOmissions = IntArray(spec.numberRange.last + 1)
         val maxOmissions = IntArray(spec.numberRange.last + 1)
+        val hasHitSinceHistoryStart = BooleanArray(spec.numberRange.last + 1)
+        val isMaxOmissionLowerBound = BooleanArray(spec.numberRange.last + 1)
+        sortedDraws.subList(historyStartIndex, sampleStartIndex).forEach { draw ->
+            val hitNumbers = draw.numbers(area).toSet()
+            spec.numberRange.forEach { number ->
+                if (number in hitNumbers) {
+                    currentOmissions[number] = 0
+                    hasHitSinceHistoryStart[number] = true
+                } else {
+                    currentOmissions[number] += 1
+                }
+            }
+        }
         val rows =
-            draws.map { draw ->
+            selectedDraws.map { draw ->
                 val hitNumbers = draw.numbers(area).toSet()
                 val cells =
                     spec.numberRange.map { number ->
@@ -382,15 +414,22 @@ class LotteryTrendCalculator {
                         if (isHit) {
                             hitCounts[number] += 1
                             currentOmissions[number] = 0
+                            hasHitSinceHistoryStart[number] = true
                         } else {
                             currentOmissions[number] += 1
-                            maxOmissions[number] =
-                                maxOf(maxOmissions[number], currentOmissions[number])
+                            val isLowerBound = !hasHitSinceHistoryStart[number]
+                            if (currentOmissions[number] > maxOmissions[number]) {
+                                maxOmissions[number] = currentOmissions[number]
+                                isMaxOmissionLowerBound[number] = isLowerBound
+                            } else if (currentOmissions[number] == maxOmissions[number] && isLowerBound) {
+                                isMaxOmissionLowerBound[number] = true
+                            }
                         }
                         TrendNumberCell(
                             number = number,
                             isHit = isHit,
                             omission = currentOmissions[number],
+                            isOmissionLowerBound = !isHit && !hasHitSinceHistoryStart[number],
                         )
                     }
                 TrendDrawRow(issue = draw.issue, drawDate = draw.drawDate, cells = cells)
@@ -402,6 +441,8 @@ class LotteryTrendCalculator {
                     hitCount = hitCounts[number],
                     currentOmission = currentOmissions[number],
                     maxOmission = maxOmissions[number],
+                    isCurrentOmissionLowerBound = !hasHitSinceHistoryStart[number],
+                    isMaxOmissionLowerBound = isMaxOmissionLowerBound[number],
                 )
             }
         return LotteryTrendSnapshot(
@@ -410,7 +451,7 @@ class LotteryTrendCalculator {
             requestedSampleSize = sampleSize,
             rows = rows,
             statistics = statistics,
-            issueGaps = findIssueGaps(lotteryType, draws),
+            issueGaps = findIssueGaps(lotteryType, selectedDraws),
         )
     }
 

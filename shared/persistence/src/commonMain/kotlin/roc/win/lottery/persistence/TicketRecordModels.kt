@@ -65,6 +65,20 @@ interface TicketRecordStore {
         displayName: String? = null,
     ): StoredTicketRecord
 
+    /**
+     * 在单个事务中替换同一流程已保存记录的票面内容。
+     *
+     * 保留 UUID、采集方式和创建时间；名称仍为旧票面默认名称时按新票面重新生成。
+     *
+     * @param id 已保存记录的 UUID。
+     * @param ticket 用户返回校正后再次确认的票据。
+     * @return 替换后的记录；记录不存在时返回 `null`。
+     */
+    suspend fun replaceTicket(
+        id: String,
+        ticket: ConfirmedTicket,
+    ): StoredTicketRecord?
+
     /** 返回指定 UUID 的合法记录，不存在时返回 `null`。 */
     suspend fun findById(id: String): StoredTicketRecord?
 

@@ -55,6 +55,9 @@ sealed interface TrendChartAction {
 
     /** 用户明确重试当前彩种的官方历史开奖加载。 */
     data object Retry : TrendChartAction
+
+    /** 用户明确要求立即与官网增量核对本机历史开奖。 */
+    data object Refresh : TrendChartAction
 }
 
 /** 走势图真实历史开奖加载状态。 */
@@ -67,7 +70,7 @@ sealed interface TrendChartContent {
      *
      * @property snapshot 经过领域校验和计算的可绘制快照。
      * @property sourceName 官方数据来源名称。
-     * @property fetchedAtEpochMillis 当前会话取得这批数据的时间。
+     * @property fetchedAtEpochMillis 最近一次与官网核对这批数据的时间。
      */
     data class Ready(
         val snapshot: LotteryTrendSnapshot,
@@ -118,6 +121,7 @@ sealed interface TrendResearchContent {
  * @property sampleSize 当前样本范围。
  * @property content 当前真实历史开奖加载状态。
  * @property researchContent 当前数学研究计算状态。
+ * @property historyRefresh 已展示本机历史开奖时与官网核对的进度。
  */
 data class TrendChartState(
     val view: TrendWorkspaceView,
@@ -126,6 +130,7 @@ data class TrendChartState(
     val sampleSize: TrendSampleSize,
     val content: TrendChartContent,
     val researchContent: TrendResearchContent,
+    val historyRefresh: HistoricalDrawRefreshStatus = HistoricalDrawRefreshStatus.Idle,
 ) {
     /** 加载成功时返回可绘制快照，否则返回 `null`。 */
     val snapshot: LotteryTrendSnapshot?
@@ -148,4 +153,31 @@ data class TrendChartState(
                 researchContent = TrendResearchContent.Loading,
             )
     }
+}
+
+/** 已展示本机历史开奖时与官网核对的进度，走势和 AI 页共用。 */
+sealed interface HistoricalDrawRefreshStatus {
+    /** 没有进行中的核对，也没有需要提示的结果。 */
+    data object Idle : HistoricalDrawRefreshStatus
+
+    /** 正在与官网增量核对，页面继续展示本机数据。 */
+    data object Refreshing : HistoricalDrawRefreshStatus
+
+    /**
+     * 核对完成但有需要告知用户的说明。
+     *
+     * @property message 不影响继续使用的说明。
+     */
+    data class Notice(
+        val message: String,
+    ) : HistoricalDrawRefreshStatus
+
+    /**
+     * 核对失败，页面继续展示本机数据。
+     *
+     * @property message 不包含官网原始响应的失败原因。
+     */
+    data class Failed(
+        val message: String,
+    ) : HistoricalDrawRefreshStatus
 }

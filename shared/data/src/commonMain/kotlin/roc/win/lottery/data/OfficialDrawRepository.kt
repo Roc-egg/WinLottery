@@ -46,12 +46,18 @@ class OfficialDrawRepository(
     private val ruleVersionSelector: RuleVersionSelector = RuleVersionSelector(),
     private val superLottoPdfTextExtractor: SuperLottoPdfTextExtractor? = null,
 ) : DrawRepository,
-    HistoricalDrawRepository {
+    HistoricalDrawRepository,
+    AutoCloseable {
     /** 当前进程内每个精确期号最近一次主数据面内容与修订号。 */
     private val revisions = mutableMapOf<DrawKey, DrawRevision>()
 
     /** 保护修订状态。 */
     private val revisionMutex = Mutex()
+
+    /** 应用会话结束时关闭网络客户端，释放连接池和平台引擎线程。 */
+    override fun close() {
+        httpClient.close()
+    }
 
     /**
      * 按用户确认的彩种和期号查询官网开奖结果。

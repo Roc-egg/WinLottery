@@ -14,7 +14,7 @@ import roc.win.lottery.data.OfficialDrawRepository
 import roc.win.lottery.data.ResponsesAiAnalysisProvider
 import roc.win.lottery.domain.LotteryPrizeCalculator
 import roc.win.lottery.domain.TicketValidator
-import roc.win.lottery.persistence.createIOSTicketRecordStore
+import roc.win.lottery.persistence.createIOSLocalStorage
 import roc.win.lottery.recognition.ConservativeTicketParser
 import roc.win.lottery.recognition.IOSAppPaths
 import roc.win.lottery.recognition.IOSLuminanceImageDecoder
@@ -57,6 +57,7 @@ fun createIOSRecognitionContainer(
         OfficialDrawRepository(
             superLottoPdfTextExtractor = IOSSuperLottoPdfTextExtractor(),
         )
+    val localStorage = createIOSLocalStorage()
     val container =
         AppContainer(
             platform = IOSPlatform(),
@@ -85,7 +86,9 @@ fun createIOSRecognitionContainer(
             usesRealImageAcquisition = true,
             usesRealRecognition = true,
             usesRealDrawData = true,
-            ticketRecordStore = createIOSTicketRecordStore(),
+            ticketRecordStore = localStorage.ticketRecordStore,
+            historicalDrawStore = localStorage.historicalDrawStore,
+            drawResultStore = localStorage.drawResultStore,
             ticketRecordFileExchange = IOSTicketRecordFileExchange(presenterProvider),
             ocrConfidenceDiagnostics = createIOSOcrConfidenceDiagnostics(),
         )
