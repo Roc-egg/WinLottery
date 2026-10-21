@@ -36,8 +36,8 @@ android {
             libs.versions.android.targetSdk
                 .get()
                 .toInt()
-        versionCode = 7
-        versionName = "1.3.2"
+        versionCode = 8
+        versionName = "1.3.3"
         // 默认仅打包 64 位 ARM 原生库，确保 APK 和 AAB 都不携带其他 ABI。
         ndk {
             abiFilters += "arm64-v8a"

@@ -114,6 +114,12 @@ jobs:
               echo "::error title=标签提交不一致::工作区不是指定标签对应的提交"
               exit 1
             fi
+            # 正式发布的 Release 说明以版本说明文件开头，缺少时在打包前失败；补打 Apple 包不创建 Release，不要求该文件。
+            release_notes="docs/release-notes/${requested_tag}.md"
+            if [[ "$INPUT_MODE" != "apple-only" && ! -s "$release_notes" ]]; then
+              echo "::error title=缺少版本说明::正式发布前必须提交 ${release_notes}，列出本版更新内容"
+              exit 1
+            fi
           fi
 
           {
@@ -684,6 +690,14 @@ jobs:
         working-directory: release-assets
         run: sha256sum --check SHA256SUMS.txt
 
+      - name: 检出版本说明
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.metadata.outputs.commit }}
+          path: source
+          sparse-checkout: docs/release-notes
+          persist-credentials: false
+
       - name: 创建不可覆盖的稳定版本
         id: publish
         env:
@@ -691,7 +705,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           VERSION: ${{ needs.metadata.outputs.version }}
           RELEASE_TAG: ${{ needs.metadata.outputs.tag }}
-          RELEASE_NOTES: |
+          INSTALL_NOTES: |
             Android 提供仅含 arm64-v8a 原生库的签名 APK。
 
             iOS 提供面向 arm64 真机的未签名 IPA。该文件不能直接安装，使用者必须使用自己的有效证书和描述文件重新签名；第三方签名工具的安全性与兼容性需由使用者自行判断。
@@ -707,12 +721,19 @@ jobs:
             exit 1
           fi
 
+          # 本版更新内容在前，固定的安装说明在后；GitHub 自动生成的提交范围链接附在末尾。
+          notes_file="$RUNNER_TEMP/release-notes.md"
+          {
+            cat "source/docs/release-notes/${RELEASE_TAG}.md"
+            printf '\n## 安装说明\n\n%s' "$INSTALL_NOTES"
+          } > "$notes_file"
+
           release_url="$(gh release create "$RELEASE_TAG" release-assets/* \
             --verify-tag \
             --fail-on-no-commits \
             --title "WinLottery $VERSION" \
             --generate-notes \
-            --notes "$RELEASE_NOTES")"
+            --notes-file "$notes_file")"
           echo "url=$release_url" >> "$GITHUB_OUTPUT"
           echo "### 已发布" >> "$GITHUB_STEP_SUMMARY"
           echo "$release_url" >> "$GITHUB_STEP_SUMMARY"

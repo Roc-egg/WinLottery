@@ -4,7 +4,7 @@
   <p><strong>基于 Kotlin Multiplatform 的纸质彩票识别与中奖测算工具</strong></p>
   <p>Android、iOS、Windows 与 macOS 共享业务规则、数据访问、结构化存储和 Compose Multiplatform 界面。</p>
   <p>
-    <img alt="当前版本" src="https://img.shields.io/badge/version-1.3.2-2f7d32">
+    <img alt="当前版本" src="https://img.shields.io/badge/version-1.3.3-2f7d32">
     <img alt="项目状态" src="https://img.shields.io/badge/status-V1.4%20in%20progress-d97706">
     <img alt="技术架构" src="https://img.shields.io/badge/Kotlin-Multiplatform-7f52ff">
     <img alt="目标平台" src="https://img.shields.io/badge/platform-Android%20%7C%20iOS%20%7C%20Windows%20%7C%20macOS-1565c0">
@@ -22,7 +22,7 @@
 
 ## 项目总进度
 
-更新日期：2026-10-10。当前稳定版本为 `1.3.2 (7)`，在 `1.3.1 (6)` 的四平台正式支持基础上，修复开奖查询误判“需要人工复核”、大乐透奖金长期待确认和多期票跨年度期号，并将走势图改版为全屏数据工作台。V1.4 已立项推进，V1.5 尚未开始。
+更新日期：2026-10-21。当前稳定版本为 `1.3.3 (8)`，走势与 AI 分析的历史开奖、查询开奖的已开奖期次改为保存在本机，再次查询只补查未开奖期次；同时修复票面倾斜时同一投注行被识别成两注，并改进票面确认页号码布局和 Android 流程稳定性。各版本更新内容见 [docs/release-notes](docs/release-notes)。V1.4 已立项推进，V1.5 尚未开始。
 
 | 状态 | 版本数量 | 当前范围 |
 |---|---:|---|
