@@ -1046,6 +1046,193 @@ class ConservativeTicketParserTest {
         assertTrue(correction.message.contains("顺序"))
     }
 
+    /** 倾斜票面上同一圆圈注序号被相邻整行裁图读两次且有一个号码不同时，应合并为一注并要求人工核对。 */
+    @Test
+    fun repeatedMarkerRowWithConflictingNumberIsMergedForCorrection() {
+        val result =
+            parser.parse(
+                tiltedFivePeriodDocument(
+                    repeatedThirdRow = "③ 03 09 16 21 33 + 05 09",
+                ),
+            )
+
+        val correction = assertIs<TicketParseResult.NeedsCorrection>(result)
+        val draft = assertNotNull(correction.draft)
+        assertEquals(5, draft.betLines.size)
+        assertEquals(listOf(3, 9, 16, 24, 33), draft.betLines[2].primaryNumbers)
+        assertEquals(listOf(5, 9), draft.betLines[2].secondaryNumbers)
+        assertTrue(draft.betLines[2].originalText.contains("24"))
+        assertTrue(draft.betLines[2].originalText.contains("21"))
+        assertEquals(listOf(4, 10, 17, 25, 32), draft.betLines[3].primaryNumbers)
+        assertTrue(correction.message.contains("第 3 注"))
+        assertEquals(10_000L, draft.paidAmountFen)
+    }
+
+    /** 同一圆圈注序号被读两次且号码完全一致时，应静默合并为一注。 */
+    @Test
+    fun repeatedMarkerRowWithIdenticalNumbersIsMerged() {
+        val result =
+            parser.parse(
+                tiltedFivePeriodDocument(
+                    repeatedThirdRow = "③03091624 33+0509",
+                ),
+            )
+
+        val review = assertIs<TicketParseResult.ReadyForReview>(result)
+        assertEquals(5, review.draft.betLines.size)
+        assertEquals(listOf(3, 9, 16, 24, 33), review.draft.betLines[2].primaryNumbers)
+    }
+
+    /** 相邻两注号码完全相同但圆圈注序号不同，属于票面真实重复投注，不得合并。 */
+    @Test
+    fun adjacentIdenticalBetsWithDifferentMarkersStaySeparate() {
+        val result =
+            parser.parse(
+                document(
+                    "体彩 超级大乐透",
+                    "第 26999期",
+                    "单式票 1倍 合计6元",
+                    "① 01 07 14 22 35 + 03 11",
+                    "② 02 08 15 23 34 + 04 10",
+                    "③ 02 08 15 23 34 + 04 10",
+                ),
+            )
+
+        val review = assertIs<TicketParseResult.ReadyForReview>(result)
+        assertEquals(3, review.draft.betLines.size)
+        assertEquals(review.draft.betLines[1].primaryNumbers, review.draft.betLines[2].primaryNumbers)
+    }
+
+    /** 重复读到的一行注序号误识别为上一注的序号且号码与下一注完全相同时，应删除这次重复读法。 */
+    @Test
+    fun repeatedReadingWithMisreadDuplicateMarkerIsDropped() {
+        val result =
+            parser.parse(
+                document(
+                    "体彩 超级大乐透",
+                    "第 26999期",
+                    "单式票 1倍 合计10元",
+                    "① 01 07 14 22 35 + 03 11",
+                    "② 02 08 15 23 34 + 04 10",
+                    "② 03 09 16 24 33 + 05 09",
+                    "③ 03 09 16 24 33 + 05 09",
+                    "④ 04 10 17 25 32 + 06 08",
+                    "⑤ 05 11 18 26 31 + 07 12",
+                ),
+            )
+
+        val review = assertIs<TicketParseResult.ReadyForReview>(result)
+        assertEquals(5, review.draft.betLines.size)
+        assertEquals(listOf(2, 8, 15, 23, 34), review.draft.betLines[1].primaryNumbers)
+        assertEquals(listOf(3, 9, 16, 24, 33), review.draft.betLines[2].primaryNumbers)
+        assertTrue(
+            review.draft.betLines[2]
+                .originalText
+                .startsWith("③"),
+        )
+    }
+
+    /** 未带注序号的重复读法只相差一个号码、且票面金额证明多出一注时，应合并并要求人工核对。 */
+    @Test
+    fun unmarkedRepeatedRowIsMergedWhenAmountProvesOneExtraRow() {
+        val result =
+            parser.parse(
+                fullWidthDocument(
+                    "体彩 超级大乐透",
+                    "第 26999期",
+                    "单式票 10期1倍 合计100元",
+                    "① 01 07 14 22 35 + 03 11",
+                    "② 02 08 15 23 34 + 04 10",
+                    "③ 03 09 16 24 33 + 05 09",
+                    "0.0510172532.0608",
+                    "④ 04 10 17 25 32 + 06 08",
+                    "⑤ 05 11 18 26 31 + 07 12",
+                ),
+            )
+
+        val correction = assertIs<TicketParseResult.NeedsCorrection>(result)
+        val draft = assertNotNull(correction.draft)
+        assertEquals(5, draft.betLines.size)
+        assertEquals(listOf(4, 10, 17, 25, 32), draft.betLines[3].primaryNumbers)
+        assertTrue(draft.betLines[3].originalText.contains("④"))
+        assertTrue(draft.betLines[3].originalText.contains("0.05"))
+        assertTrue(correction.message.contains("第 4 注"))
+        assertFalse(correction.message.contains("不一致"))
+    }
+
+    /** 相邻两注只差一个号码但票面金额与注数一致时，属于真实投注，不得合并。 */
+    @Test
+    fun nearIdenticalBetsStaySeparateWhenAmountMatches() {
+        val result =
+            parser.parse(
+                fullWidthDocument(
+                    "体彩 超级大乐透",
+                    "第 26999期",
+                    "单式票 10期1倍 合计120元",
+                    "① 01 07 14 22 35 + 03 11",
+                    "② 02 08 15 23 34 + 04 10",
+                    "③ 03 09 16 24 33 + 05 09",
+                    "0.0510172532.0608",
+                    "④ 04 10 17 25 32 + 06 08",
+                    "⑤ 05 11 18 26 31 + 07 12",
+                ),
+            )
+
+        val review = assertIs<TicketParseResult.ReadyForReview>(result)
+        assertEquals(6, review.draft.betLines.size)
+    }
+
+    /** 同一圆圈注序号但两个以上号码不同时证据不足，不得合并，交由金额校验转人工核对。 */
+    @Test
+    fun repeatedMarkerRowsWithSeveralDifferentNumbersStaySeparate() {
+        val result =
+            parser.parse(
+                tiltedFivePeriodDocument(
+                    repeatedThirdRow = "③ 03 09 18 21 33 + 05 09",
+                ),
+            )
+
+        val correction = assertIs<TicketParseResult.NeedsCorrection>(result)
+        assertEquals(6, assertNotNull(correction.draft).betLines.size)
+    }
+
+    /**
+     * 复现倾斜票面整行裁图的几何：第 3 注被向下偏移的裁图再读一次，与真实第 3 注和第 4 注都只少量重叠。
+     *
+     * 号码均为脱敏数据，纵向位置取自真实票样的归一化输出。
+     */
+    private fun tiltedFivePeriodDocument(repeatedThirdRow: String): OcrDocument =
+        OcrDocument(
+            imageId = TEST_IMAGE_ID,
+            engineName = TEST_ENGINE_NAME,
+            lines =
+                listOf(
+                    line("体彩", left = 0.125f, top = 0.116f, width = 0.12f, height = 0.07f),
+                    line("超级大乐透", left = 0.245f, top = 0.080f, width = 0.48f, height = 0.13f),
+                    line("第26999期", left = 0.093f, top = 0.2015f, width = 0.165f, height = 0.0405f),
+                    line("单式票", left = 0.096f, top = 0.3111f, width = 0.10f, height = 0.041f),
+                    line("10期1倍", left = 0.347f, top = 0.3119f, width = 0.114f, height = 0.042f),
+                    line("合计100元", left = 0.609f, top = 0.3144f, width = 0.132f, height = 0.044f),
+                    line("① 01 07 14 22 35 + 03 11", left = 0.103f, top = 0.3498f, width = 0.639f, height = 0.0398f),
+                    line("② 02 08 15 23 34 + 04 10", left = 0.102f, top = 0.3809f, width = 0.640f, height = 0.0285f),
+                    line("③ 03 09 16 24 33 + 05 09", left = 0.102f, top = 0.4220f, width = 0.640f, height = 0.0281f),
+                    line(repeatedThirdRow, left = 0.105f, top = 0.4441f, width = 0.636f, height = 0.0276f),
+                    line("④ 04 10 17 25 32 + 06 08", left = 0.105f, top = 0.4732f, width = 0.636f, height = 0.0276f),
+                    line("⑤ 05 11 18 26 31 + 07 12", left = 0.110f, top = 0.5050f, width = 0.632f, height = 0.0300f),
+                ),
+        )
+
+    /** 与 [document] 相同但使用接近真实整行投注的宽度，保留缺少加号时依赖的横向间隔证据。 */
+    private fun fullWidthDocument(vararg texts: String): OcrDocument =
+        OcrDocument(
+            imageId = TEST_IMAGE_ID,
+            engineName = TEST_ENGINE_NAME,
+            lines =
+                texts.mapIndexed { index, text ->
+                    line(text, left = 0.10f, top = 0.05f + index * 0.07f, width = 0.64f)
+                },
+        )
+
     /** 用固定纵向间隔生成一份不含真实流水号和二维码内容的 OCR 文档。 */
     private fun document(vararg texts: String): OcrDocument =
         OcrDocument(

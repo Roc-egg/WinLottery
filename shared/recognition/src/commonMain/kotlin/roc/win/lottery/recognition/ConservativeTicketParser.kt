@@ -134,6 +134,16 @@ class ConservativeTicketParser : TicketParser {
             }
         val multiplier = multiplierExtraction.value
         val periodCount = explicitPeriodCount ?: recoveredSummary?.periodCount ?: V1_PERIOD_COUNT
+        val amountReconciliation =
+            reconcileRepeatedRowWithAmount(
+                rows = parsedBets,
+                lotteryType = lotteryType,
+                isAdditional = isAdditional,
+                multiplier = explicitMultiplierExtraction.value,
+                periodCount = explicitPeriodCount,
+                paidAmountFen = paidAmountFen,
+            )
+        val betRows = amountReconciliation?.rows ?: parsedBets
         val periodCountRegion =
             explicitPeriodCountRegion
                 ?: recoveredSummary?.let { recovered ->
@@ -147,8 +157,8 @@ class ConservativeTicketParser : TicketParser {
             if (multiplier != null && isAdditional != null) {
                 TicketAmountCalculator.calculate(
                     lotteryType = lotteryType,
-                    betLineCount = parsedBets.size,
-                    additionalLineCount = if (isAdditional) parsedBets.size else 0,
+                    betLineCount = betRows.size,
+                    additionalLineCount = if (isAdditional) betRows.size else 0,
                     multiplier = multiplier,
                     periodCount = periodCount,
                 )
@@ -160,7 +170,7 @@ class ConservativeTicketParser : TicketParser {
                 lotteryType = lotteryType,
                 issue = issue,
                 betLines =
-                    parsedBets.map { parsed ->
+                    betRows.map { parsed ->
                         BetLineDraft(
                             primaryNumbers = parsed.primaryNumbers,
                             secondaryNumbers = parsed.secondaryNumbers,
@@ -176,7 +186,7 @@ class ConservativeTicketParser : TicketParser {
             buildList {
                 add(lotteryTypeDetection.fieldRegion)
                 candidateFieldRegions.firstOrNull { it.field == TicketFieldReference.Issue }?.let(::add)
-                parsedBets.forEachIndexed { index, parsed ->
+                betRows.forEachIndexed { index, parsed ->
                     add(
                         TicketFieldRegion(
                             field = TicketFieldReference.BetLine(index),
@@ -211,6 +221,7 @@ class ConservativeTicketParser : TicketParser {
         val correctionMessages =
             buildList {
                 betRowsCorrectionMessage?.let(::add)
+                amountReconciliation?.message?.let(::add)
                 if (issue.isEmpty()) {
                     add("期号缺失或格式错误，请在票面校正页补充")
                 }
@@ -481,38 +492,204 @@ class ConservativeTicketParser : TicketParser {
                     rawConfidence = row.rawConfidence,
                 )
         }
-        return when {
-            parsedRows.isEmpty() && invalidCandidateFound -> {
-                BetRowsResult.Failed("投注号码存在越界、重复或顺序异常，请人工核对")
-            }
-
-            parsedRows.isEmpty() && malformedCandidateFound -> {
-                BetRowsResult.Failed("至少一行投注号码不完整，请重新拍摄或人工核对")
-            }
-
-            parsedRows.isEmpty() -> {
-                BetRowsResult.Failed("未识别到完整的单式投注号码")
-            }
-
-            invalidCandidateFound -> {
-                BetRowsResult.Success(
-                    rows = parsedRows.toList(),
-                    correctionMessage = "部分投注号码存在越界、重复或顺序异常，已保留其余完整行，请人工核对",
-                )
-            }
-
-            malformedCandidateFound -> {
-                BetRowsResult.Success(
-                    rows = parsedRows.toList(),
-                    correctionMessage = "至少一行投注号码不完整，已保留其余完整行，请重新拍摄或人工补充",
-                )
-            }
-
-            else -> {
-                BetRowsResult.Success(parsedRows.toList(), correctionMessage = null)
+        if (parsedRows.isEmpty()) {
+            return when {
+                invalidCandidateFound -> BetRowsResult.Failed("投注号码存在越界、重复或顺序异常，请人工核对")
+                malformedCandidateFound -> BetRowsResult.Failed("至少一行投注号码不完整，请重新拍摄或人工核对")
+                else -> BetRowsResult.Failed("未识别到完整的单式投注号码")
             }
         }
+        val merged = mergeRepeatedMarkerRows(parsedRows)
+        val correctionMessages =
+            buildList {
+                when {
+                    invalidCandidateFound -> add("部分投注号码存在越界、重复或顺序异常，已保留其余完整行，请人工核对")
+                    malformedCandidateFound -> add("至少一行投注号码不完整，已保留其余完整行，请重新拍摄或人工补充")
+                }
+                if (merged.conflictedRowNumbers.isNotEmpty()) {
+                    add(
+                        "第 ${merged.conflictedRowNumbers.joinToString("、")} 注被重复识别且号码不一致，" +
+                            "已合并为一注，请对照原图核对",
+                    )
+                }
+            }
+        return BetRowsResult.Success(
+            rows = merged.rows,
+            correctionMessage = correctionMessages.joinToString(separator = "；").ifEmpty { null },
+        )
     }
+
+    /**
+     * 合并紧邻两行带有同一圆圈注序号、号码至多相差一个的重复识别。
+     *
+     * 票面每个圆圈注序号只打印一次；倾斜票面上相邻两个整行裁图可能各自读到同一物理行。
+     * 号码一致时直接合并；不一致时保留置信度更高的一行（相同时保留上方一行），
+     * 原文同时列出两种读法，并返回该注序号要求人工核对，不会悄悄采用其中一种。
+     */
+    private fun mergeRepeatedMarkerRows(rows: List<ParsedBetRow>): RepeatedMarkerMerge {
+        val merged = mutableListOf<ParsedBetRow>()
+        val conflictedRowNumbers = mutableListOf<Int>()
+        rows.forEach { row ->
+            val previous = merged.lastOrNull()
+            if (previous == null || !row.isRepeatedReadingOf(previous)) {
+                merged += row
+                return@forEach
+            }
+            val hasSameNumbers =
+                row.primaryNumbers == previous.primaryNumbers &&
+                    row.secondaryNumbers == previous.secondaryNumbers &&
+                    row.rowMultiplier == previous.rowMultiplier
+            val kept = if ((row.rawConfidence ?: 0f) > (previous.rawConfidence ?: 0f)) row else previous
+            merged[merged.lastIndex] =
+                kept.copy(
+                    originalText =
+                        if (hasSameNumbers) {
+                            kept.originalText
+                        } else {
+                            "${previous.originalText}$REPEATED_READING_SEPARATOR${row.originalText}"
+                        },
+                    bounds = checkNotNull(listOf(previous.bounds, row.bounds).coveringBoundsOrNull()),
+                )
+            if (!hasSameNumbers) conflictedRowNumbers += merged.size
+        }
+        return RepeatedMarkerMerge(dropMisreadMarkerRepeats(merged), conflictedRowNumbers)
+    }
+
+    /**
+     * 删除注序号误识别为另一注序号的重复读法。
+     *
+     * 紧邻两行号码完全相同、注序号不同，且其中一行的注序号同时出现在其他行时，
+     * 说明该行是同一物理行被重复读出后又误读了序号；只删除注序号重复的一行。
+     * 两行注序号都唯一时属于票面真实重复投注，保持不变。
+     */
+    private fun dropMisreadMarkerRepeats(rows: List<ParsedBetRow>): List<ParsedBetRow> {
+        val markerCounts =
+            rows
+                .mapNotNull { row -> row.originalText.circledLineMarkers().singleOrNull() }
+                .groupingBy { marker -> marker }
+                .eachCount()
+                .toMutableMap()
+        val result = mutableListOf<ParsedBetRow>()
+        rows.forEach { row ->
+            val previous = result.lastOrNull()
+            val rowMarker = row.originalText.circledLineMarkers().singleOrNull()
+            val previousMarker = previous?.originalText?.circledLineMarkers()?.singleOrNull()
+            val isExactRepeat =
+                previous != null &&
+                    rowMarker != null &&
+                    previousMarker != null &&
+                    rowMarker != previousMarker &&
+                    row.primaryNumbers == previous.primaryNumbers &&
+                    row.secondaryNumbers == previous.secondaryNumbers &&
+                    row.rowMultiplier == previous.rowMultiplier
+            when {
+                !isExactRepeat -> {
+                    result += row
+                }
+
+                (markerCounts[previousMarker] ?: 0) > 1 && (markerCounts[rowMarker] ?: 0) == 1 -> {
+                    markerCounts[previousMarker] = (markerCounts[previousMarker] ?: 0) - 1
+                    result[result.lastIndex] =
+                        row.copy(bounds = checkNotNull(listOf(previous.bounds, row.bounds).coveringBoundsOrNull()))
+                }
+
+                (markerCounts[rowMarker] ?: 0) > 1 && (markerCounts[previousMarker] ?: 0) == 1 -> {
+                    markerCounts[rowMarker] = (markerCounts[rowMarker] ?: 0) - 1
+                    result[result.lastIndex] =
+                        previous.copy(bounds = checkNotNull(listOf(previous.bounds, row.bounds).coveringBoundsOrNull()))
+                }
+
+                else -> {
+                    result += row
+                }
+            }
+        }
+        return result
+    }
+
+    /** 判断当前行是否与紧邻上一行带有同一圆圈注序号、且号码至多相差一个。 */
+    private fun ParsedBetRow.isRepeatedReadingOf(previous: ParsedBetRow): Boolean {
+        val marker = originalText.circledLineMarkers().singleOrNull() ?: return false
+        if (previous.originalText.circledLineMarkers().singleOrNull() != marker) return false
+        return differentNumberCount(previous) <= MAXIMUM_REPEATED_READING_DIFFERENT_NUMBERS
+    }
+
+    /** 返回两行之间不同的号码数量，双色球行尾倍数不同也计为一个。 */
+    private fun ParsedBetRow.differentNumberCount(other: ParsedBetRow): Int {
+        val hasDifferentRowMultiplier =
+            rowMultiplier != null && other.rowMultiplier != null && rowMultiplier != other.rowMultiplier
+        return primaryNumbers.count { number -> number !in other.primaryNumbers } +
+            secondaryNumbers.count { number -> number !in other.secondaryNumbers } +
+            if (hasDifferentRowMultiplier) 1 else 0
+    }
+
+    /**
+     * 票面金额证明恰好多出一注时，合并唯一一对疑似重复识别的相邻投注行。
+     *
+     * 只在期数、倍数、追加属性和合计金额均为票面明确值时启用：当前注数与金额不符、减少一注后恰好相符，
+     * 且全票只有一对相邻行号码至多相差一个、并且两行没有互不相同的注序号时，才合并为一注；
+     * 结果总是要求人工核对。存在多对候选或任一条件不满足时保持原样，交由金额不一致提示处理。
+     */
+    private fun reconcileRepeatedRowWithAmount(
+        rows: List<ParsedBetRow>,
+        lotteryType: LotteryType,
+        isAdditional: Boolean?,
+        multiplier: Int?,
+        periodCount: Int?,
+        paidAmountFen: Long?,
+    ): AmountReconciliation? {
+        if (isAdditional == null || multiplier == null || periodCount == null || paidAmountFen == null) return null
+        if (rows.size < 2) return null
+        val amountFor = { count: Int ->
+            TicketAmountCalculator.calculate(
+                lotteryType = lotteryType,
+                betLineCount = count,
+                additionalLineCount = if (isAdditional) count else 0,
+                multiplier = multiplier,
+                periodCount = periodCount,
+            )
+        }
+        if (amountFor(rows.size) == paidAmountFen || amountFor(rows.size - 1) != paidAmountFen) return null
+        val repeatedIndex =
+            (1 until rows.size)
+                .filter { index -> rows[index].isAmountProvenRepeatCandidateOf(rows[index - 1]) }
+                .singleOrNull()
+                ?: return null
+        val upper = rows[repeatedIndex - 1]
+        val lower = rows[repeatedIndex]
+        val upperHasMarker = upper.originalText.circledLineMarkers().isNotEmpty()
+        val lowerHasMarker = lower.originalText.circledLineMarkers().isNotEmpty()
+        val kept =
+            when {
+                lowerHasMarker && !upperHasMarker -> lower
+                upperHasMarker && !lowerHasMarker -> upper
+                (lower.rawConfidence ?: 0f) > (upper.rawConfidence ?: 0f) -> lower
+                else -> upper
+            }
+        val merged =
+            kept.copy(
+                originalText = "${upper.originalText}$REPEATED_READING_SEPARATOR${lower.originalText}",
+                bounds = checkNotNull(listOf(upper.bounds, lower.bounds).coveringBoundsOrNull()),
+            )
+        return AmountReconciliation(
+            rows = rows.take(repeatedIndex - 1) + merged + rows.drop(repeatedIndex + 1),
+            message = "第 $repeatedIndex 注疑似被重复识别，已按票面金额合并为一注，请对照原图核对",
+        )
+    }
+
+    /** 判断两行能否作为金额佐证下的重复识别候选：号码至多相差一个，且没有互不相同的注序号。 */
+    private fun ParsedBetRow.isAmountProvenRepeatCandidateOf(previous: ParsedBetRow): Boolean {
+        val marker = originalText.circledLineMarkers().singleOrNull()
+        val previousMarker = previous.originalText.circledLineMarkers().singleOrNull()
+        if (marker != null && previousMarker != null && marker != previousMarker) return false
+        return differentNumberCount(previous) <= MAXIMUM_REPEATED_READING_DIFFERENT_NUMBERS
+    }
+
+    /** 返回文字中出现的全部圆圈注序号。 */
+    private fun String.circledLineMarkers(): List<Char> =
+        filter { character ->
+            character in CIRCLED_LINE_MARKERS
+        }.toList()
 
     /**
      * 提取一行投注号码；加号缺失时只接受数量、范围、顺序和横向大间隔同时吻合的结构。
@@ -1058,6 +1235,28 @@ class ConservativeTicketParser : TicketParser {
         val evidenceRows: List<VisualRow>,
     )
 
+    /**
+     * 合并重复识别后的投注行。
+     *
+     * @property rows 按票面顺序保留的投注行。
+     * @property conflictedRowNumbers 两种读法号码不一致、需要人工核对的注序号，从 1 开始。
+     */
+    private data class RepeatedMarkerMerge(
+        val rows: List<ParsedBetRow>,
+        val conflictedRowNumbers: List<Int>,
+    )
+
+    /**
+     * 票面金额佐证下合并一对重复识别后的投注行。
+     *
+     * @property rows 合并后按票面顺序保留的投注行。
+     * @property message 要求人工核对合并结果的说明。
+     */
+    private data class AmountReconciliation(
+        val rows: List<ParsedBetRow>,
+        val message: String,
+    )
+
     /** 投注号码行解析结果。 */
     private sealed interface BetRowsResult {
         /**
@@ -1223,6 +1422,15 @@ class ConservativeTicketParser : TicketParser {
 
     /** 解析器使用的稳定锚点、正则表达式和金额常量。 */
     private companion object {
+        /** 票面每注前打印、全票唯一的圆圈注序号。 */
+        const val CIRCLED_LINE_MARKERS = "①②③④⑤⑥⑦⑧⑨⑩"
+
+        /** 同一注两种读法之间允许不同的号码数量上限；超过时视为不同投注行。 */
+        const val MAXIMUM_REPEATED_READING_DIFFERENT_NUMBERS = 1
+
+        /** 合并后在 OCR 原文中并列两种读法的分隔符。 */
+        const val REPEATED_READING_SEPARATOR = " ／ "
+
         /** 大乐透标题关键词。 */
         const val SUPER_LOTTO_KEYWORD = "大乐透"
 
