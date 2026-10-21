@@ -14,6 +14,10 @@ import kotlin.test.assertTrue
 private const val WORKER_FIXTURE_MAIN_CLASS =
     "roc.win.lottery.recognition.DesktopOnnxRuntimeWorkerTestKt"
 
+/** 先向标准错误输出运行时警告的工作进程入口类名。 */
+private const val NOISY_WORKER_FIXTURE_MAIN_CLASS =
+    "roc.win.lottery.recognition.NoisyOnnxRuntimeWorkerFixtureKt"
+
 /** 供测试子进程调用的 ONNX Runtime 工作进程入口。 */
 fun main(arguments: Array<String>) {
     if (!DesktopOnnxRuntimeWorker.isRequested(arguments)) {
@@ -28,6 +32,15 @@ class DesktopOnnxRuntimeWorkerTest {
     @Test
     fun clientLoadsRuntimeInTelemetryDisabledChildProcess() {
         val runtime = DesktopOnnxRuntimeWorkerClient(workerFixtureCommand()).inspect()
+
+        assertEquals("1.29.0", runtime.version)
+        assertTrue("CPU" in runtime.providerNames)
+    }
+
+    /** ONNX Runtime 写到标准错误的警告不得影响协议解析，标准输出仍须是唯一成功响应。 */
+    @Test
+    fun clientIgnoresRuntimeLogsOnStandardError() {
+        val runtime = DesktopOnnxRuntimeWorkerClient(workerFixtureCommand(NOISY_WORKER_FIXTURE_MAIN_CLASS)).inspect()
 
         assertEquals("1.29.0", runtime.version)
         assertTrue("CPU" in runtime.providerNames)
@@ -61,7 +74,7 @@ class DesktopOnnxRuntimeWorkerTest {
     }
 
     /** 构造只包含测试入口、业务类、ONNX Runtime 和 Kotlin 运行库的子进程命令。 */
-    private fun workerFixtureCommand(): List<String> {
+    private fun workerFixtureCommand(mainClass: String = WORKER_FIXTURE_MAIN_CLASS): List<String> {
         val classPath =
             listOf(
                 DesktopOnnxRuntimeWorkerTest::class.java,
@@ -76,7 +89,7 @@ class DesktopOnnxRuntimeWorkerTest {
                     ).toString()
             }.distinct()
                 .joinToString(File.pathSeparator)
-        return listOf(javaExecutable(), "-cp", classPath, WORKER_FIXTURE_MAIN_CLASS)
+        return listOf(javaExecutable(), "-cp", classPath, mainClass)
     }
 
     /** 返回当前测试 JDK 的跨平台 Java 可执行文件。 */

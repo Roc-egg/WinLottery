@@ -96,12 +96,15 @@ class DesktopOnnxRuntimeWorkerClient(
     /**
      * 启动只在本机运行的子进程，并在其首次加载 ONNX Runtime 前禁用遥测。
      *
+     * 只按标准输出解析协议：ONNX Runtime 会把运行时日志写到标准错误（例如 Linux 云主机上的设备发现警告），
+     * 这些日志直接丢弃，标准输出仍必须是唯一的成功响应。
+     *
      * @return 子进程验证过的运行时版本和执行提供器。
      */
     fun inspect(): DesktopOnnxRuntimeInfo {
         val processBuilder =
             ProcessBuilder(applicationCommand + DesktopOnnxRuntimeWorker.requestArgument())
-                .redirectErrorStream(true)
+                .redirectError(ProcessBuilder.Redirect.DISCARD)
         processBuilder.environment()[DesktopOnnxRuntimePolicy.TELEMETRY_DISABLED_VARIABLE] =
             DesktopOnnxRuntimePolicy.TELEMETRY_DISABLED_VALUE
 
