@@ -31,7 +31,11 @@ jobs:
   metadata:
     name: 校验发布标签与版本
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    # 正式发布需要等待同一提交的「提交检查」完成，超时预算包含该等待时间。
+    timeout-minutes: 55
+    permissions:
+      contents: read
+      actions: read
     outputs:
       tag: ${{ steps.release.outputs.tag }}
       version: ${{ steps.release.outputs.version }}
@@ -133,6 +137,41 @@ jobs:
             echo "- 版本：\`$android_version ($android_build)\`"
             echo "- 提交：\`$head_commit\`"
           } >> "$GITHUB_STEP_SUMMARY"
+
+      # 发布任务只打包不跑测试，正式发布前要求同一提交已经通过「提交检查」。
+      - name: 确认提交检查已通过
+        if: steps.release.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          COMMIT: ${{ steps.release.outputs.commit }}
+        run: |
+          set -euo pipefail
+
+          # 标签通常紧随主分支推送创建，提交检查可能尚未开始或仍在运行，每 30 秒查询一次，最多等待 45 分钟。
+          for attempt in $(seq 1 90); do
+            runs="$(gh api "repos/$GH_REPO/actions/workflows/check.yml/runs?head_sha=$COMMIT&per_page=20" \
+              --jq '.workflow_runs | map(.status + ":" + (.conclusion // "none")) | join(" ")')"
+            if [[ " $runs " == *" completed:success "* ]]; then
+              echo "提交 ${COMMIT} 的提交检查已通过"
+              exit 0
+            fi
+            pending=false
+            for run in $runs; do
+              [[ "$run" == completed:* ]] || pending=true
+            done
+            # 推送后检查可能还没有登记，前 10 分钟内没有记录时继续等待。
+            if [[ -z "$runs" && "$attempt" -le 20 ]]; then
+              pending=true
+            fi
+            if [[ "$pending" != "true" ]]; then
+              echo "::error title=提交检查未通过::提交 ${COMMIT} 没有成功的「提交检查」运行（${runs}）"
+              exit 1
+            fi
+            sleep 30
+          done
+          echo "::error title=提交检查超时::等待提交 ${COMMIT} 的「提交检查」超过 45 分钟"
+          exit 1
 
   verify:
     name: 构建 iOS 与 macOS 安装包
