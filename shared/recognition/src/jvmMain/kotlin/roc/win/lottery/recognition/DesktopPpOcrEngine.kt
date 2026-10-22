@@ -14,24 +14,19 @@ import java.security.MessageDigest
 import javax.imageio.ImageIO
 import kotlin.math.roundToInt
 
-/** 在已禁用遥测的桌面 OCR 工作进程中复用移动端 PP-OCRv5 流水线。 */
+/** 在已禁用遥测的桌面 OCR 工作进程中复用移动端 PP-OCR 流水线。 */
 internal class DesktopPpOcrEngine : ProgressiveTicketRecognizer {
     /** 延迟校验模型资源并创建共享识别实现。 */
     private val delegate: PpOcrTicketRecognizer by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         val resources = DesktopPpOcrResources()
         PpOcrTicketRecognizer(
             imageDecoder = DesktopPpOcrRgbImageDecoder(),
-            runtime = DesktopPpOcrOnnxRuntime(resources),
+            runtime = DesktopPpOcrOnnxRuntime(resources::readModel),
             characters = parsePpOcrCharacters(resources.readText(PP_OCR_DICTIONARY_FILE_NAME)),
-            latinCharacters =
-                parsePpOcrCharacters(
-                    resources.readText(PP_OCR_LATIN_DICTIONARY_FILE_NAME),
-                    PP_OCR_LATIN_CHARACTER_COUNT,
-                ),
         )
     }
 
-    /** 执行与 Android/iOS 相同的四模型识别，并转发共享阶段进度。 */
+    /** 执行与 Android/iOS 相同的检测、方向分类与识别，并转发共享阶段进度。 */
     override suspend fun recognize(
         imageRef: ImageRef,
         onProgress: (RecognitionProgress) -> Unit,
@@ -115,9 +110,11 @@ internal class DesktopPpOcrRgbImageDecoder : PpOcrRgbImageDecoder {
 }
 
 /** 使用 ONNX Runtime Java API 执行并复用桌面工作进程内的模型 Session。 */
-private class DesktopPpOcrOnnxRuntime(
-    /** 提供经过长度与哈希校验的类路径模型。 */
-    private val resources: DesktopPpOcrResources,
+internal class DesktopPpOcrOnnxRuntime(
+    /** 返回指定模型的 ONNX 字节；生产环境读取经过长度与哈希校验的类路径模型。 */
+    private val modelBytes: (PpOcrModel) -> ByteArray,
+    /** 在默认 CPU 参数之后追加的会话配置，用于评估执行提供器等选项。 */
+    private val configureSession: (OrtSession.SessionOptions) -> Unit = {},
 ) : PpOcrOnnxRuntime {
     /** 进程级 ONNX Runtime 环境。 */
     private val environment: OrtEnvironment
@@ -217,7 +214,8 @@ private class DesktopPpOcrOnnxRuntime(
                 options.setIntraOpNumThreads(INTRA_OP_THREAD_COUNT)
                 options.setMemoryPatternOptimization(false)
                 options.setCPUArenaAllocator(true)
-                environment.createSession(resources.readModel(model), options)
+                configureSession(options)
+                environment.createSession(modelBytes(model), options)
             }
         }
 
@@ -234,8 +232,8 @@ private class DesktopPpOcrOnnxRuntime(
     }
 }
 
-/** 从类路径读取并校验 Android、iOS 和 Desktop 共用的 PP-OCRv5 资源。 */
-private class DesktopPpOcrResources {
+/** 从类路径读取并校验 Android、iOS 和 Desktop 共用的 OCR 模型资源。 */
+internal class DesktopPpOcrResources {
     /** 读取并校验 UTF-8 字符字典。 */
     fun readText(fileName: String): String {
         val expected = requireNotNull(PP_OCR_DICTIONARY_RESOURCE_LOCKS[fileName]) { "缺少字符字典文件锁" }
@@ -256,10 +254,10 @@ private class DesktopPpOcrResources {
         val resourcePath = "$PP_OCR_RESOURCE_ROOT/$fileName"
         val bytes =
             checkNotNull(javaClass.classLoader?.getResourceAsStream(resourcePath)) {
-                "PP-OCRv5 资源缺失"
+                "OCR 模型资源缺失"
             }.use { input -> input.readBytes() }
         check(bytes.size.toLong() == expected.byteCount && bytes.sha256() == expected.sha256) {
-            "PP-OCRv5 资源校验失败"
+            "OCR 模型资源校验失败"
         }
         return bytes
     }

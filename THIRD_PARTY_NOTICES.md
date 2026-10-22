@@ -1,20 +1,25 @@
 # 第三方组件声明
 
-## PaddleOCR PP-OCRv5 模型与字典
+## PaddleOCR 模型与字典
 
-- 组件：`PP-OCRv5_mobile_det`、`PP-LCNet_x0_25_textline_ori`、`PP-OCRv5_mobile_rec`、`ppocrv5_dict.txt`
-- 上游版本：PaddleOCR `v3.7.0`
+| 应用内文件 | 上游组件 | 官方来源（固定修订） |
+|---|---|---|
+| `detection.onnx` | `PP-OCRv6_small_det` | Hugging Face `PaddlePaddle/PP-OCRv6_small_det_onnx` @ `28fe5895c24fd108c19eb3e8479f4ab385fbfc62` |
+| `orientation.onnx` | `PP-LCNet_x0_25_textline_ori` | Hugging Face `PaddlePaddle/PP-LCNet_x0_25_textline_ori_onnx` @ `aea1f18d97338aaf84b463f90192f2820524a00a` |
+| `recognition.onnx` | `PP-OCRv6_small_rec` | Hugging Face `PaddlePaddle/PP-OCRv6_small_rec_onnx` @ `b8f84f0b80c529de40b4fbb3544b84fa7233a513` |
+| `characters.txt` | `ppocr/utils/dict/ppocrv6_dict.txt` | GitHub `PaddlePaddle/PaddleOCR` @ `b03f46425e8ff4442b268ce449e3eef758146cd4` |
+
 - 许可证：Apache License 2.0
-- 上游地址：https://github.com/PaddlePaddle/PaddleOCR/tree/v3.7.0
+- 上游地址：https://github.com/PaddlePaddle/PaddleOCR 、https://huggingface.co/PaddlePaddle
 - 许可证正文：[licenses/PaddleOCR-Apache-2.0.txt](licenses/PaddleOCR-Apache-2.0.txt)
 
-仓库使用 Paddle2ONNX `v2.1.0` 将官方 Paddle 推理模型转换为 opset 17 ONNX。转换脚本、依赖版本、源文件哈希和输出哈希由 `shared/recognition/src/jvmMain/resources/roc/win/lottery/recognition/models/ppocrv5/model-lock.json` 锁定。模型未经过训练或字符表裁剪，仅转换了存储格式。
+三个模型均为官方发布的 ONNX，字典与识别模型内嵌字符表逐项一致；仓库按原样分发，未经过训练、转换、量化或字符表裁剪。下载地址、字节数和 SHA-256 由 `tools/ocr-models/fetch_models.py` 与 `PpOcrResourceLocks.kt` 共同锁定，CI 校验已提交文件。
 
 ## Microsoft ONNX Runtime
 
-- Android：`com.microsoft.onnxruntime:onnxruntime-android:1.24.2`
+- Android：`com.microsoft.onnxruntime:onnxruntime-android:1.29.0`
 - iOS：`onnxruntime-swift-package-manager:1.24.2`
-- Desktop 工程底座：`com.microsoft.onnxruntime:onnxruntime:1.29.0`
+- Desktop：`com.microsoft.onnxruntime:onnxruntime:1.29.0`
 - 许可证：MIT
 - 上游地址：https://github.com/microsoft/onnxruntime
 - 许可证正文：[licenses/ONNX-Runtime-MIT.txt](licenses/ONNX-Runtime-MIT.txt)

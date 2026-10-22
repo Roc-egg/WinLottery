@@ -8,7 +8,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-/** PP-OCRv5 共享预处理、后处理与完整流水线测试。 */
+/** PP-OCR 共享预处理、后处理与完整流水线测试。 */
 class PpOcrCoreTest {
     /** RGB 像素必须按 BGR 平面顺序写入 NCHW 张量。 */
     @Test
@@ -112,14 +112,16 @@ class PpOcrCoreTest {
         assertTrue(crop.channelAt(x = 0, y = 3, channel = 2) > crop.channelAt(x = 0, y = 3, channel = 0))
     }
 
-    /** 检测尺寸必须限制最长边为 960，并按 32 像素对齐。 */
+    /** 检测尺寸默认限制最长边为 1280，可按参数调整，并按 32 像素对齐；小图默认不放大。 */
     @Test
     fun detectionInputUsesLongEdgeLimitAndAlignment() {
         val large = RgbImage(width = 2_048, height = 1_024, pixels = ByteArray(2_048 * 1_024 * 3))
         val small = RgbImage(width = 100, height = 50, pixels = ByteArray(100 * 50 * 3))
 
-        assertEquals(960 to 480, detectionInputSize(large))
+        assertEquals(1_280 to 640, detectionInputSize(large))
+        assertEquals(960 to 480, detectionInputSize(large, longEdge = 960))
         assertEquals(96 to 64, detectionInputSize(small))
+        assertEquals(1_280 to 640, detectionInputSize(small, upscale = true))
     }
 
     /** DB 概率图中的连通文字区域必须映射为横向旋转框。 */
@@ -242,7 +244,7 @@ class PpOcrCoreTest {
 
         assertEquals(PP_OCR_CHARACTER_COUNT, characters.size)
         assertEquals("字0", characters.first())
-        assertEquals("字18382", characters.last())
+        assertEquals("字${PP_OCR_CHARACTER_COUNT - 1}", characters.last())
     }
 
     /** 合成张量必须贯通检测、方向分类、识别和共享 OCR 文档输出。 */
@@ -252,7 +254,6 @@ class PpOcrCoreTest {
             val calls = mutableListOf<PpOcrModel>()
             val progressUpdates = mutableListOf<RecognitionProgress>()
             val characters = List(PP_OCR_CHARACTER_COUNT) { index -> if (index == 0) "彩" else "字$index" }
-            val latinCharacters = List(PP_OCR_LATIN_CHARACTER_COUNT) { index -> "L$index" }
             val recognizer =
                 PpOcrTicketRecognizer(
                     imageDecoder =
@@ -281,14 +282,9 @@ class PpOcrCoreTest {
                                         scores = floatArrayOf(0.95f, 0.9f, 1f),
                                     )
                                 }
-
-                                PpOcrModel.LATIN_RECOGNITION -> {
-                                    error("普通文字框不应启用英文兜底")
-                                }
                             }
                         },
                     characters = characters,
-                    latinCharacters = latinCharacters,
                 )
 
             val result =
@@ -306,7 +302,7 @@ class PpOcrCoreTest {
 
             val success = assertIs<RecognitionResult.Success>(result)
             assertEquals(listOf(PpOcrModel.DETECTION, PpOcrModel.ORIENTATION, PpOcrModel.RECOGNITION), calls)
-            assertEquals("PP-OCRv5 mobile + ONNX Runtime", success.document.engineName)
+            assertEquals(PpOcrPipelineConfig().engineName, success.document.engineName)
             assertEquals(
                 "彩",
                 success.document.lines

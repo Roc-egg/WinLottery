@@ -48,6 +48,8 @@ internal data class OcrAcceptanceSampleReport(
     val totalMicroseconds: Long,
     /** OCR 阶段微秒数；未进入 OCR 时为零。 */
     val recognitionMicroseconds: Long,
+    /** OCR 阶段各模型的推理次数与耗时；未进入 OCR 时为空。 */
+    val inferenceStats: PpOcrInferenceStats? = null,
 ) {
     /** 输出不包含图片标识、OCR 内容、字段值或坐标的单样本报告。 */
     fun toAnonymousLine(
@@ -67,8 +69,28 @@ internal data class OcrAcceptanceSampleReport(
             "digit_characters=$digitCharacterCount",
             "total_ms=${totalMicroseconds.toMillisecondsText()}",
             "ocr_ms=${recognitionMicroseconds.toMillisecondsText()}",
-        ).joinToString(separator = " ")
+        ).plus(inferenceStats.toLogFields()).joinToString(separator = " ")
 }
+
+/** 各模型推理次数与耗时的日志字段；未进入 OCR 时为空。 */
+private fun PpOcrInferenceStats?.toLogFields(): List<String> {
+    val stats = this ?: return emptyList()
+    return PpOcrModel.entries.flatMap { model ->
+        val name = model.diagnosticName()
+        listOf(
+            "${name}_runs=${stats.count(model)}",
+            "${name}_ms=${stats.microseconds(model).toMillisecondsText()}",
+        )
+    }
+}
+
+/** 返回模型在诊断日志中的简短名称。 */
+private fun PpOcrModel.diagnosticName(): String =
+    when (this) {
+        PpOcrModel.DETECTION -> "det"
+        PpOcrModel.ORIENTATION -> "ori"
+        PpOcrModel.RECOGNITION -> "rec"
+    }
 
 /** 一批真实票图的匿名 OCR 验收汇总。 */
 internal data class OcrAcceptanceSummary(
@@ -134,7 +156,7 @@ internal suspend fun analyzeOcrAcceptanceSample(
     }
 
     val recognitionStart = TimeSource.Monotonic.markNow()
-    val recognition = ticketRecognizer.recognize(imageRef)
+    val (recognition, inferenceStats) = PpOcrInferenceDiagnostics.collect { ticketRecognizer.recognize(imageRef) }
     val recognitionMicroseconds = recognitionStart.elapsedNow().inWholeMicroseconds
     if (recognition !is RecognitionResult.Success) {
         return OcrAcceptanceSampleReport(
@@ -153,6 +175,7 @@ internal suspend fun analyzeOcrAcceptanceSample(
             digitCharacterCount = 0,
             totalMicroseconds = totalStart.elapsedNow().inWholeMicroseconds,
             recognitionMicroseconds = recognitionMicroseconds,
+            inferenceStats = inferenceStats,
         )
     }
 
@@ -206,6 +229,7 @@ internal suspend fun analyzeOcrAcceptanceSample(
         digitCharacterCount = recognition.document.lines.sumOf { line -> line.text.count(Char::isDigit) },
         totalMicroseconds = totalStart.elapsedNow().inWholeMicroseconds,
         recognitionMicroseconds = recognitionMicroseconds,
+        inferenceStats = inferenceStats,
     )
 }
 

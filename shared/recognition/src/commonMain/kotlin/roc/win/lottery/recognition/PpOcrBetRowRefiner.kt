@@ -25,11 +25,17 @@ internal object PpOcrBetRowRefiner {
         recognizeMergedRow: (SourceTextBox) -> List<OcrTextLine>,
     ): List<OcrTextLine> = refine(regions, recognizeMergedRow, null)
 
-    /** 中文整行全部失败后再使用英文数字模型重试旧式票面。 */
+    /**
+     * 查找投注行并整行重识别；主识别整行全部失败后，可再用另一个识别模型重试旧式票面。
+     *
+     * @param recognizeLatinMergedRow 主识别失败后重试的第二个识别模型；为 `null` 时不重试。
+     * @param allowCropConsensus 是否允许多个裁图候选一致时直接采用；默认仅在提供第二个识别模型时启用。
+     */
     fun refine(
         regions: List<PpOcrRecognizedRegion>,
         recognizeMergedRow: (SourceTextBox) -> List<OcrTextLine>,
         recognizeLatinMergedRow: ((SourceTextBox) -> List<OcrTextLine>)?,
+        allowCropConsensus: Boolean = recognizeLatinMergedRow != null,
         allowSeverelyDegradedFragments: Boolean = false,
         onRefinementProgress: (completedRows: Int, totalRows: Int) -> Unit = { _, _ -> },
     ): List<OcrTextLine> {
@@ -40,7 +46,6 @@ internal object PpOcrBetRowRefiner {
         val anchoredRows = findAnchoredRows(regions)
         val denseNumericRows = findDenseNumericRows(regions)
         val denseRows = buildDenseRefinementRows(regions, denseNumericRows)
-        val allowCropConsensus = recognizeLatinMergedRow != null
         val sparseRows =
             buildSparseRefinementRows(regions, denseNumericRows, allowSeverelyDegradedFragments)
         val geometricRows = buildGeometricRefinementRows(regions, denseNumericRows)

@@ -31,7 +31,7 @@ private var iosOcrAcceptanceStarted = false
  * 只在 iOS Debug 应用收到显式样本数时启动匿名真实票图验收。
  *
  * @param imageQualityAnalyzer 应用生产装配的质量检查链。
- * @param ticketRecognizer 应用生产装配的 PP-OCRv5 识别器。
+ * @param ticketRecognizer 应用生产装配的 PP-OCR 识别器。
  * @param ticketParser 应用生产装配的共享保守解析器。
  * @param isDebugBinary 当前 Kotlin/Native 二进制是否为 Debug 构建。
  */

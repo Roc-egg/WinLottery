@@ -7,7 +7,7 @@ import kotlinx.coroutines.withContext
 import kotlin.math.ceil
 import kotlin.math.max
 
-/** 使用 PP-OCRv5 mobile 三段模型执行跨平台本地票面识别。 */
+/** 使用 PP-OCR 检测、方向分类与识别模型执行跨平台本地票面识别。 */
 internal class PpOcrTicketRecognizer(
     /** 平台 RGB 图片解码器。 */
     private val imageDecoder: PpOcrRgbImageDecoder,
@@ -15,12 +15,11 @@ internal class PpOcrTicketRecognizer(
     private val runtime: PpOcrOnnxRuntime,
     /** 与识别模型严格同版本的字符字典。 */
     private val characters: List<String>,
-    /** 与英文识别模型严格同版本的拉丁字符字典。 */
-    private val latinCharacters: List<String>,
+    /** 与当前模型版本绑定的字典规模和检测参数。 */
+    private val config: PpOcrPipelineConfig = PpOcrPipelineConfig(),
 ) : ProgressiveTicketRecognizer {
     init {
-        require(characters.size == PP_OCR_CHARACTER_COUNT) { "PP-OCRv5 字符字典不完整" }
-        require(latinCharacters.size == PP_OCR_LATIN_CHARACTER_COUNT) { "PP-OCRv5 英文字符字典不完整" }
+        require(characters.size == config.characterCount) { "PP-OCR 字符字典不完整" }
     }
 
     /** 解码私有图片并依次执行检测、方向分类与 CTC 识别，同时报告阶段进度。 */
@@ -71,23 +70,11 @@ internal class PpOcrTicketRecognizer(
                             regions = regions,
                             recognizeMergedRow = { mergedBox ->
                                 ensureActive()
-                                recognizeMergedTextBoxCandidates(
-                                    image = image,
-                                    box = mergedBox,
-                                    model = PpOcrModel.RECOGNITION,
-                                    modelCharacters = characters,
-                                )
+                                recognizeMergedTextBoxCandidates(image = image, box = mergedBox)
                             },
-                            recognizeLatinMergedRow =
-                                { mergedBox ->
-                                    ensureActive()
-                                    recognizeMergedTextBoxCandidates(
-                                        image = image,
-                                        box = mergedBox,
-                                        model = PpOcrModel.LATIN_RECOGNITION,
-                                        modelCharacters = latinCharacters,
-                                    )
-                                },
+                            // 多语言识别模型已覆盖英文和数字，不再用第二个模型重试同一批裁图。
+                            recognizeLatinMergedRow = null,
+                            allowCropConsensus = true,
                             allowSeverelyDegradedFragments = allowSeverelyDegradedFragments,
                             onRefinementProgress = { completedRows, totalRows ->
                                 val rowFraction =
@@ -116,7 +103,7 @@ internal class PpOcrTicketRecognizer(
                             OcrDocument(
                                 imageId = imageRef.id,
                                 lines = lines,
-                                engineName = ENGINE_NAME,
+                                engineName = config.engineName,
                             ),
                         )
                     }
@@ -125,22 +112,25 @@ internal class PpOcrTicketRecognizer(
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
-                RecognitionResult.Failure("PP-OCRv5 本地识别未能完成，请重新导入图片")
+                RecognitionResult.Failure("本地识别未能完成，请重新导入图片")
             }
         }
 
     /** 缩放整图并执行 DB 文本检测后处理。 */
     private fun detectTextBoxes(image: RgbImage): List<SourceTextBox> {
-        val (inputWidth, inputHeight) = detectionInputSize(image)
+        val detection = config.detection
+        val (inputWidth, inputHeight) = detectionInputSize(image, detection.longEdge, detection.upscaleSmallImages)
         val resized = image.resized(inputWidth, inputHeight)
         val input = resized.toNormalizedBgrNchw(IMAGENET_MEANS, IMAGENET_STANDARD_DEVIATIONS)
         val output =
-            runtime.run(
-                model = PpOcrModel.DETECTION,
-                input = input,
-                inputShape = intArrayOf(1, COLOR_CHANNEL_COUNT, inputHeight, inputWidth),
-            )
-        return PpOcrDetectionPostProcessor.extract(output, image.width, image.height)
+            PpOcrInferenceDiagnostics.measure(PpOcrModel.DETECTION) {
+                runtime.run(
+                    model = PpOcrModel.DETECTION,
+                    input = input,
+                    inputShape = intArrayOf(1, COLOR_CHANNEL_COUNT, inputHeight, inputWidth),
+                )
+            }
+        return PpOcrDetectionPostProcessor.extract(output, image.width, image.height, detection)
     }
 
     /** 裁切单个旋转框，修正 180 度方向并执行文字识别。 */
@@ -151,7 +141,7 @@ internal class PpOcrTicketRecognizer(
         val crop = image.perspectiveCrop(box)
         if (crop.width < MINIMUM_CROP_SIDE || crop.height < MINIMUM_CROP_SIDE) return null
         val oriented = correctOrientation(crop)
-        val decoded = recognizeLine(oriented, PpOcrModel.RECOGNITION, characters) ?: return null
+        val decoded = recognizeLine(oriented) ?: return null
         if (decoded.confidence < MINIMUM_RECOGNITION_CONFIDENCE) return null
         return OcrTextLine(
             text = decoded.text,
@@ -164,8 +154,6 @@ internal class PpOcrTicketRecognizer(
     private fun recognizeMergedTextBoxCandidates(
         image: RgbImage,
         box: SourceTextBox,
-        model: PpOcrModel,
-        modelCharacters: List<String>,
     ): List<OcrTextLine> {
         val crop = image.perspectiveCrop(box)
         if (crop.width < MINIMUM_CROP_SIDE || crop.height < MINIMUM_CROP_SIDE) return emptyList()
@@ -178,7 +166,7 @@ internal class PpOcrTicketRecognizer(
         return variants
             .distinctBy(RgbImage::pixels)
             .mapNotNull { variant ->
-                val decoded = recognizeLine(variant, model, modelCharacters) ?: return@mapNotNull null
+                val decoded = recognizeLine(variant) ?: return@mapNotNull null
                 if (decoded.confidence < MINIMUM_RECOGNITION_CONFIDENCE) return@mapNotNull null
                 OcrTextLine(
                     text = decoded.text,
@@ -193,11 +181,13 @@ internal class PpOcrTicketRecognizer(
         val resized = image.resized(ORIENTATION_WIDTH, ORIENTATION_HEIGHT)
         val input = resized.toNormalizedBgrNchw(IMAGENET_MEANS, IMAGENET_STANDARD_DEVIATIONS)
         val output =
-            runtime.run(
-                model = PpOcrModel.ORIENTATION,
-                input = input,
-                inputShape = intArrayOf(1, COLOR_CHANNEL_COUNT, ORIENTATION_HEIGHT, ORIENTATION_WIDTH),
-            )
+            PpOcrInferenceDiagnostics.measure(PpOcrModel.ORIENTATION) {
+                runtime.run(
+                    model = PpOcrModel.ORIENTATION,
+                    input = input,
+                    inputShape = intArrayOf(1, COLOR_CHANNEL_COUNT, ORIENTATION_HEIGHT, ORIENTATION_WIDTH),
+                )
+            }
         if (output.values.size < ORIENTATION_CLASS_COUNT) return image
         val uprightScore = output.values[0]
         val upsideDownScore = output.values[1]
@@ -209,11 +199,7 @@ internal class PpOcrTicketRecognizer(
     }
 
     /** 按官方最小宽高比生成动态宽度输入并执行 CTC 解码。 */
-    private fun recognizeLine(
-        image: RgbImage,
-        model: PpOcrModel,
-        modelCharacters: List<String>,
-    ): PpOcrCtcDecoder.DecodedText? {
+    private fun recognizeLine(image: RgbImage): PpOcrCtcDecoder.DecodedText? {
         val sourceRatio = image.width.toFloat() / image.height.toFloat()
         val targetRatio = max(MINIMUM_RECOGNITION_RATIO, sourceRatio)
         val targetWidth =
@@ -240,12 +226,14 @@ internal class PpOcrTicketRecognizer(
             }
         }
         val output =
-            runtime.runCtc(
-                model = model,
-                input = input,
-                inputShape = intArrayOf(1, COLOR_CHANNEL_COUNT, RECOGNITION_HEIGHT, targetWidth),
-            )
-        return PpOcrCtcDecoder.decode(output, modelCharacters)
+            PpOcrInferenceDiagnostics.measure(PpOcrModel.RECOGNITION) {
+                runtime.runCtc(
+                    model = PpOcrModel.RECOGNITION,
+                    input = input,
+                    inputShape = intArrayOf(1, COLOR_CHANNEL_COUNT, RECOGNITION_HEIGHT, targetWidth),
+                )
+            }
+        return PpOcrCtcDecoder.decode(output, characters)
     }
 
     /** 判断初次单框结果是否具备旧式 A-E 行标或逐行一倍标记。 */
@@ -260,11 +248,8 @@ internal class PpOcrTicketRecognizer(
                 (hasDoubleColorBallTitle && multiplierMarkerCount > 0)
         }
 
-    /** PP-OCRv5 官方预处理参数与移动端保护限制。 */
+    /** PP-OCR 官方预处理参数与移动端保护限制。 */
     private companion object {
-        /** 引擎版本摘要。 */
-        const val ENGINE_NAME = "PP-OCRv5 mobile + ONNX Runtime"
-
         /** 进入共享识别器后的初始进度。 */
         const val INITIAL_PROGRESS = 0.01f
 

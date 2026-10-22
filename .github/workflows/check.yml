@@ -32,7 +32,7 @@ jobs:
           java-version: "21"
       - name: 配置 Gradle
         uses: gradle/actions/setup-gradle@67621b124fd2e251c5e8a0e6e3b91318f2287669 # v6.3.0
-      - name: 校验 Desktop OCR 模型锁
-        run: python3 tools/desktop-ocr/convert_ppocrv5.py --verify-lock-only
+      - name: 校验 OCR 模型与字典
+        run: python3 tools/ocr-models/fetch_models.py --verify
       - name: 运行格式检查、JVM 测试与 Android 宿主测试
         run: ./gradlew spotlessCheck jvmTest testAndroidHostTest

@@ -17,7 +17,7 @@ import java.nio.file.Files
 import java.util.concurrent.TimeUnit
 
 /**
- * 通过独立本地进程执行与 Android/iOS 相同的 PP-OCRv5 识别。
+ * 通过独立本地进程执行与 Android/iOS 相同的 PP-OCR 识别。
  *
  * @property applicationCommand 当前桌面应用的完整启动命令，不包含工作进程参数。
  * @property timeoutSeconds 单张图片识别的最长等待秒数。
@@ -69,7 +69,7 @@ class DesktopPpOcrTicketRecognizer(
                 if (!completed) {
                     stop(process)
                     response.cancelAndJoin()
-                    return@coroutineScope RecognitionResult.Failure("PP-OCRv5 本地识别超时，请重新导入图片")
+                    return@coroutineScope RecognitionResult.Failure("本地识别超时，请重新导入图片")
                 }
                 val result = response.await()
                 if (process.exitValue() == SUCCESS_EXIT_CODE && result != null) {
@@ -178,7 +178,7 @@ object DesktopOcrWorker {
     /** 判断本次桌面启动是否为真实 OCR 工作进程请求。 */
     fun isRequested(arguments: Array<String>): Boolean = arguments.contentEquals(arrayOf(REQUEST_ARGUMENT))
 
-    /** 在已禁用遥测的子进程中执行一次完整 PP-OCRv5 识别。 */
+    /** 在已禁用遥测的子进程中执行一次完整 PP-OCR 识别。 */
     fun run(): Int =
         try {
             runBlocking {

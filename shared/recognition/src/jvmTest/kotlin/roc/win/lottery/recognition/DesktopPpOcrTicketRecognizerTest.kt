@@ -46,7 +46,7 @@ class DesktopPpOcrTicketRecognizerTest {
 
                 val document = assertIs<RecognitionResult.Success>(result).document
                 assertEquals(imageRef.id, document.imageId)
-                assertEquals("PP-OCRv5 mobile + ONNX Runtime", document.engineName)
+                assertEquals(PpOcrPipelineConfig().engineName, document.engineName)
                 assertTrue(document.lines.isNotEmpty())
                 assertTrue(progress.isNotEmpty())
                 assertEquals(0f, progress.first().fraction)

@@ -61,7 +61,15 @@ class OcrAcceptanceDeviceTest {
                         PixelImageQualityAnalyzer(AndroidLuminanceImageDecoder()),
                     ),
                 )
-            val recognizer = AndroidPpOcrTicketRecognizer(context)
+            val arguments = InstrumentationRegistry.getArguments()
+            val recognizer =
+                AndroidPpOcrTicketRecognizer(
+                    context,
+                    AndroidOcrSessionTuning(
+                        intraOpThreadCount = arguments.getString(THREAD_COUNT_ARGUMENT)?.toIntOrNull() ?: 4,
+                        disableKleidiAi = arguments.getString(DISABLE_KLEIDIAI_ARGUMENT) == "true",
+                    ),
+                )
             val parser = ConservativeTicketParser()
             val reports = mutableListOf<OcrAcceptanceSampleReport>()
             try {
@@ -140,6 +148,12 @@ class OcrAcceptanceDeviceTest {
 
         /** 专项脚本传入的样本数量参数。 */
         const val SAMPLE_COUNT_ARGUMENT = "winlottery.ocr.acceptance.samples"
+
+        /** 真机诊断用的 ONNX 算子内线程数参数。 */
+        const val THREAD_COUNT_ARGUMENT = "winlottery.ocr.threads"
+
+        /** 真机诊断用的禁用 KleidiAI 内核参数。 */
+        const val DISABLE_KLEIDIAI_ARGUMENT = "winlottery.ocr.disableKleidiAi"
 
         /** 分批验收时用于生成全局匿名序号的样本偏移参数。 */
         const val SAMPLE_OFFSET_ARGUMENT = "winlottery.ocr.acceptance.sampleOffset"

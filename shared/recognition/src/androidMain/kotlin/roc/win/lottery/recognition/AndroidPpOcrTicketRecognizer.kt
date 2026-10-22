@@ -12,18 +12,34 @@ import java.io.InputStream
 import java.nio.FloatBuffer
 import java.security.MessageDigest
 
-/** 使用 PP-OCRv5 与 ONNX Runtime 执行 Android 本地票面识别。 */
-class AndroidPpOcrTicketRecognizer(
+/**
+ * Android ONNX 会话参数；生产使用默认值，真机诊断可调整。
+ *
+ * @property intraOpThreadCount 单个会话的算子内线程数。
+ * @property disableKleidiAi 是否禁用 KleidiAI 内核；模拟器总是禁用。
+ */
+internal data class AndroidOcrSessionTuning(
+    val intraOpThreadCount: Int = 4,
+    val disableKleidiAi: Boolean = false,
+)
+
+/** 使用 PP-OCR 与 ONNX Runtime 执行 Android 本地票面识别。 */
+class AndroidPpOcrTicketRecognizer internal constructor(
     context: Context,
+    /** ONNX 会话参数。 */
+    private val sessionTuning: AndroidOcrSessionTuning,
 ) : ProgressiveTicketRecognizer,
     AutoCloseable {
+    /** 使用生产默认会话参数。 */
+    constructor(context: Context) : this(context, AndroidOcrSessionTuning())
+
     /** 只用于访问私有模型目录和只读打包资源的应用上下文。 */
     private val applicationContext = context.applicationContext
 
     /** 首次识别时创建的 ONNX Session 持有者，关闭识别器时一并释放。 */
     private val runtime: Lazy<AndroidPpOcrOnnxRuntime> =
         lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
-            AndroidPpOcrOnnxRuntime(AndroidPpOcrResources(applicationContext))
+            AndroidPpOcrOnnxRuntime(AndroidPpOcrResources(applicationContext), sessionTuning)
         }
 
     /** 延迟创建并在应用会话内复用的共享识别实现。 */
@@ -33,15 +49,10 @@ class AndroidPpOcrTicketRecognizer(
             imageDecoder = AndroidPpOcrRgbImageDecoder(),
             runtime = runtime.value,
             characters = parsePpOcrCharacters(resources.readText(PP_OCR_DICTIONARY_FILE_NAME)),
-            latinCharacters =
-                parsePpOcrCharacters(
-                    resources.readText(PP_OCR_LATIN_DICTIONARY_FILE_NAME),
-                    PP_OCR_LATIN_CHARACTER_COUNT,
-                ),
         )
     }
 
-    /** 在默认计算调度器中执行三段 PP-OCRv5 推理，并转发内部阶段进度。 */
+    /** 在默认计算调度器中执行检测、方向分类与识别推理，并转发内部阶段进度。 */
     override suspend fun recognize(
         imageRef: ImageRef,
         onProgress: (RecognitionProgress) -> Unit,
@@ -107,10 +118,12 @@ private class AndroidPpOcrRgbImageDecoder : PpOcrRgbImageDecoder {
     }
 }
 
-/** 使用 ONNX Runtime Java API 执行并复用 PP-OCRv5 Session。 */
+/** 使用 ONNX Runtime Java API 执行并复用 PP-OCR Session。 */
 private class AndroidPpOcrOnnxRuntime(
     /** 经过哈希校验的模型资源提供器。 */
     private val resources: AndroidPpOcrResources,
+    /** ONNX 会话参数。 */
+    private val tuning: AndroidOcrSessionTuning,
 ) : PpOcrOnnxRuntime,
     AutoCloseable {
     /** 进程级 ONNX Runtime 环境。 */
@@ -237,12 +250,12 @@ private class AndroidPpOcrOnnxRuntime(
     private fun session(model: PpOcrModel): OrtSession =
         sessions.getOrPut(model) {
             OrtSession.SessionOptions().use { options ->
-                options.setIntraOpNumThreads(INTRA_OP_THREAD_COUNT)
+                options.setIntraOpNumThreads(tuning.intraOpThreadCount)
                 // 识别宽度持续变化，关闭形状相关的内存模式缓存，避免持有无收益的计划。
                 options.setMemoryPatternOptimization(false)
                 // 复用百余次推理的本地分配，减少频繁申请与释放张量内存的耗时。
                 options.setCPUArenaAllocator(true)
-                if (Build.HARDWARE in ANDROID_EMULATOR_HARDWARE) {
+                if (tuning.disableKleidiAi || Build.HARDWARE in ANDROID_EMULATOR_HARDWARE) {
                     // ARM64 模拟器可能错误宣告 SME2 能力，禁用对应内核以避免非法指令崩溃。
                     options.addConfigEntry(DISABLE_KLEIDIAI_CONFIG_KEY, ENABLED_CONFIG_VALUE)
                 }
@@ -252,9 +265,6 @@ private class AndroidPpOcrOnnxRuntime(
 
     /** 移动端 CPU Session 固定参数。 */
     private companion object {
-        /** 四线程缩短串行模型延迟，同时限制单个 Session 占满高核心数真机。 */
-        const val INTRA_OP_THREAD_COUNT = 4
-
         /** 文字识别模型输出固定为三维张量。 */
         const val CTC_OUTPUT_RANK = 3
 
@@ -280,11 +290,15 @@ private class AndroidPpOcrResources(
     /** 读取 UTF-8 文本资源。 */
     fun readText(fileName: String): String = open(fileName).bufferedReader(Charsets.UTF_8).use { it.readText() }
 
+    /** 本对象是否已清理过旧版本模型目录。 */
+    private var isLegacyModelsRemoved = false
+
     /** 返回已核对长度与 SHA-256 的私有 ONNX 文件。 */
     @Synchronized
     fun modelFile(model: PpOcrModel): File {
         val expected = requireNotNull(PP_OCR_MODEL_RESOURCE_LOCKS[model]) { "缺少模型文件锁" }
-        val directory = File(context.noBackupFilesDir, PRIVATE_MODEL_DIRECTORY).apply { mkdirs() }
+        removeLegacyModels()
+        val directory = File(context.noBackupFilesDir, "$PRIVATE_MODEL_ROOT/$PRIVATE_MODEL_VERSION").apply { mkdirs() }
         val destination = File(directory, model.fileName)
         if (destination.isFile && destination.length() == expected.byteCount &&
             destination.sha256() == expected.sha256
@@ -296,17 +310,28 @@ private class AndroidPpOcrResources(
         open(model.fileName).use { input -> temporary.outputStream().buffered().use(input::copyTo) }
         check(temporary.length() == expected.byteCount && temporary.sha256() == expected.sha256) {
             temporary.delete()
-            "PP-OCRv5 模型资源校验失败"
+            "OCR 模型资源校验失败"
         }
         check(!destination.exists() || destination.delete()) {
             temporary.delete()
-            "PP-OCRv5 旧模型无法替换"
+            "OCR 旧模型无法替换"
         }
         check(temporary.renameTo(destination)) {
             temporary.delete()
-            "PP-OCRv5 模型无法写入私有目录"
+            "OCR 模型无法写入私有目录"
         }
         return destination
+    }
+
+    /** 删除旧版本复制到私有目录的模型，避免升级后长期占用存储；调用方必须持有当前对象监视器。 */
+    private fun removeLegacyModels() {
+        if (isLegacyModelsRemoved) return
+        isLegacyModelsRemoved = true
+        LEGACY_MODEL_DIRECTORIES.forEach { name -> File(context.noBackupFilesDir, name).deleteRecursively() }
+        File(context.noBackupFilesDir, PRIVATE_MODEL_ROOT)
+            .listFiles()
+            ?.filter { file -> file.name != PRIVATE_MODEL_VERSION }
+            ?.forEach { file -> file.deleteRecursively() }
     }
 
     /** 优先从 KMP 类路径读取公共资源，并兼容 Android assets 打包形式。 */
@@ -314,7 +339,7 @@ private class AndroidPpOcrResources(
         val resourcePath = "$PP_OCR_RESOURCE_ROOT/$fileName"
         return javaClass.classLoader?.getResourceAsStream(resourcePath)
             ?: runCatching { context.assets.open(resourcePath) }.getOrNull()
-            ?: error("PP-OCRv5 资源缺失")
+            ?: error("OCR 模型资源缺失")
     }
 
     /** 流式计算文件 SHA-256，避免重新复制大模型到内存。 */
@@ -333,10 +358,16 @@ private class AndroidPpOcrResources(
         }
     }
 
-    /** 与仓库 model-lock.json 一致的移动模型文件锁。 */
+    /** 私有模型目录与文件校验参数。 */
     private companion object {
-        /** 模型私有目录包含固定 bundle 标识，升级时自动隔离旧文件。 */
-        const val PRIVATE_MODEL_DIRECTORY = "ppocrv5/paddleocr-3.7.0-opset17-latin-v1"
+        /** 私有模型根目录。 */
+        const val PRIVATE_MODEL_ROOT = "ppocr"
+
+        /** 当前模型组合的子目录；更换模型时改名，旧子目录在首次使用时删除。 */
+        const val PRIVATE_MODEL_VERSION = "ppocrv6-small-v1"
+
+        /** 旧版本使用过、需要整体删除的私有模型目录。 */
+        val LEGACY_MODEL_DIRECTORIES = listOf("ppocrv5")
 
         /** SHA-256 算法名称。 */
         const val SHA_256_ALGORITHM = "SHA-256"

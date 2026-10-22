@@ -11,7 +11,7 @@ import javax.imageio.ImageIO
 
 /** 使用不含真实票面数据的合成图片验证最终桌面分发包 OCR 链路。 */
 object DesktopOcrPackageVerifier {
-    /** 启动真实隔离子进程，并验证共享 PP-OCRv5 能返回标准文档和单调进度。 */
+    /** 启动真实隔离子进程，并验证共享 PP-OCR 流程能返回标准文档和单调进度。 */
     fun verify(applicationCommand: List<String>): Boolean =
         try {
             runBlocking {
@@ -26,7 +26,7 @@ object DesktopOcrPackageVerifier {
                     val document = (result as? RecognitionResult.Success)?.document
                     document != null &&
                         document.imageId == imageRef.id &&
-                        document.engineName == EXPECTED_ENGINE_NAME &&
+                        document.engineName == PpOcrPipelineConfig().engineName &&
                         document.lines.isNotEmpty() &&
                         progress.firstOrNull()?.fraction == 0f &&
                         progress.lastOrNull()?.fraction == 1f &&
@@ -42,9 +42,6 @@ object DesktopOcrPackageVerifier {
         } catch (_: LinkageError) {
             false
         }
-
-    /** 共享 OCR 实现应返回的稳定引擎摘要。 */
-    private const val EXPECTED_ENGINE_NAME = "PP-OCRv5 mobile + ONNX Runtime"
 }
 
 /** 为单元测试和分发包验收创建同一张无真实数据合成票面。 */

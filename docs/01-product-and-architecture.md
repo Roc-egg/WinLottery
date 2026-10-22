@@ -75,7 +75,7 @@ V1 明确不支持：
 
 ### 2.3 桌面端排期说明
 
-Windows 和 macOS 已完成宿主、系统图片导入、图片质量检查、校正预览、PP-OCRv5 本地推理、人工校正、官网查询、Room 和逻辑包交换，但不进入 V1 发布范围。Windows 11 x64 与 macOS arm64 已分别取得最终启动器的合成票面 OCR 证据；真实票准确率、ZXing、目标平台裁剪、签名与正式分发仍使用独立路线继续验收，不占用已经冻结的移动端 V1.1 至 V1.5 版本号，也不影响 Android/iOS V1 完成和验收。桌面摄像头仍需在桌面版本内单独评估。
+Windows 和 macOS 已完成宿主、系统图片导入、图片质量检查、校正预览、PP-OCR 本地推理、人工校正、官网查询、Room 和逻辑包交换，但不进入 V1 发布范围。Windows 11 x64 与 macOS arm64 已分别取得最终启动器的合成票面 OCR 证据；真实票准确率、ZXing、目标平台裁剪、签名与正式分发仍使用独立路线继续验收，不占用已经冻结的移动端 V1.1 至 V1.5 版本号，也不影响 Android/iOS V1 完成和验收。桌面摄像头仍需在桌面版本内单独评估。
 
 ### 2.4 V1 非功能目标
 
@@ -295,8 +295,8 @@ interface AppPaths
 
 | 平台 | 拍照/导入 | OCR | 条码辅助 |
 |---|---|---|---|
-| Android | CameraX、Photo Picker | PP-OCRv5 mobile + ONNX Runtime Android | 后续评估 |
-| iOS | AVFoundation、PHPicker | PP-OCRv5 mobile + ONNX Runtime Swift | 后续评估 |
+| Android | CameraX、Photo Picker | PP-OCRv6 small + ONNX Runtime Android | 后续评估 |
+| iOS | AVFoundation、PHPicker | PP-OCRv6 small + ONNX Runtime Swift | 后续评估 |
 | Windows | 系统文件选择器 | PP-OCR 轻量模型 + ONNX Runtime Java | ZXing |
 | macOS | 系统文件选择器 | PP-OCR 轻量模型 + ONNX Runtime Java | ZXing |
 
@@ -304,30 +304,30 @@ interface AppPaths
 
 云 OCR 不进入首版。客户端直连云 OCR 会暴露密钥并上传敏感彩票图片。
 
-### 5.2 PP-OCRv5 模型供应链与运行时
+### 5.2 PP-OCR 模型供应链与运行时
 
 移动端与桌面预览版共用以下有官方来源的模型组合；四端运行流水线已经接入，真实票准确率和桌面正式发布验收仍未完成：
 
-- PaddleOCR 仓库 `v3.7.0` 的 PP-OCRv5 mobile 三段模型：`PP-OCRv5_mobile_det`、`PP-LCNet_x0_25_textline_ori`、`PP-OCRv5_mobile_rec`。
-- 识别字典使用同一版本的 `ppocr/utils/dict/ppocrv5_dict.txt`，当前为 18,383 行；字典顺序必须与模型一致，不得自行删减或重排。
-- 官方发布的是 Paddle 推理模型，不是 ONNX。使用 Paddle2ONNX `v2.1.0` 转换，PoC 固定转换命令、opset、转换日志、源文件和 ONNX 文件 SHA-256，并执行 ONNX checker 和金样本输出对比；禁止使用来源不明的社区 ONNX。
-- 仓库通过 `model-lock.json` 同时向转换工具和 JVM 运行时提供单一模型锁，固定 macOS arm64、Python `3.9.6`、PaddlePaddle `3.0.0`、ONNX `1.17.0`、opset 17、关闭自动升级并明确禁用外部优化器；普通 Gradle 构建不联网下载模型，转换产物只有哈希完全一致才允许进入后续分发验证。
+- 模型组合（ADR-028）：文字检测 `PP-OCRv6_small_det`（输入最长边 1280，DB 阈值 0.3/0.6/1.5），文本行方向分类 `PP-LCNet_x0_25_textline_ori`，文字识别 `PP-OCRv6_small_rec`（多语言，覆盖中文、英文与数字，不再单独加载英文兜底模型）。
+- 三个模型均使用 PaddlePaddle 官方 Hugging Face 仓库固定修订下发布的 ONNX，原样分发；禁止使用来源不明的社区 ONNX，也不在本仓库转换模型格式。
+- 识别字典使用 PaddleOCR 仓库固定提交的 `ppocr/utils/dict/ppocrv6_dict.txt`，当前为 18,708 行，与识别模型内嵌字符表逐项一致；字典顺序必须与模型一致，不得自行删减或重排。
+- `tools/ocr-models/fetch_models.py` 记录全部模型和字典的官方地址、修订、字节数与 SHA-256，可重新下载校验；`PpOcrResourceLocks.kt` 在三端加载前校验同一组哈希；CI 校验已提交文件。普通 Gradle 构建不联网下载模型。
 - JVM 推理候选为 `com.microsoft.onnxruntime:onnxruntime:1.29.0` 的 CPU 执行提供器。官方 JAR 已核实包含 Windows x64 和 macOS arm64 原生库；B3 必须验证 Compose 打包、签名、公证以及是否剔除无关平台原生库。
-- Android 使用 `com.microsoft.onnxruntime:onnxruntime-android:1.24.2` 官方 AAR；模型从 APK 资源复制到 `noBackupFilesDir` 前后核对长度和 SHA-256，再按进程复用三段 CPU Session。Desktop `1.29.0` 不与移动制品混用。
-- iOS 使用微软官方 ONNX Runtime Swift Package `1.24.2`；Swift 只负责连续 Float32 张量和 Session，检测、方向分类、识别预后处理及 CTC 解码全部复用共享 Kotlin。模型和字典位于签名应用 Bundle，构建产物必须逐项核对哈希。
+- Android 使用 `com.microsoft.onnxruntime:onnxruntime-android:1.29.0` 官方 AAR，在 Android 模拟器上禁用 KleidiAI 内核以避免 ARM64 模拟器误报 SME 能力导致的非法指令；模型从 APK 资源复制到 `noBackupFilesDir` 前后核对长度和 SHA-256，再按进程复用各模型 CPU Session。
+- iOS 使用微软官方 ONNX Runtime Swift Package `1.24.2`；Swift 负责连续 Float32 张量、Session，以及在识别输出缓冲区内逐时间步取最大概率类别（不复制完整概率张量），每次推理都在独立的自动释放池中完成，避免连续上百次推理把输出张量累积到进程内存上限；检测、方向分类、识别预后处理及 CTC 解码全部复用共享 Kotlin。模型和字典位于签名应用 Bundle，构建产物必须逐项核对哈希。
 - 该版本官方 `Privacy.md` 明确说明受支持平台的官方二进制默认开启遥测。项目必须在原生库初始化前设置 `ORT_DISABLE_TELEMETRY=1`，或改用通过 `--no_telemetry` 构建并完成供应链记录的目标平台制品；只在初始化后调用关闭 API 不满足本项目的本地处理边界。当前 Windows/macOS 预览启动器均已通过隔离子进程验证，后续若改变启动器或运行时制品必须重新验收。
 - Desktop 采用独立本地工作进程隔离 ONNX Runtime：普通 UI 主进程不加载运行时，父进程在创建子进程时注入 `ORT_DISABLE_TELEMETRY=1`，子进程随后再次调用关闭遥测 API。运行时健康检查协议只返回版本和执行提供器，拒绝额外输出；macOS arm64 与 Windows 11 x64 最终启动器均已通过 ONNX Runtime 和合成票面 OCR 验收。
-- 三份转换后 ONNX 合计约 21.3 MB。Android 通用 Debug APK 还会包含四套 ORT ABI，当前约 140 MB；正式 `arm64-v8a` APK、iOS 真机 IPA 和目标平台裁剪只能以发布构建实测为准。
+- 三个 ONNX 合计约 32.1 MB（检测 9.9 MB、方向分类 1.0 MB、识别 21.2 MB），字典约 75 KB。Android 通用 Debug APK 还会包含四套 ORT ABI，当前约 140 MB；正式 `arm64-v8a` APK、iOS 真机 IPA 和目标平台裁剪只能以发布构建实测为准。
 - 模型随安装包离线提供，运行时不联网下载；加载前校验版本和 SHA-256。
-- PaddleOCR、模型和 Paddle2ONNX 使用 Apache-2.0，ONNX Runtime 使用 MIT。发行包必须附带许可证正文、第三方声明、模型来源、版本、哈希和转换说明。
+- PaddleOCR 与模型使用 Apache-2.0，ONNX Runtime 使用 MIT。发行包必须附带许可证正文、第三方声明、模型来源、版本和哈希。
 - Android 历史开奖公告使用 Apache-2.0 的 PDFBox Android `2.0.27.0`；只启用未加密文本层能力并排除 BouncyCastle 传递依赖。发布材料仍须加入 PDFBox Android 与上游 Apache PDFBox 的许可证和第三方声明，且只能处理严格官方域名、固定结构和受限大小的公告。
 
 官方来源：
 
-- PaddleOCR `v3.7.0` 模型说明：https://github.com/PaddlePaddle/PaddleOCR/blob/v3.7.0/docs/version3.x/pipeline_usage/OCR.md
-- PP-OCRv5 说明：https://github.com/PaddlePaddle/PaddleOCR/blob/v3.7.0/docs/version3.x/algorithm/PP-OCRv5/PP-OCRv5.md
-- PaddleOCR 字典与许可证：https://github.com/PaddlePaddle/PaddleOCR/tree/v3.7.0/ppocr/utils/dict
-- Paddle2ONNX `v2.1.0`：https://github.com/PaddlePaddle/Paddle2ONNX/tree/v2.1.0
+- PP-OCRv6 small 检测：https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx
+- PP-OCRv6 small 识别：https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx
+- 文本行方向分类：https://huggingface.co/PaddlePaddle/PP-LCNet_x0_25_textline_ori_onnx
+- PaddleOCR 字典与许可证：https://github.com/PaddlePaddle/PaddleOCR/tree/main/ppocr/utils/dict
 - ONNX Runtime Java：https://onnxruntime.ai/docs/get-started/with-java.html
 - ONNX Runtime iOS：https://onnxruntime.ai/docs/get-started/with-mobile.html#ios
 - ONNX Runtime `v1.29.0`：https://github.com/microsoft/onnxruntime/releases/tag/v1.29.0

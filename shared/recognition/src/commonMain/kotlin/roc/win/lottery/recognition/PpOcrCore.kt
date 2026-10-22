@@ -12,10 +12,10 @@ import kotlin.math.roundToInt
 import kotlin.math.sin
 import kotlin.math.sqrt
 
-/** PP-OCRv5 三端共用模型资源所在的类路径和 iOS Bundle 目录。 */
-internal const val PP_OCR_RESOURCE_ROOT = "roc/win/lottery/recognition/models/ppocrv5"
+/** 三端共用 OCR 模型资源所在的类路径目录；目录名与模型版本无关。 */
+internal const val PP_OCR_RESOURCE_ROOT = "roc/win/lottery/recognition/models/ppocr"
 
-/** PP-OCRv5 三段推理模型。 */
+/** 本地 OCR 使用的推理模型。 */
 internal enum class PpOcrModel(
     /** 打包后的 ONNX 文件名。 */
     val fileName: String,
@@ -24,17 +24,14 @@ internal enum class PpOcrModel(
     /** ONNX 图的唯一输出名称。 */
     val outputName: String = "fetch_name_0",
 ) {
-    /** DB 文本区域检测模型。 */
+    /** PP-OCRv6 small DB 文本区域检测模型。 */
     DETECTION("detection.onnx"),
 
-    /** 文本行 0 度或 180 度方向分类模型。 */
+    /** PP-LCNet 文本行 0 度或 180 度方向分类模型。 */
     ORIENTATION("orientation.onnx"),
 
-    /** 中文、英文与数字文字识别模型。 */
+    /** PP-OCRv6 small 多语言文字识别模型，覆盖中文、英文与数字。 */
     RECOGNITION("recognition.onnx"),
-
-    /** 针对旧式点阵拉丁字母与数字优化的英文识别模型。 */
-    LATIN_RECOGNITION("recognition_latin.onnx"),
 }
 
 /** 一次 ONNX Float 张量输出。 */
@@ -62,7 +59,7 @@ internal data class PpOcrCtcOutput(
 
 /** 隔离不同平台 ONNX Runtime API 的最小执行接口。 */
 internal fun interface PpOcrOnnxRuntime {
-    /** 执行指定 PP-OCRv5 模型，并返回唯一 Float 输出。 */
+    /** 执行指定 OCR 模型，并返回唯一 Float 输出。 */
     fun run(
         model: PpOcrModel,
         input: FloatArray,
@@ -375,13 +372,14 @@ internal data class SourceTextBox(
         get() = ((topLeft.y + topRight.y) / 2f) to ((topLeft.x + bottomLeft.x) / 2f)
 }
 
-/** PP-OCRv5 DB 检测后处理。 */
+/** PP-OCR DB 检测后处理。 */
 internal object PpOcrDetectionPostProcessor {
     /** 从概率图提取旋转文字框并映射回原图。 */
     fun extract(
         output: OnnxTensorData,
         sourceWidth: Int,
         sourceHeight: Int,
+        config: PpOcrDetectionConfig = PpOcrDetectionConfig(),
     ): List<SourceTextBox> {
         require(output.shape.size == OUTPUT_RANK) { "检测输出必须是四维张量" }
         val mapHeight = output.shape[output.shape.size - 2]
@@ -393,7 +391,7 @@ internal object PpOcrDetectionPostProcessor {
         val queue = IntArray(mapWidth * mapHeight)
         val boxes = mutableListOf<SourceTextBox>()
         for (start in visited.indices) {
-            if (visited[start] || output.values[start] < PIXEL_THRESHOLD) continue
+            if (visited[start] || output.values[start] < config.pixelThreshold) continue
             var head = 0
             var tail = 0
             queue[tail++] = start
@@ -407,7 +405,7 @@ internal object PpOcrDetectionPostProcessor {
                     val nextY = y + offset.second
                     if (nextX !in 0 until mapWidth || nextY !in 0 until mapHeight) continue
                     val next = nextY * mapWidth + nextX
-                    if (!visited[next] && output.values[next] >= PIXEL_THRESHOLD) {
+                    if (!visited[next] && output.values[next] >= config.pixelThreshold) {
                         visited[next] = true
                         queue[tail++] = next
                     }
@@ -422,6 +420,7 @@ internal object PpOcrDetectionPostProcessor {
                     mapHeight = mapHeight,
                     sourceWidth = sourceWidth,
                     sourceHeight = sourceHeight,
+                    config = config,
                 )?.let(boxes::add)
             }
         }
@@ -576,6 +575,7 @@ internal object PpOcrDetectionPostProcessor {
         mapHeight: Int,
         sourceWidth: Int,
         sourceHeight: Int,
+        config: PpOcrDetectionConfig,
     ): SourceTextBox? {
         var sumX = 0.0
         var sumY = 0.0
@@ -595,7 +595,7 @@ internal object PpOcrDetectionPostProcessor {
             probabilitySum += probabilities[index]
         }
         val confidence = (probabilitySum / component.count).toFloat()
-        if (confidence < BOX_THRESHOLD) return null
+        if (confidence < config.boxThreshold) return null
         return componentToBox(
             indices = component.indices,
             count = component.count,
@@ -607,6 +607,7 @@ internal object PpOcrDetectionPostProcessor {
             covarianceYY = sumYY / component.count - (sumY / component.count) * (sumY / component.count),
             covarianceXY = sumXY / component.count - (sumX / component.count) * (sumY / component.count),
             confidence = confidence,
+            unclipRatio = config.unclipRatio,
         )
     }
 
@@ -622,6 +623,7 @@ internal object PpOcrDetectionPostProcessor {
         covarianceYY: Double,
         covarianceXY: Double,
         confidence: Float,
+        unclipRatio: Float,
     ): SourceTextBox? {
         var angle = 0.5 * atan2(2.0 * covarianceXY, covarianceXX - covarianceYY)
         var axisX = cos(angle).toFloat()
@@ -647,7 +649,7 @@ internal object PpOcrDetectionPostProcessor {
         }
         val area = width * height
         val perimeter = 2f * (width + height)
-        val expansion = area * UNCLIP_RATIO / perimeter
+        val expansion = area * unclipRatio / perimeter
         val minimumLong = extents.minLong - expansion
         val maximumLong = extents.maxLong + expansion
         val minimumShort = extents.minShort - expansion
@@ -732,15 +734,6 @@ internal object PpOcrDetectionPostProcessor {
     /** DB 官方配置及移动端保护阈值。 */
     private const val OUTPUT_RANK = 4
 
-    /** 概率图二值化阈值。 */
-    private const val PIXEL_THRESHOLD = 0.3f
-
-    /** 候选文字框最低平均概率。 */
-    private const val BOX_THRESHOLD = 0.6f
-
-    /** 旋转框向外扩张比例。 */
-    private const val UNCLIP_RATIO = 1.5f
-
     /** 单个连通区域至少包含的像素数。 */
     private const val MINIMUM_COMPONENT_PIXELS = 6
 
@@ -788,7 +781,7 @@ internal object PpOcrDetectionPostProcessor {
         )
 }
 
-/** PP-OCRv5 CTC 识别后处理。 */
+/** PP-OCR CTC 识别后处理。 */
 internal object PpOcrCtcDecoder {
     /** 从完整识别张量中只保留每个时间步概率最高的类别。 */
     fun reduce(output: OnnxTensorData): PpOcrCtcOutput {
@@ -891,13 +884,48 @@ internal fun parsePpOcrCharacters(
         normalized.split('\n').let { values ->
             if (values.lastOrNull().isNullOrEmpty()) values.dropLast(1) else values
         }
-    require(lines.size == expectedCharacterCount) { "PP-OCRv5 字符字典行数不正确" }
+    require(lines.size == expectedCharacterCount) { "OCR 字符字典行数不正确" }
     return lines
 }
 
-/** 按输入图像尺寸计算官方长边 960、边长 32 对齐的检测尺寸。 */
-internal fun detectionInputSize(image: RgbImage): Pair<Int, Int> {
-    val scale = min(1f, DETECTION_LONG_EDGE.toFloat() / max(image.width, image.height).toFloat())
+/**
+ * DB 文本检测的输入尺寸与后处理阈值。
+ *
+ * @property longEdge 检测输入最长边，按 32 对齐。
+ * @property pixelThreshold 概率图二值化阈值。
+ * @property boxThreshold 候选文字框最低平均概率。
+ * @property unclipRatio 旋转框向外扩张比例。
+ * @property upscaleSmallImages 原图最长边小于 [longEdge] 时是否放大到 [longEdge]。
+ */
+internal data class PpOcrDetectionConfig(
+    val longEdge: Int = DETECTION_LONG_EDGE,
+    val pixelThreshold: Float = 0.3f,
+    val boxThreshold: Float = 0.6f,
+    val unclipRatio: Float = 1.5f,
+    val upscaleSmallImages: Boolean = false,
+)
+
+/**
+ * 共享识别流程与具体模型版本绑定的参数；默认值对应当前打包的模型组合。
+ *
+ * @property characterCount 识别字典行数。
+ * @property detection 检测输入与后处理参数。
+ * @property engineName 写入 OCR 文档的引擎摘要。
+ */
+internal data class PpOcrPipelineConfig(
+    val characterCount: Int = PP_OCR_CHARACTER_COUNT,
+    val detection: PpOcrDetectionConfig = PpOcrDetectionConfig(),
+    val engineName: String = "PP-OCRv6 small + ONNX Runtime",
+)
+
+/** 按输入图像尺寸计算最长边不超过检测上限、边长 32 对齐的检测尺寸；可选把小图放大到上限。 */
+internal fun detectionInputSize(
+    image: RgbImage,
+    longEdge: Int = DETECTION_LONG_EDGE,
+    upscale: Boolean = false,
+): Pair<Int, Int> {
+    val fitScale = longEdge.toFloat() / max(image.width, image.height).toFloat()
+    val scale = if (upscale) fitScale else min(1f, fitScale)
     val width = alignDimension(image.width * scale, DETECTION_ALIGNMENT)
     val height = alignDimension(image.height * scale, DETECTION_ALIGNMENT)
     return width to height
@@ -912,14 +940,11 @@ private fun alignDimension(
 /** 将像素坐标限制并归一化。 */
 private fun Float.normalize(dimension: Int): Float = (this / dimension.toFloat()).coerceIn(0f, 1f)
 
-/** PP-OCRv5 字典固定行数。 */
-internal const val PP_OCR_CHARACTER_COUNT = 18_383
+/** PP-OCRv6 字典固定行数。 */
+internal const val PP_OCR_CHARACTER_COUNT = 18_708
 
-/** PP-OCRv5 英文识别模型字典固定行数。 */
-internal const val PP_OCR_LATIN_CHARACTER_COUNT = 436
-
-/** 检测模型官方最长边。 */
-private const val DETECTION_LONG_EDGE = 960
+/** 检测输入最长边；真实票样上 1280 比官方默认 960 多识别出被拆碎或漏掉的投注行。 */
+private const val DETECTION_LONG_EDGE = 1280
 
 /** 检测模型尺寸对齐步长。 */
 private const val DETECTION_ALIGNMENT = 32

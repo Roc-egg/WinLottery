@@ -2,6 +2,7 @@ package roc.win.lottery.recognition
 
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.addressOf
+import kotlinx.cinterop.autoreleasepool
 import kotlinx.cinterop.convert
 import kotlinx.cinterop.usePinned
 import platform.CoreGraphics.CGBitmapContextCreate
@@ -27,16 +28,43 @@ import kotlin.math.roundToInt
 /** Swift 宿主提供的 ONNX Runtime 连续张量执行接口。 */
 interface IOSOnnxRuntime {
     /**
-     * 执行一个打包在主 Bundle 根目录的 PP-OCRv5 模型。
+     * 执行一个打包在主 Bundle 根目录的模型。
      *
+     * @param inputData Float32 输入；宿主直接用作输入张量内存，不再复制。
      * @return 推理成功时返回连续 Float 输出，失败时返回空。
      */
     fun run(
         modelFileName: String,
-        inputData: NSData,
+        inputData: NSMutableData,
         inputShape: List<NSNumber>,
     ): IOSOnnxTensorOutput?
+
+    /**
+     * 执行文字识别模型，并在宿主侧逐时间步取概率最大的类别，只回传 CTC 解码需要的结果。
+     *
+     * @param inputData Float32 输入；宿主直接用作输入张量内存，不再复制。
+     * @return 推理成功时返回逐时间步归约结果，失败时返回空。
+     */
+    fun runCtc(
+        modelFileName: String,
+        inputData: NSMutableData,
+        inputShape: List<NSNumber>,
+    ): IOSOnnxCtcOutput?
 }
+
+/** iOS 宿主逐时间步归约后的文字识别输出。 */
+data class IOSOnnxCtcOutput(
+    /** 每个时间步概率最大的类别下标，Int32 本机字节序，按批次、时间步顺序排列。 */
+    val classIndices: NSData,
+    /** 对应类别的概率，Float32 本机字节序，排列与类别下标一致。 */
+    val scores: NSData,
+    /** 批次大小。 */
+    val batchSize: Int,
+    /** 每个样本的时间步数量。 */
+    val timeSteps: Int,
+    /** 识别模型的类别总数。 */
+    val classCount: Int,
+)
 
 /** iOS ONNX Runtime 返回的连续 Float 张量。 */
 data class IOSOnnxTensorOutput(
@@ -46,7 +74,7 @@ data class IOSOnnxTensorOutput(
     val shape: List<NSNumber>,
 )
 
-/** 使用 PP-OCRv5 与宿主 ONNX Runtime 执行 iOS 本地票面识别。 */
+/** 使用 PP-OCR 与宿主 ONNX Runtime 执行 iOS 本地票面识别。 */
 @OptIn(ExperimentalForeignApi::class)
 class IOSPpOcrTicketRecognizer(
     /** 由 Swift 官方 ONNX Runtime 包实现的执行接口。 */
@@ -58,15 +86,10 @@ class IOSPpOcrTicketRecognizer(
             imageDecoder = IOSPpOcrRgbImageDecoder(),
             runtime = IOSPpOcrOnnxRuntimeAdapter(runtime),
             characters = parsePpOcrCharacters(loadDictionary(PP_OCR_DICTIONARY_FILE_NAME)),
-            latinCharacters =
-                parsePpOcrCharacters(
-                    loadDictionary(PP_OCR_LATIN_DICTIONARY_FILE_NAME),
-                    PP_OCR_LATIN_CHARACTER_COUNT,
-                ),
         )
     }
 
-    /** 在默认计算调度器中执行三段 PP-OCRv5 推理，并转发内部阶段进度。 */
+    /** 在默认计算调度器中执行检测、方向分类与识别推理，并转发内部阶段进度。 */
     override suspend fun recognize(
         imageRef: ImageRef,
         onProgress: (RecognitionProgress) -> Unit,
@@ -83,8 +106,8 @@ class IOSPpOcrTicketRecognizer(
             NSBundle.mainBundle.pathForResource(
                 name = resourceName,
                 ofType = resourceExtension,
-            ) ?: error("PP-OCRv5 字符字典缺失")
-        val data = NSFileManager.defaultManager.contentsAtPath(path) ?: error("PP-OCRv5 字符字典无法读取")
+            ) ?: error("OCR 字符字典缺失")
+        val data = NSFileManager.defaultManager.contentsAtPath(path) ?: error("OCR 字符字典无法读取")
         val bytes = ByteArray(data.length.toInt())
         bytes.usePinned { pinned ->
             memcpy(pinned.addressOf(0), data.bytes, data.length)
@@ -99,29 +122,31 @@ class IOSPpOcrTicketRecognizer(
     }
 }
 
-/** 在 Kotlin/Native FloatArray 与 Swift NSData 之间执行单次连续内存复制。 */
+/** 在 Kotlin/Native 数组与 Swift 宿主之间传递张量，输入只复制一次。 */
 @OptIn(ExperimentalForeignApi::class)
 private class IOSPpOcrOnnxRuntimeAdapter(
     /** Swift 宿主 ONNX Runtime。 */
     private val runtime: IOSOnnxRuntime,
 ) : PpOcrOnnxRuntime {
-    /** 将输入复制为 NSData，调用宿主推理，再把输出复制回 FloatArray。 */
+    /** 将输入复制为宿主可直接使用的 NSMutableData，再把输出复制回 FloatArray。 */
     override fun run(
         model: PpOcrModel,
         input: FloatArray,
         inputShape: IntArray,
-    ): OnnxTensorData {
-        val byteCount = input.size * FLOAT_BYTE_COUNT
-        val inputData = NSMutableData.dataWithLength(byteCount.toULong()) ?: error("无法分配 ONNX 输入")
-        input.usePinned { pinned ->
-            memcpy(inputData.mutableBytes, pinned.addressOf(0), byteCount.convert())
+    ): OnnxTensorData =
+        autoreleasepool {
+            val output =
+                runtime.run(
+                    modelFileName = model.fileName,
+                    inputData = input.toInputData(),
+                    inputShape = inputShape.toNumbers(),
+                ) ?: error("iOS ONNX Runtime 执行失败")
+            output.toTensorData()
         }
-        val output =
-            runtime.run(
-                modelFileName = model.fileName,
-                inputData = inputData,
-                inputShape = inputShape.map { dimension -> NSNumber.numberWithInt(dimension) },
-            ) ?: error("iOS ONNX Runtime 执行失败")
+
+    /** 复制宿主返回的完整 Float 输出。 */
+    private fun IOSOnnxTensorOutput.toTensorData(): OnnxTensorData {
+        val output = this
         require(output.data.length.toInt() % FLOAT_BYTE_COUNT == 0) { "iOS ONNX 输出字节数无效" }
         val values = FloatArray(output.data.length.toInt() / FLOAT_BYTE_COUNT)
         values.usePinned { pinned ->
@@ -133,10 +158,68 @@ private class IOSPpOcrOnnxRuntimeAdapter(
         )
     }
 
-    /** Float32 固定格式。 */
+    /**
+     * 由宿主在识别输出缓冲区内完成逐时间步归约，避免复制完整概率张量。
+     *
+     * 每次推理都在独立的自动释放池中完成，后台线程连续上百次推理时不会累积 Objective-C 临时对象。
+     */
+    override fun runCtc(
+        model: PpOcrModel,
+        input: FloatArray,
+        inputShape: IntArray,
+    ): PpOcrCtcOutput =
+        autoreleasepool {
+            val output =
+                runtime.runCtc(
+                    modelFileName = model.fileName,
+                    inputData = input.toInputData(),
+                    inputShape = inputShape.toNumbers(),
+                ) ?: error("iOS ONNX Runtime 执行失败")
+            output.toCtcOutput()
+        }
+
+    /** 复制宿主归约后的类别下标与概率。 */
+    private fun IOSOnnxCtcOutput.toCtcOutput(): PpOcrCtcOutput {
+        val output = this
+        val count = output.batchSize * output.timeSteps
+        require(output.batchSize == 1 && output.timeSteps >= 0 && output.classCount > 0) { "iOS 识别输出形状无效" }
+        require(
+            output.classIndices.length.toInt() == count * INT_BYTE_COUNT &&
+                output.scores.length.toInt() == count * FLOAT_BYTE_COUNT,
+        ) { "iOS 识别输出字节数无效" }
+        val classIndices = IntArray(count)
+        val scores = FloatArray(count)
+        if (count > 0) {
+            classIndices.usePinned { pinned ->
+                memcpy(pinned.addressOf(0), output.classIndices.bytes, output.classIndices.length)
+            }
+            scores.usePinned { pinned ->
+                memcpy(pinned.addressOf(0), output.scores.bytes, output.scores.length)
+            }
+        }
+        return PpOcrCtcOutput(classIndices, scores, output.classCount)
+    }
+
+    /** 复制为宿主可直接作为输入张量内存的 NSMutableData。 */
+    private fun FloatArray.toInputData(): NSMutableData {
+        val byteCount = size * FLOAT_BYTE_COUNT
+        val data = NSMutableData.dataWithLength(byteCount.toULong()) ?: error("无法分配 ONNX 输入")
+        usePinned { pinned ->
+            memcpy(data.mutableBytes, pinned.addressOf(0), byteCount.convert())
+        }
+        return data
+    }
+
+    /** 转为宿主接口使用的维度列表。 */
+    private fun IntArray.toNumbers(): List<NSNumber> = map { dimension -> NSNumber.numberWithInt(dimension) }
+
+    /** Float32 与 Int32 固定格式。 */
     private companion object {
         /** 单个 Float32 占用字节数。 */
         const val FLOAT_BYTE_COUNT = 4
+
+        /** 单个 Int32 占用字节数。 */
+        const val INT_BYTE_COUNT = 4
     }
 }
 

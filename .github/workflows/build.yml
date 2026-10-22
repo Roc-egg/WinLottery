@@ -29,8 +29,8 @@ jobs:
           java-version: "21"
       - name: 配置 Gradle
         uses: gradle/actions/setup-gradle@67621b124fd2e251c5e8a0e6e3b91318f2287669 # v6.3.0
-      - name: 校验 Desktop OCR 模型锁
-        run: python3 tools/desktop-ocr/convert_ppocrv5.py --verify-lock-only
+      - name: 校验 OCR 模型与字典
+        run: python3 tools/ocr-models/fetch_models.py --verify
       - name: 运行格式检查和共享测试矩阵
         run: ./gradlew spotlessCheck jvmTest testAndroidHostTest iosSimulatorArm64Test
       - name: 构建 Android 调试包
@@ -58,8 +58,8 @@ jobs:
           java-version: "21"
       - name: 配置 Gradle
         uses: gradle/actions/setup-gradle@67621b124fd2e251c5e8a0e6e3b91318f2287669 # v6.3.0
-      - name: 校验 Desktop OCR 模型锁
-        run: python tools/desktop-ocr/convert_ppocrv5.py --verify-lock-only
+      - name: 校验 OCR 模型与字典
+        run: python tools/ocr-models/fetch_models.py --verify
       - name: 运行共享测试
         run: .\gradlew.bat jvmTest
       - name: 构建并验证 Windows MSI

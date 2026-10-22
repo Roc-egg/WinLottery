@@ -15,7 +15,7 @@ internal data class DesktopOcrWorkerRequest(
 /** 通过匿名管道传输桌面 OCR 请求、进度和最终结果的二进制协议。 */
 internal object DesktopOcrWorkerProtocol {
     /** 子进程无法形成可信结果时返回给界面的固定说明。 */
-    const val GENERIC_FAILURE_MESSAGE = "PP-OCRv5 本地识别进程未能完成，请重新导入图片"
+    const val GENERIC_FAILURE_MESSAGE = "本地识别进程未能完成，请重新导入图片"
 
     /** 写入单个只包含随机图片标识的工作请求。 */
     fun writeRequest(
