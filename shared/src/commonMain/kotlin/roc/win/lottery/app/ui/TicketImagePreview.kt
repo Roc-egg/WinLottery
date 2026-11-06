@@ -44,6 +44,7 @@ import roc.win.lottery.recognition.NormalizedBounds
 import roc.win.lottery.recognition.TicketFieldReference
 import roc.win.lottery.recognition.TicketFieldRegion
 import kotlin.math.abs
+import kotlin.math.min
 import kotlin.math.roundToInt
 
 /** 票图预览的异步加载状态。 */
@@ -153,13 +154,17 @@ internal fun TicketImagePreview(
  * 返回适合用户定位的去重字段区域。
  *
  * 部分 OCR 引擎会给标题返回覆盖大半票面的行框；彩种原始置信度仍保留在流程状态中，
- * 但这种框不能作为定位入口展示，以免让用户误以为整张票都是标题区域。
+ * 但这种框不能作为定位入口展示，以免让用户误以为整张票都是标题区域。票面横置拍摄时标题在原图中竖排，
+ * 因此按行框较短的一边（文字行厚度）判断。
  */
 internal fun previewableTicketRegions(fieldRegions: List<TicketFieldRegion>): List<TicketFieldRegion> =
     fieldRegions
         .filter { region ->
             region.field != TicketFieldReference.LotteryType ||
-                abs(region.bounds.bottom - region.bounds.top) <= MAX_LOTTERY_TYPE_REGION_HEIGHT
+                min(
+                    abs(region.bounds.bottom - region.bounds.top),
+                    abs(region.bounds.right - region.bounds.left),
+                ) <= MAX_LOTTERY_TYPE_REGION_HEIGHT
         }.distinctBy { it.field }
 
 /** 绘制整票或选中字段的带上下文裁切区域。 */
@@ -326,7 +331,7 @@ private const val MIN_HORIZONTAL_PADDING = 0.04f
 /** 字段裁切至少保留的纵向上下文。 */
 private const val MIN_VERTICAL_PADDING = 0.025f
 
-/** 彩种标题框允许展示为单行定位入口的最大归一化高度。 */
+/** 彩种标题框允许展示为单行定位入口的最大归一化行厚度。 */
 private const val MAX_LOTTERY_TYPE_REGION_HEIGHT = 0.25f
 
 /** 字段高亮填充透明度。 */

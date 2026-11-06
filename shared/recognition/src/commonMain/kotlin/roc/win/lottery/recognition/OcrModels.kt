@@ -18,10 +18,28 @@ data class NormalizedBounds(
 )
 
 /**
+ * 把朝向校正后页面中的位置映射回原图。
+ *
+ * @param pageQuarterTurns 原图顺时针旋转多少个 90 度得到校正后页面，取值 `0..3`。
+ */
+internal fun NormalizedBounds.toSourceImage(pageQuarterTurns: Int): NormalizedBounds =
+    when (pageQuarterTurns) {
+        // 顺时针转 90 度后，页面点 (u, v) 对应原图点 (v, 1 - u)。
+        1 -> NormalizedBounds(left = top, top = 1f - right, right = bottom, bottom = 1f - left)
+
+        2 -> NormalizedBounds(left = 1f - right, top = 1f - bottom, right = 1f - left, bottom = 1f - top)
+
+        // 顺时针转 270 度后，页面点 (u, v) 对应原图点 (1 - v, u)。
+        3 -> NormalizedBounds(left = 1f - bottom, top = left, right = 1f - top, bottom = right)
+
+        else -> this
+    }
+
+/**
  * 一行平台无关的 OCR 结果。
  *
  * @property text 原始识别文本。
- * @property bounds 在原始校正图中的归一化位置。
+ * @property bounds 在朝向校正后页面中的归一化位置；页面相对原图的旋转见 [OcrDocument.pageQuarterTurns]。
  * @property confidence 平台校准前的原始置信度，无法提供时为 `null`。
  */
 data class OcrTextLine(
@@ -36,12 +54,25 @@ data class OcrTextLine(
  * @property imageId 对应的当前流程图片标识。
  * @property lines 按阅读顺序排列的文字行。
  * @property engineName 平台 OCR 引擎名称和版本摘要。
+ * @property pageQuarterTurns 识别前把原图顺时针旋转了多少个 90 度才使票面朝上，取值 `0..3`；
+ *   文字行位置以旋转后的页面为准，解析器输出字段区域时映射回原图。
  */
 data class OcrDocument(
     val imageId: String,
     val lines: List<OcrTextLine>,
     val engineName: String,
-)
+    val pageQuarterTurns: Int = 0,
+) {
+    init {
+        require(pageQuarterTurns in 0..MAXIMUM_PAGE_QUARTER_TURNS) { "页面旋转次数无效" }
+    }
+
+    /** 页面旋转约束。 */
+    private companion object {
+        /** 顺时针旋转 270 度对应的最大四分之一圈数。 */
+        const val MAXIMUM_PAGE_QUARTER_TURNS = 3
+    }
+}
 
 /** 票面校正页可定位的 OCR 字段。 */
 sealed interface TicketFieldReference {

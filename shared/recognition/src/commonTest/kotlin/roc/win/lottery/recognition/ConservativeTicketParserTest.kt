@@ -57,6 +57,28 @@ class ConservativeTicketParserTest {
         assertTrue(review.fieldRegions.all { it.rawConfidence == TEST_CONFIDENCE })
     }
 
+    /** 整页旋转后识别的文档按校正后页面解析，字段区域映射回原图。 */
+    @Test
+    fun rotatedPageRegionsMapBackToSourceImage() {
+        val upright =
+            document(
+                "体彩 超级大乐透",
+                "第 26999期",
+                "单式票 1倍 合计2元",
+                "① 01 07 14 22 35 + 03 11",
+            )
+
+        val expected = assertIs<TicketParseResult.ReadyForReview>(parser.parse(upright))
+        val rotated = assertIs<TicketParseResult.ReadyForReview>(parser.parse(upright.copy(pageQuarterTurns = 2)))
+
+        assertEquals(expected.draft, rotated.draft)
+        assertEquals(expected.fieldRegions.map { it.field }, rotated.fieldRegions.map { it.field })
+        assertEquals(
+            expected.fieldRegions.map { region -> region.bounds.toSourceImage(2) },
+            rotated.fieldRegions.map { region -> region.bounds },
+        )
+    }
+
     /** 同一视觉行的分散 OCR 片段应按横向位置合并后解析大乐透追加票。 */
     @Test
     fun splitOcrFragmentsAreMergedForAdditionalTicket() {

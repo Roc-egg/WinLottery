@@ -14,7 +14,24 @@ import kotlin.math.abs
  */
 class ConservativeTicketParser : TicketParser {
     /** 解析一份标准 OCR 文档，并返回等待确认或明确阻断状态。 */
-    override fun parse(document: OcrDocument): TicketParseResult {
+    override fun parse(document: OcrDocument): TicketParseResult =
+        parseUprightPage(document).withRegionsOnSourceImage(document.pageQuarterTurns)
+
+    /** 字段区域在校正后页面中定位，返回前映射回用户看到的原图。 */
+    private fun TicketParseResult.withRegionsOnSourceImage(pageQuarterTurns: Int): TicketParseResult {
+        if (pageQuarterTurns == 0) return this
+
+        fun List<TicketFieldRegion>.mapped() =
+            map { region -> region.copy(bounds = region.bounds.toSourceImage(pageQuarterTurns)) }
+        return when (this) {
+            is TicketParseResult.ReadyForReview -> copy(fieldRegions = fieldRegions.mapped())
+            is TicketParseResult.NeedsCorrection -> copy(fieldRegions = fieldRegions.mapped())
+            is TicketParseResult.Unsupported -> this
+        }
+    }
+
+    /** 按校正后页面中的文字行位置解析票面。 */
+    private fun parseUprightPage(document: OcrDocument): TicketParseResult {
         val rows = mergeVisualRows(document.lines)
         if (rows.isEmpty()) {
             return TicketParseResult.NeedsCorrection("未识别到可解析的票面文字")

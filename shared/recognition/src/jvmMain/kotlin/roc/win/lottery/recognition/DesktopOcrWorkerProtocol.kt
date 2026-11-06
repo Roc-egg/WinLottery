@@ -134,6 +134,7 @@ internal object DesktopOcrWorkerProtocol {
         output.writeByte(EVENT_SUCCESS)
         output.writeUTF(document.imageId)
         output.writeUTF(document.engineName)
+        output.writeByte(document.pageQuarterTurns)
         output.writeInt(document.lines.size)
         document.lines.forEach { line ->
             validateTextLine(line)
@@ -156,6 +157,8 @@ internal object DesktopOcrWorkerProtocol {
         require(imageId == expectedImageId && isValidImageId(imageId)) { "桌面 OCR 结果图片标识不匹配" }
         val engineName = input.readUTF()
         validateSafeText(engineName, MAXIMUM_ENGINE_NAME_LENGTH, "桌面 OCR 引擎名称")
+        val pageQuarterTurns = input.readUnsignedByte()
+        require(pageQuarterTurns in 0..MAXIMUM_PAGE_QUARTER_TURNS) { "桌面 OCR 页面旋转次数无效" }
         val lineCount = input.readInt()
         require(lineCount in 1..MAXIMUM_TEXT_LINE_COUNT) { "桌面 OCR 文字行数量无效" }
         val lines =
@@ -171,7 +174,7 @@ internal object DesktopOcrWorkerProtocol {
                 val confidence = if (input.readBoolean()) input.readFloat() else null
                 OcrTextLine(text, bounds, confidence).also(::validateTextLine)
             }
-        return RecognitionResult.Success(OcrDocument(imageId, lines, engineName))
+        return RecognitionResult.Success(OcrDocument(imageId, lines, engineName, pageQuarterTurns))
     }
 
     /** 写入可展示但不包含票面文字的图片质量问题。 */
@@ -242,7 +245,7 @@ internal object DesktopOcrWorkerProtocol {
     fun isValidImageId(imageId: String): Boolean = IMAGE_ID_PATTERN.matches(imageId)
 
     /** 桌面 OCR 匿名管道协议常量。 */
-    private const val PROTOCOL_VERSION = 1
+    private const val PROTOCOL_VERSION = 2
 
     /** 请求流固定标识 `WLOQ`。 */
     private const val REQUEST_MAGIC = 0x574C4F51
@@ -273,6 +276,9 @@ internal object DesktopOcrWorkerProtocol {
 
     /** OCR 引擎名称最大字符数。 */
     private const val MAXIMUM_ENGINE_NAME_LENGTH = 128
+
+    /** 文档整页旋转的最大四分之一圈数。 */
+    private const val MAXIMUM_PAGE_QUARTER_TURNS = 3
 
     /** 单次 OCR 最大文字行数量。 */
     private const val MAXIMUM_TEXT_LINE_COUNT = 2_048

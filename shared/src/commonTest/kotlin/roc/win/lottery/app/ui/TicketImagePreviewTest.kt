@@ -81,4 +81,17 @@ class TicketImagePreviewTest {
             previewableTicketRegions(listOf(oversizedLotteryType, compactLotteryType, issue)),
         )
     }
+
+    /** 票面横置拍摄时，原图中竖排的紧凑标题框仍可定位。 */
+    @Test
+    fun sidewaysLotteryTypeRegionIsOfferedForPreview() {
+        val sidewaysLotteryType =
+            TicketFieldRegion(
+                field = TicketFieldReference.LotteryType,
+                bounds = NormalizedBounds(0.82f, 0.20f, 0.92f, 0.70f),
+                rawConfidence = 0.7f,
+            )
+
+        assertEquals(listOf(sidewaysLotteryType), previewableTicketRegions(listOf(sidewaysLotteryType)))
+    }
 }

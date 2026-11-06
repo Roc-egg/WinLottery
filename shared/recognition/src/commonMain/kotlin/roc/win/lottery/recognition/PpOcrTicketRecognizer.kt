@@ -30,14 +30,19 @@ internal class PpOcrTicketRecognizer(
         withContext(Dispatchers.Default) {
             try {
                 onProgress(RecognitionProgress(INITIAL_PROGRESS, "正在初始化本地识别"))
-                val image =
+                val decoded =
                     imageDecoder.decode(imageRef, MAXIMUM_DECODED_LONG_EDGE)
                         ?: run {
                             onProgress(RecognitionProgress(COMPLETED_PROGRESS, "本地图片读取失败"))
                             return@withContext RecognitionResult.Failure("无法读取本地图片，请重新导入")
                         }
                 onProgress(RecognitionProgress(DECODED_PROGRESS, "正在检测票面文字"))
-                val boxes = detectTextBoxes(image)
+                val page = detectUprightPage(decoded)
+                if (page.quarterTurns != 0) {
+                    onProgress(RecognitionProgress(DECODED_PROGRESS, "已自动转正票面方向"))
+                }
+                val image = page.image
+                val boxes = page.boxes
                 if (boxes.isEmpty()) {
                     onProgress(RecognitionProgress(COMPLETED_PROGRESS, "未检测到清晰票面文字"))
                     return@withContext RecognitionResult.PoorImage(
@@ -104,6 +109,7 @@ internal class PpOcrTicketRecognizer(
                                 imageId = imageRef.id,
                                 lines = lines,
                                 engineName = config.engineName,
+                                pageQuarterTurns = page.quarterTurns,
                             ),
                         )
                     }
@@ -116,8 +122,67 @@ internal class PpOcrTicketRecognizer(
             }
         }
 
-    /** 缩放整图并执行 DB 文本检测后处理。 */
-    private fun detectTextBoxes(image: RgbImage): List<SourceTextBox> {
+    /**
+     * 检测文字并校正整页朝向。
+     *
+     * 竖向文字明显占优时，整页顺时针转 90 度后重新检测，转后横向文字更占优才采用；再抽样最长的横向文字框做方向
+     * 分类，过半判为倒置时整页转 180 度后重新检测。逐框方向分类只能把单行文字转正，不能恢复整页的上下阅读顺序。
+     */
+    private fun detectUprightPage(source: RgbImage): UprightPage {
+        var image = source
+        var quarterTurns = 0
+        var regions = detectTextRegions(image)
+        val dominance = regions.verticalDominance()
+        if (regions.count { box -> !box.isHorizontalDirection } >= MINIMUM_SIDEWAYS_BOX_COUNT &&
+            dominance > SIDEWAYS_VERTICAL_DOMINANCE
+        ) {
+            val rotated = image.rotatedClockwise()
+            val rotatedRegions = detectTextRegions(rotated)
+            // 转过之后竖向占比应下降；否则原判断有误，保留原图，避免把朝上的票面转成横置。
+            if (rotatedRegions.verticalDominance() < dominance) {
+                image = rotated
+                quarterTurns = 1
+                regions = rotatedRegions
+            }
+        }
+        var boxes = PpOcrDetectionPostProcessor.arrange(regions)
+        if (looksUpsideDown(image, boxes)) {
+            image = image.rotated180()
+            quarterTurns += 2
+            boxes = PpOcrDetectionPostProcessor.arrange(detectTextRegions(image))
+        }
+        return UprightPage(image, boxes, quarterTurns)
+    }
+
+    /**
+     * 竖向文字相对横向文字的占比：两类文字框长边平方和之比。
+     *
+     * 平方加权突出整行文字，横置票面拆出的大量短碎片不会掩盖整行的方向。
+     */
+    private fun List<SourceTextBox>.verticalDominance(): Double {
+        val (horizontal, vertical) = partition(SourceTextBox::isHorizontalDirection)
+
+        fun List<SourceTextBox>.squaredLength() = sumOf { box -> box.longEdgeLength.toDouble() * box.longEdgeLength }
+        return vertical.squaredLength() / horizontal.squaredLength().coerceAtLeast(1.0)
+    }
+
+    /** 抽样最长的横向文字框做方向分类，过半判为倒置时认为整页倒置。 */
+    private fun looksUpsideDown(
+        image: RgbImage,
+        boxes: List<SourceTextBox>,
+    ): Boolean {
+        val samples =
+            boxes
+                .filter(SourceTextBox::isHorizontalDirection)
+                .sortedByDescending(SourceTextBox::longEdgeLength)
+                .take(ORIENTATION_SAMPLE_COUNT)
+                .map(image::perspectiveCrop)
+                .filter { crop -> crop.width >= MINIMUM_CROP_SIDE && crop.height >= MINIMUM_CROP_SIDE }
+        return samples.count(::isUpsideDown) * 2 > samples.size
+    }
+
+    /** 缩放整图并执行 DB 文本检测，返回保留原始方向的文字框。 */
+    private fun detectTextRegions(image: RgbImage): List<SourceTextBox> {
         val detection = config.detection
         val (inputWidth, inputHeight) = detectionInputSize(image, detection.longEdge, detection.upscaleSmallImages)
         val resized = image.resized(inputWidth, inputHeight)
@@ -130,17 +195,17 @@ internal class PpOcrTicketRecognizer(
                     inputShape = intArrayOf(1, COLOR_CHANNEL_COUNT, inputHeight, inputWidth),
                 )
             }
-        return PpOcrDetectionPostProcessor.extract(output, image.width, image.height, detection)
+        return PpOcrDetectionPostProcessor.extractRegions(output, image.width, image.height, detection)
     }
 
-    /** 裁切单个旋转框，修正 180 度方向并执行文字识别。 */
+    /** 裁切单个旋转框，修正方向并执行文字识别。 */
     private fun recognizeTextBox(
         image: RgbImage,
         box: SourceTextBox,
     ): OcrTextLine? {
         val crop = image.perspectiveCrop(box)
         if (crop.width < MINIMUM_CROP_SIDE || crop.height < MINIMUM_CROP_SIDE) return null
-        val oriented = correctOrientation(crop)
+        val oriented = orientCrop(box, crop)
         val decoded = recognizeLine(oriented) ?: return null
         if (decoded.confidence < MINIMUM_RECOGNITION_CONFIDENCE) return null
         return OcrTextLine(
@@ -157,7 +222,7 @@ internal class PpOcrTicketRecognizer(
     ): List<OcrTextLine> {
         val crop = image.perspectiveCrop(box)
         if (crop.width < MINIMUM_CROP_SIDE || crop.height < MINIMUM_CROP_SIDE) return emptyList()
-        val oriented = correctOrientation(crop)
+        val oriented = orientCrop(box, crop)
         val variants =
             listOf(
                 oriented,
@@ -176,8 +241,14 @@ internal class PpOcrTicketRecognizer(
             }
     }
 
-    /** 使用固定 160x80 分类模型纠正倒置文字行。 */
-    private fun correctOrientation(image: RgbImage): RgbImage {
+    /** 整页已转正，横向文字行直接使用；竖向文字行仍逐个判断是否倒置。 */
+    private fun orientCrop(
+        box: SourceTextBox,
+        crop: RgbImage,
+    ): RgbImage = if (box.isHorizontalDirection || !isUpsideDown(crop)) crop else crop.rotated180()
+
+    /** 使用固定 160x80 分类模型判断文字行是否倒置。 */
+    private fun isUpsideDown(image: RgbImage): Boolean {
         val resized = image.resized(ORIENTATION_WIDTH, ORIENTATION_HEIGHT)
         val input = resized.toNormalizedBgrNchw(IMAGENET_MEANS, IMAGENET_STANDARD_DEVIATIONS)
         val output =
@@ -188,14 +259,10 @@ internal class PpOcrTicketRecognizer(
                     inputShape = intArrayOf(1, COLOR_CHANNEL_COUNT, ORIENTATION_HEIGHT, ORIENTATION_WIDTH),
                 )
             }
-        if (output.values.size < ORIENTATION_CLASS_COUNT) return image
+        if (output.values.size < ORIENTATION_CLASS_COUNT) return false
         val uprightScore = output.values[0]
         val upsideDownScore = output.values[1]
-        return if (upsideDownScore > uprightScore && upsideDownScore >= ORIENTATION_ROTATE_THRESHOLD) {
-            image.rotated180()
-        } else {
-            image
-        }
+        return upsideDownScore > uprightScore && upsideDownScore >= ORIENTATION_ROTATE_THRESHOLD
     }
 
     /** 按官方最小宽高比生成动态宽度输入并执行 CTC 解码。 */
@@ -289,6 +356,19 @@ internal class PpOcrTicketRecognizer(
         /** 方向分类类别数量。 */
         const val ORIENTATION_CLASS_COUNT = 2
 
+        /** 判断整页倒置时抽样分类的最长横向文字框数量。 */
+        const val ORIENTATION_SAMPLE_COUNT = 8
+
+        /** 判断整页横置至少需要的竖向文字框数量，避免文字很少时误判。 */
+        const val MINIMUM_SIDEWAYS_BOX_COUNT = 3
+
+        /**
+         * 竖向文字占比超过该值时尝试把整页转 90 度。
+         *
+         * 真实票样中朝上票面最高 0.34，横置票面最低 1.05；转后还要校验竖向占比下降才采用。
+         */
+        const val SIDEWAYS_VERTICAL_DOMINANCE = 0.5
+
         /** 触发 180 度旋转的最低概率。 */
         const val ORIENTATION_ROTATE_THRESHOLD = 0.8f
 
@@ -332,3 +412,16 @@ internal class PpOcrTicketRecognizer(
         val HALF_STANDARD_DEVIATIONS = floatArrayOf(0.5f, 0.5f, 0.5f)
     }
 }
+
+/**
+ * 校正朝向后的整页图片与文字框。
+ *
+ * @property image 朝上的整页图片。
+ * @property boxes 在 [image] 上检测并排好阅读顺序的文字框。
+ * @property quarterTurns 相对原图顺时针旋转的 90 度次数。
+ */
+private class UprightPage(
+    val image: RgbImage,
+    val boxes: List<SourceTextBox>,
+    val quarterTurns: Int,
+)

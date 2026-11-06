@@ -41,6 +41,7 @@ class DesktopOcrWorkerProtocolTest {
                         ),
                     ),
                 engineName = "测试引擎",
+                pageQuarterTurns = 2,
             )
         val bytes =
             writeResponse {

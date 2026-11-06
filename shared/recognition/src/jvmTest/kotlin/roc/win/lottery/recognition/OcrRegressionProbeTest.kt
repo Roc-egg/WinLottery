@@ -141,6 +141,7 @@ class OcrRegressionProbeTest {
                     else -> null
                 },
             )
+            put("pageQuarterTurns", (result as? RecognitionResult.Success)?.document?.pageQuarterTurns)
             put("ocrMs", ocrMicroseconds / MICROSECONDS_PER_MILLISECOND)
             PpOcrModel.entries.forEach { model ->
                 put("${model.name.lowercase()}Runs", stats.count(model))

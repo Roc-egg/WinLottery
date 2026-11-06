@@ -127,18 +127,34 @@ internal data class RgbImage(
         return RgbImage(targetWidth, targetHeight, target)
     }
 
+    /** 将整张图片顺时针旋转 90 度，宽高互换；整页旋转在移动端逐字节复制，避免逐像素调用数组拷贝。 */
+    fun rotatedClockwise(): RgbImage {
+        val target = ByteArray(pixels.size)
+        var source = 0
+        for (y in 0 until height) {
+            val targetColumn = height - 1 - y
+            for (x in 0 until width) {
+                val destination = (x * height + targetColumn) * CHANNEL_COUNT
+                target[destination] = pixels[source]
+                target[destination + 1] = pixels[source + 1]
+                target[destination + 2] = pixels[source + 2]
+                source += CHANNEL_COUNT
+            }
+        }
+        return RgbImage(height, width, target)
+    }
+
     /** 将整张图片旋转 180 度。 */
     fun rotated180(): RgbImage {
         val target = ByteArray(pixels.size)
-        val pixelCount = width * height
-        for (sourcePixel in 0 until pixelCount) {
-            val targetPixel = pixelCount - sourcePixel - 1
-            pixels.copyInto(
-                destination = target,
-                destinationOffset = targetPixel * CHANNEL_COUNT,
-                startIndex = sourcePixel * CHANNEL_COUNT,
-                endIndex = sourcePixel * CHANNEL_COUNT + CHANNEL_COUNT,
-            )
+        var destination = pixels.size - CHANNEL_COUNT
+        var source = 0
+        while (destination >= 0) {
+            target[destination] = pixels[source]
+            target[destination + 1] = pixels[source + 1]
+            target[destination + 2] = pixels[source + 2]
+            source += CHANNEL_COUNT
+            destination -= CHANNEL_COUNT
         }
         return RgbImage(width, height, target)
     }
@@ -370,12 +386,34 @@ internal data class SourceTextBox(
     /** 用上边中心位置建立稳定阅读顺序。 */
     val readingOrderKey: Pair<Float, Float>
         get() = ((topLeft.y + topRight.y) / 2f) to ((topLeft.x + bottomLeft.x) / 2f)
+
+    /** 旋转框长边是否沿图片横向。 */
+    val isHorizontalDirection: Boolean
+        get() = abs(topRight.x - topLeft.x) >= abs(topRight.y - topLeft.y)
+
+    /** 旋转框文字方向长边长度。 */
+    val longEdgeLength: Float
+        get() = topLeft.distanceTo(topRight)
 }
 
 /** PP-OCR DB 检测后处理。 */
 internal object PpOcrDetectionPostProcessor {
-    /** 从概率图提取旋转文字框并映射回原图。 */
+    /** 从概率图提取旋转文字框并映射回原图，再切分误连竖列并按阅读顺序排列。 */
     fun extract(
+        output: OnnxTensorData,
+        sourceWidth: Int,
+        sourceHeight: Int,
+        config: PpOcrDetectionConfig = PpOcrDetectionConfig(),
+    ): List<SourceTextBox> = arrange(extractRegions(output, sourceWidth, sourceHeight, config))
+
+    /** 切分误判成竖排的号码列，并按阅读顺序排列、限制候选数量。 */
+    fun arrange(boxes: List<SourceTextBox>): List<SourceTextBox> =
+        splitVerticalColumns(boxes)
+            .sortedWith(compareBy<SourceTextBox> { it.readingOrderKey.first }.thenBy { it.readingOrderKey.second })
+            .take(MAXIMUM_CANDIDATES)
+
+    /** 只从概率图提取旋转文字框并映射回原图，不切分竖列也不排序，保留检测器给出的方向供判断整页朝向。 */
+    fun extractRegions(
         output: OnnxTensorData,
         sourceWidth: Int,
         sourceHeight: Int,
@@ -424,9 +462,7 @@ internal object PpOcrDetectionPostProcessor {
                 )?.let(boxes::add)
             }
         }
-        return splitVerticalColumns(boxes)
-            .sortedWith(compareBy<SourceTextBox> { it.readingOrderKey.first }.thenBy { it.readingOrderKey.second })
-            .take(MAXIMUM_CANDIDATES)
+        return boxes
     }
 
     /** 依据正常横排文字高度，把检测器误判成竖排的多行号码列等距切回横向行框。 */
@@ -457,14 +493,6 @@ internal object PpOcrDetectionPostProcessor {
             }
         }
     }
-
-    /** 判断旋转框长边是否沿图片横向。 */
-    private val SourceTextBox.isHorizontalDirection: Boolean
-        get() = kotlin.math.abs(topRight.x - topLeft.x) >= kotlin.math.abs(topRight.y - topLeft.y)
-
-    /** 旋转框文字方向长边长度。 */
-    private val SourceTextBox.longEdgeLength: Float
-        get() = topLeft.distanceTo(topRight)
 
     /** 旋转框文字高度方向短边长度。 */
     private val SourceTextBox.shortEdgeLength: Float

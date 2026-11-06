@@ -66,6 +66,36 @@ class PpOcrCoreTest {
         )
     }
 
+    /** 顺时针旋转 90 度必须交换宽高，并把左下角像素移到左上角。 */
+    @Test
+    fun rgbImageRotatesClockwise() {
+        // 2x3 图片，像素按行编号 1..6，每个像素三通道取同一值。
+        val image = RgbImage(width = 2, height = 3, pixels = ByteArray(18) { index -> (index / 3 + 1).toByte() })
+
+        val rotated = image.rotatedClockwise()
+
+        assertEquals(3, rotated.width)
+        assertEquals(2, rotated.height)
+        assertEquals(
+            listOf(5, 3, 1, 6, 4, 2),
+            rotated.pixels
+                .toList()
+                .chunked(3)
+                .map { pixel -> pixel.first().toInt() },
+        )
+    }
+
+    /** 校正后页面中的位置必须按旋转次数准确映射回原图。 */
+    @Test
+    fun boundsMapBackToSourceImage() {
+        val bounds = NormalizedBounds(left = 0.1f, top = 0.2f, right = 0.4f, bottom = 0.3f)
+
+        assertEquals(bounds, bounds.toSourceImage(0))
+        assertBoundsEquals(NormalizedBounds(0.2f, 0.6f, 0.3f, 0.9f), bounds.toSourceImage(1))
+        assertBoundsEquals(NormalizedBounds(0.6f, 0.7f, 0.9f, 0.8f), bounds.toSourceImage(2))
+        assertBoundsEquals(NormalizedBounds(0.7f, 0.1f, 0.8f, 0.4f), bounds.toSourceImage(3))
+    }
+
     /** 局部灰度拉伸必须消除色偏，并把有效亮度范围扩展到八位边界。 */
     @Test
     fun contrastStretchedGrayscaleExpandsLocalLuminance() {
@@ -303,6 +333,7 @@ class PpOcrCoreTest {
             val success = assertIs<RecognitionResult.Success>(result)
             assertEquals(listOf(PpOcrModel.DETECTION, PpOcrModel.ORIENTATION, PpOcrModel.RECOGNITION), calls)
             assertEquals(PpOcrPipelineConfig().engineName, success.document.engineName)
+            assertEquals(0, success.document.pageQuarterTurns)
             assertEquals(
                 "彩",
                 success.document.lines
@@ -313,6 +344,151 @@ class PpOcrCoreTest {
             assertTrue(progressUpdates.zipWithNext().all { (left, right) -> left.fraction <= right.fraction })
             assertTrue(progressUpdates.any { progress -> progress.message.contains("读取票面文字") })
         }
+
+    /** 抽样文字行过半判为倒置时，整页转 180 度后重新检测，横向文字行不再逐个分类。 */
+    @Test
+    fun recognizerRotatesUpsideDownPage() =
+        runTest {
+            val (calls, recognizer) = orientationRecognizer(listOf(detectionOutput()), upsideDown = true)
+
+            val result = recognizer.recognize(orientationImageRef()) {}
+
+            val document = assertIs<RecognitionResult.Success>(result).document
+            assertEquals(
+                listOf(PpOcrModel.DETECTION, PpOcrModel.ORIENTATION, PpOcrModel.DETECTION, PpOcrModel.RECOGNITION),
+                calls,
+            )
+            assertEquals(2, document.pageQuarterTurns)
+        }
+
+    /** 文字框大多竖向时，整页先顺时针转 90 度再检测。 */
+    @Test
+    fun recognizerRotatesSidewaysPage() =
+        runTest {
+            val (calls, recognizer) =
+                orientationRecognizer(
+                    listOf(verticalDetectionOutput(columnCount = 3), detectionOutput()),
+                    upsideDown = false,
+                )
+
+            val result = recognizer.recognize(orientationImageRef()) {}
+
+            val document = assertIs<RecognitionResult.Success>(result).document
+            assertEquals(
+                listOf(PpOcrModel.DETECTION, PpOcrModel.DETECTION, PpOcrModel.ORIENTATION, PpOcrModel.RECOGNITION),
+                calls,
+            )
+            assertEquals(1, document.pageQuarterTurns)
+        }
+
+    /** 转 90 度后竖向占比没有下降时，判断有误，保留原图。 */
+    @Test
+    fun recognizerKeepsPageWhenRotationDoesNotHelp() =
+        runTest {
+            val (calls, recognizer) =
+                orientationRecognizer(listOf(verticalDetectionOutput(columnCount = 3)), upsideDown = false)
+
+            val result = recognizer.recognize(orientationImageRef()) {}
+
+            assertEquals(0, assertIs<RecognitionResult.Success>(result).document.pageQuarterTurns)
+            assertEquals(2, calls.count { model -> model == PpOcrModel.DETECTION })
+        }
+
+    /** 少量竖排边栏文字不足以判定整页横置。 */
+    @Test
+    fun recognizerKeepsPageWithFewVerticalBoxes() =
+        runTest {
+            val (calls, recognizer) =
+                orientationRecognizer(listOf(verticalDetectionOutput(columnCount = 2)), upsideDown = false)
+
+            val result = recognizer.recognize(orientationImageRef()) {}
+
+            assertEquals(0, assertIs<RecognitionResult.Success>(result).document.pageQuarterTurns)
+            assertEquals(PpOcrModel.DETECTION, calls.first())
+            assertEquals(1, calls.count { model -> model == PpOcrModel.DETECTION })
+        }
+
+    /**
+     * 创建按调用顺序返回检测输出、方向分类固定判为倒置或朝上的识别器。
+     *
+     * 检测调用次数超过 [detections] 时重复最后一个输出。
+     */
+    private fun orientationRecognizer(
+        detections: List<OnnxTensorData>,
+        upsideDown: Boolean,
+    ): Pair<List<PpOcrModel>, PpOcrTicketRecognizer> {
+        val calls = mutableListOf<PpOcrModel>()
+        val characters = List(PP_OCR_CHARACTER_COUNT) { index -> if (index == 0) "彩" else "字$index" }
+        var detectionCount = 0
+        val recognizer =
+            PpOcrTicketRecognizer(
+                imageDecoder =
+                    PpOcrRgbImageDecoder { _, _ ->
+                        RgbImage(width = 32, height = 32, pixels = ByteArray(32 * 32 * 3) { 0xff.toByte() })
+                    },
+                runtime =
+                    PpOcrOnnxRuntime { model, _, _ ->
+                        calls += model
+                        when (model) {
+                            PpOcrModel.DETECTION -> {
+                                detections[minOf(detectionCount++, detections.lastIndex)]
+                            }
+
+                            PpOcrModel.ORIENTATION -> {
+                                if (upsideDown) {
+                                    OnnxTensorData(floatArrayOf(0.05f, 0.95f), intArrayOf(1, 2))
+                                } else {
+                                    OnnxTensorData(floatArrayOf(0.95f, 0.05f), intArrayOf(1, 2))
+                                }
+                            }
+
+                            PpOcrModel.RECOGNITION -> {
+                                ctcOutput(
+                                    characters = characters,
+                                    classes = intArrayOf(1, 0),
+                                    scores = floatArrayOf(0.95f, 1f),
+                                )
+                            }
+                        }
+                    },
+                characters = characters,
+            )
+        return calls to recognizer
+    }
+
+    /** 朝向测试使用的图片引用。 */
+    private fun orientationImageRef(): ImageRef =
+        ImageRef(
+            id = "ppocr-orientation-test",
+            localPath = "memory://ppocr-orientation-test.jpg",
+            mimeType = "image/jpeg",
+            widthPixels = 32,
+            heightPixels = 32,
+        )
+
+    /** 创建包含若干条竖向高概率区域的检测输出。 */
+    private fun verticalDetectionOutput(columnCount: Int): OnnxTensorData {
+        val values = FloatArray(32 * 32)
+        repeat(columnCount) { column ->
+            for (y in 3..28) {
+                for (x in 2 + column * 10..5 + column * 10) {
+                    values[y * 32 + x] = 0.9f
+                }
+            }
+        }
+        return OnnxTensorData(values, intArrayOf(1, 1, 32, 32))
+    }
+
+    /** 逐边比较两组归一化位置，允许浮点误差。 */
+    private fun assertBoundsEquals(
+        expected: NormalizedBounds,
+        actual: NormalizedBounds,
+    ) {
+        assertEquals(expected.left, actual.left, FLOAT_TOLERANCE)
+        assertEquals(expected.top, actual.top, FLOAT_TOLERANCE)
+        assertEquals(expected.right, actual.right, FLOAT_TOLERANCE)
+        assertEquals(expected.bottom, actual.bottom, FLOAT_TOLERANCE)
+    }
 
     /** 创建带指定最优类别和概率的三维 CTC 输出。 */
     private fun ctcOutput(
