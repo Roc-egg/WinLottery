@@ -5,7 +5,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-/** B2 单式、多注、倍投、追加与无法比对场景测试。 */
+/** B2 单式、多注、复式、倍投、追加与无法比对场景测试。 */
 class LotteryPrizeCalculatorTest {
     /** 被测中奖计算器。 */
     private val calculator = LotteryPrizeCalculator()
@@ -410,6 +410,204 @@ class LotteryPrizeCalculatorTest {
         assertNull(result.estimatedPrizeFen)
     }
 
+    /** 大乐透 7+3 复式全中前区和两个后区时，63 注应按组合数分别落入六个奖级。 */
+    @Test
+    fun superLottoCompoundLineCountsEveryTier() {
+        val ticket =
+            ticket(
+                lotteryType = LotteryType.SUPER_LOTTO,
+                issue = "26091",
+                lines = listOf(line(listOf(1, 2, 3, 4, 5, 6, 7), listOf(1, 2, 3))),
+                multiplier = 1,
+                paidAmountFen = 12_600L,
+            )
+
+        val result = calculator.calculate(ticket, superLottoDraw())
+
+        val lineResult = result.lineResults.single()
+        assertEquals(PrizeCheckStatus.WIN, result.status)
+        assertEquals(63L, lineResult.betCount)
+        assertEquals(5, lineResult.primaryHitCount)
+        assertEquals(2, lineResult.secondaryHitCount)
+        assertEquals(PrizeTierCodes.FIRST, lineResult.prizeTierCode)
+        assertEquals(
+            listOf(
+                PrizeTierWin(PrizeTierCodes.FIRST, 1L, 1_000_000L),
+                PrizeTierWin(PrizeTierCodes.SECOND, 2L, 1_000_000L),
+                PrizeTierWin(PrizeTierCodes.THIRD, 10L, 6_666_000L),
+                PrizeTierWin(PrizeTierCodes.FOURTH, 20L, 760_000L),
+                PrizeTierWin(PrizeTierCodes.FIFTH, 10L, 200_000L),
+                PrizeTierWin(PrizeTierCodes.SIXTH, 20L, 36_000L),
+            ),
+            lineResult.tierWins,
+        )
+        assertEquals(9_662_000L, lineResult.estimatedPrizeFen)
+        assertEquals(9_662_000L, result.estimatedPrizeFen)
+    }
+
+    /** 双色球 8+2 复式应把同一奖级的不同命中组合合并计数，未中奖组合不计入。 */
+    @Test
+    fun doubleColorBallCompoundLineMergesSameTier() {
+        val ticket =
+            ticket(
+                lotteryType = LotteryType.DOUBLE_COLOR_BALL,
+                issue = "2026091",
+                lines = listOf(line(listOf(1, 2, 3, 4, 10, 11, 12, 13), listOf(7, 8))),
+                multiplier = 2,
+                paidAmountFen = 22_400L,
+            )
+
+        val result = calculator.calculate(ticket, doubleColorBallDraw())
+
+        val lineResult = result.lineResults.single()
+        assertEquals(56L, lineResult.betCount)
+        assertEquals(
+            listOf(
+                PrizeTierWin(PrizeTierCodes.FOURTH, 6L, 240_000L),
+                PrizeTierWin(PrizeTierCodes.FIFTH, 22L, 44_000L),
+                PrizeTierWin(PrizeTierCodes.SIXTH, 6L, 6_000L),
+            ),
+            lineResult.tierWins,
+        )
+        assertEquals(290_000L, result.estimatedPrizeFen)
+    }
+
+    /** 复式未命中任何奖级时整票未中奖，金额为零。 */
+    @Test
+    fun compoundLineWithoutPrizeIsNoWin() {
+        val ticket =
+            ticket(
+                lotteryType = LotteryType.SUPER_LOTTO,
+                issue = "26091",
+                lines = listOf(line(listOf(1, 20, 21, 22, 23, 24), listOf(5, 6, 7))),
+                multiplier = 1,
+                paidAmountFen = 3_600L,
+            )
+
+        val result = calculator.calculate(ticket, superLottoDraw())
+
+        val lineResult = result.lineResults.single()
+        assertEquals(PrizeCheckStatus.NO_WIN, result.status)
+        assertEquals(0L, result.estimatedPrizeFen)
+        assertEquals(18L, lineResult.betCount)
+        assertTrue(lineResult.tierWins.isEmpty())
+    }
+
+    /** 某个奖级金额缺失时复式行仍给出全部中奖注数，只把缺失奖级和合计金额留空。 */
+    @Test
+    fun compoundLineWithMissingTierAmountKeepsCounts() {
+        val ticket =
+            ticket(
+                lotteryType = LotteryType.SUPER_LOTTO,
+                issue = "26091",
+                lines = listOf(line(listOf(1, 2, 3, 4, 6, 7), listOf(1, 2))),
+                multiplier = 1,
+                paidAmountFen = 1_200L,
+            )
+        val draw =
+            superLottoDraw().copy(
+                prizeTiers = superLottoDraw().prizeTiers.filterNot { it.code == PrizeTierCodes.FIFTH },
+            )
+
+        val result = calculator.calculate(ticket, draw)
+
+        val lineResult = result.lineResults.single()
+        assertEquals(PrizeCheckStatus.WIN, result.status)
+        assertEquals(
+            listOf(
+                PrizeTierWin(PrizeTierCodes.THIRD, 2L, 1_333_200L),
+                PrizeTierWin(PrizeTierCodes.FIFTH, 4L, null),
+            ),
+            lineResult.tierWins,
+        )
+        assertNull(lineResult.estimatedPrizeFen)
+        assertNull(result.estimatedPrizeFen)
+    }
+
+    /** 组合数统计必须与把复式逐注展开后的单式结果完全一致，含追加和福运奖。 */
+    @Test
+    fun compoundCountingMatchesExpandedSingleBets() {
+        val cases =
+            listOf(
+                Triple(
+                    LotteryType.SUPER_LOTTO,
+                    superLottoDraw(),
+                    listOf(
+                        line(listOf(1, 2, 3, 9, 10, 11, 12, 13), listOf(1, 2, 5, 6), additional = true),
+                        line(listOf(1, 2, 3, 4, 5, 6, 7, 8, 9), listOf(2, 9), additional = true),
+                        line(listOf(3, 4, 20, 21, 22, 23), listOf(1, 2, 3)),
+                    ),
+                ),
+                Triple(
+                    LotteryType.DOUBLE_COLOR_BALL,
+                    doubleColorBallDraw(),
+                    listOf(
+                        line(listOf(1, 2, 3, 4, 5, 6, 7, 8, 9, 10), listOf(7, 8, 9)),
+                        line(listOf(1, 2, 3, 20, 21, 22, 23), listOf(1, 2, 7)),
+                    ),
+                ),
+                Triple(
+                    LotteryType.DOUBLE_COLOR_BALL,
+                    doubleColorBallDraw(issue = "2026050").copy(
+                        policy = DrawPolicy.DOUBLE_COLOR_BALL_FORTUNE,
+                        prizeTiers = doubleColorBallDraw().prizeTiers + tier(PrizeTierCodes.FORTUNE, 500L),
+                    ),
+                    listOf(line(listOf(1, 2, 3, 4, 20, 21, 22, 23, 24), listOf(7, 8))),
+                ),
+            )
+        cases.forEach { (lotteryType, draw, lines) ->
+            val compound =
+                calculator.calculate(
+                    ticket(lotteryType, draw.issue.value, lines, multiplier = 3, paidAmountFen = 0L),
+                    draw,
+                )
+            val expandedLines = lines.flatMap { expand(lotteryType, it) }
+            val expanded =
+                calculator.calculate(
+                    ticket(lotteryType, draw.issue.value, expandedLines, multiplier = 3, paidAmountFen = 0L),
+                    draw,
+                )
+
+            assertEquals(expanded.status, compound.status)
+            assertEquals(expanded.estimatedPrizeFen, compound.estimatedPrizeFen)
+            assertEquals(expandedLines.size.toLong(), compound.lineResults.sumOf { it.betCount })
+            assertEquals(expanded.lineResults.tierCounts(), compound.lineResults.tierCounts())
+            assertEquals(
+                expanded.lineResults.sumOf { checkNotNull(it.estimatedPrizeFen) },
+                compound.lineResults.sumOf { checkNotNull(it.estimatedPrizeFen) },
+            )
+        }
+    }
+
+    /** 按奖级汇总全部行的中奖注数。 */
+    private fun List<BetLinePrizeResult>.tierCounts(): Map<String, Long> =
+        flatMap { it.tierWins }
+            .groupBy { it.prizeTierCode }
+            .mapValues { (_, wins) -> wins.sumOf { it.winningBetCount } }
+
+    /** 把复式行逐注展开为全部单式组合。 */
+    private fun expand(
+        lotteryType: LotteryType,
+        compound: BetLine,
+    ): List<BetLine> =
+        subsets(compound.primaryNumbers.value, BetCombinations.primaryCount(lotteryType)).flatMap { primary ->
+            subsets(compound.secondaryNumbers.value, BetCombinations.secondaryCount(lotteryType)).map { secondary ->
+                line(primary, secondary, compound.isAdditional.value)
+            }
+        }
+
+    /** 按升序列出全部 `size` 元子集。 */
+    private fun subsets(
+        numbers: List<Int>,
+        size: Int,
+    ): List<List<Int>> {
+        if (size == 0) return listOf(emptyList())
+        if (numbers.size < size) return emptyList()
+        val head = numbers.first()
+        val tail = numbers.drop(1)
+        return subsets(tail, size - 1).map { listOf(head) + it } + subsets(tail, size)
+    }
+
     /** 创建大乐透最终开奖模型。 */
     private fun superLottoDraw(): DrawResult =
         drawResult(
@@ -505,7 +703,7 @@ class LotteryPrizeCalculatorTest {
             paidAmountFen = confirmed(paidAmountFen),
         )
 
-    /** 创建一行已确认单式投注。 */
+    /** 创建一行已确认单式或复式投注。 */
     private fun line(
         primary: List<Int>,
         secondary: List<Int>,

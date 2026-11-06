@@ -130,6 +130,32 @@ class TicketReviewStateTest {
         assertEquals(TicketFieldOrigin.DERIVED, ticket.paidAmountFen.origin)
     }
 
+    /** 在单式号码上多选即成为复式，理论金额和注数按展开组合计算并可直接确认。 */
+    @Test
+    fun extraNumbersTurnLineIntoCompound() {
+        val compound =
+            TicketReviewState
+                .fromDraft(superLottoDraft())
+                .applyAction(TicketReviewAction.ToggleNumber(0, TicketNumberArea.PRIMARY, 30))
+                .applyAction(TicketReviewAction.ToggleNumber(0, TicketNumberArea.SECONDARY, 12))
+
+        val line = compound.betLines.single()
+        assertTrue(line.isCompound(LotteryType.SUPER_LOTTO))
+        assertEquals(18L, compound.betCount)
+        assertEquals(5_400L, compound.calculatedAmountFen)
+        assertFalse(compound.evaluate(validator).canConfirm)
+
+        val repaired = compound.applyAction(TicketReviewAction.UseCalculatedAmount).evaluate(validator)
+        assertTrue(repaired.canConfirm)
+        assertEquals(
+            listOf(2, 7, 14, 21, 30, 33),
+            assertNotNull(repaired.ticket)
+                .betLines
+                .single()
+                .primaryNumbers.value,
+        )
+    }
+
     /** 不完整金额输入必须形成明确问题，而不是构造默认金额。 */
     @Test
     fun incompleteAmountCannotBeConfirmed() {

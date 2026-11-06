@@ -16,4 +16,12 @@ class AboutScreenScopeTextTest {
         assertFalse(V1_UNSUPPORTED_TICKET_SCOPE_TEXT.contains("补打票"))
         assertFalse(V1_UNSUPPORTED_TICKET_SCOPE_TEXT.contains("不支持复式、胆拖、多期"))
     }
+
+    /** 复式已支持，胆拖仍不支持，页面不得把两者混为一谈。 */
+    @Test
+    fun compoundIsSupportedWhileBankerIsNot() {
+        assertContains(V1_SUPPORTED_TICKET_SCOPE_TEXT, "复式")
+        assertFalse(V1_UNSUPPORTED_TICKET_SCOPE_TEXT.contains("复式"))
+        assertContains(V1_UNSUPPORTED_TICKET_SCOPE_TEXT, "胆拖")
+    }
 }

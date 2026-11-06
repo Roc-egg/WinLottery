@@ -56,6 +56,7 @@ import roc.win.lottery.app.MainDestination
 import roc.win.lottery.app.TicketRecordFilter
 import roc.win.lottery.app.filterTicketRecords
 import roc.win.lottery.domain.LotteryType
+import roc.win.lottery.domain.betCount
 import roc.win.lottery.persistence.MAX_TICKET_RECORD_NAME_LENGTH
 import roc.win.lottery.persistence.StoredTicketRecord
 import roc.win.lottery.persistence.TicketAcquisitionSource
@@ -441,7 +442,7 @@ private fun TicketRecordItem(
             Text(
                 "${record.ticket.periodCount.value} 期 · " +
                     "${record.ticket.multiplier.value} 倍 · " +
-                    "${record.ticket.betLines.size} 注 · " +
+                    "${record.ticket.betLines.sumOf { it.betCount(record.ticket.lotteryType.value) }} 注 · " +
                     record.ticket.paidAmountFen.value
                         .toYuanText(),
                 style = MaterialTheme.typography.bodyMedium,

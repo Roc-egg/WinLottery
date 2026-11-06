@@ -42,9 +42,33 @@ class TicketValidatorTest {
         assertTrue(result.canCalculate)
     }
 
-    /** 复式形态必须被识别为 V1 不支持，不能截断为单式。 */
+    /** 与真实票样同结构的复式票：大乐透 7+3 共 63 注 126 元、双色球 8+2 共 56 注 112 元均合法。 */
     @Test
-    fun tooManyNumbersIsUnsupported() {
+    fun realCompoundTicketsAreValid() {
+        val superLotto =
+            confirmedTicket(
+                lotteryType = LotteryType.SUPER_LOTTO,
+                issue = "26126",
+                lines = listOf(betLine(listOf(3, 9, 14, 18, 22, 27, 33), listOf(2, 6, 11))),
+                multiplier = 1,
+                paidAmountFen = 12_600L,
+            )
+        val doubleColorBall =
+            confirmedTicket(
+                lotteryType = LotteryType.DOUBLE_COLOR_BALL,
+                issue = "2026127",
+                lines = listOf(betLine(listOf(2, 5, 9, 14, 19, 23, 27, 31), listOf(6, 15))),
+                multiplier = 1,
+                paidAmountFen = 11_200L,
+            )
+
+        assertEquals(TicketValidationStatus.VALID, validator.validate(superLotto).status)
+        assertEquals(TicketValidationStatus.VALID, validator.validate(doubleColorBall).status)
+    }
+
+    /** 复式票金额必须按展开注数核对，不能按投注行数计价。 */
+    @Test
+    fun compoundAmountUsesExpandedBetCount() {
         val ticket =
             superLottoTicket(
                 lines =
@@ -59,9 +83,28 @@ class TicketValidatorTest {
 
         val result = validator.validate(ticket)
 
-        assertEquals(TicketValidationStatus.UNSUPPORTED, result.status)
+        assertEquals(TicketValidationStatus.INVALID, result.status)
         assertFalse(result.canCalculate)
-        assertTrue(result.problems.any { it.field.endsWith("primaryNumbers") })
+        assertTrue(result.problems.any { it.field == "paidAmountFen" })
+        assertTrue(validator.validate(ticket.copy(paidAmountFen = confirmed(1_800L))).canCalculate)
+    }
+
+    /** 复式金额超过单张彩票上限时无效。 */
+    @Test
+    fun compoundAboveTicketLimitIsInvalid() {
+        val ticket =
+            confirmedTicket(
+                lotteryType = LotteryType.DOUBLE_COLOR_BALL,
+                issue = "2026091",
+                lines = listOf(betLine((1..16).toList(), listOf(1, 2))),
+                multiplier = 1,
+                paidAmountFen = 3_203_200L,
+            )
+
+        val result = validator.validate(ticket)
+
+        assertEquals(TicketValidationStatus.INVALID, result.status)
+        assertTrue(result.problems.any { it.message.contains("上限") })
     }
 
     /** 号码越界属于无效输入。 */

@@ -122,13 +122,30 @@ enum class PrizeCheckStatus {
 }
 
 /**
+ * 一行投注中命中同一奖级的单式注数与奖金。
+ *
+ * @property prizeTierCode 奖级编码。
+ * @property winningBetCount 该行展开后命中该奖级的单式注数，不含倍数。
+ * @property estimatedPrizeFen 这些注计入倍数和追加后的税前奖金，金额未发布时为 `null`。
+ */
+data class PrizeTierWin(
+    val prizeTierCode: String,
+    val winningBetCount: Long,
+    val estimatedPrizeFen: Long?,
+)
+
+/**
  * 单行投注的测算结果。
  *
+ * 复式行展开为全部单式组合逐注计奖，同一行可以同时命中多个奖级。
+ *
  * @property lineIndex 票面投注行的零基索引。
- * @property primaryHitCount 主号码命中数。
- * @property secondaryHitCount 次号码命中数。
- * @property prizeTierCode 命中奖级编码，未中奖时为 `null`。
- * @property estimatedPrizeFen 该行计入倍数后的税前奖金，金额未发布时为 `null`。
+ * @property primaryHitCount 本行所选主号码中命中开奖号码的个数。
+ * @property secondaryHitCount 本行所选次号码中命中开奖号码的个数。
+ * @property prizeTierCode 命中的最高奖级编码，未中奖时为 `null`。
+ * @property estimatedPrizeFen 该行全部中奖注计入倍数后的税前奖金，任一奖级金额未发布时为 `null`。
+ * @property betCount 该行展开后的单式注数，单式行为 `1`。
+ * @property tierWins 按奖级从高到低排列的中奖注数，未中奖时为空。
  */
 data class BetLinePrizeResult(
     val lineIndex: Int,
@@ -136,13 +153,15 @@ data class BetLinePrizeResult(
     val secondaryHitCount: Int,
     val prizeTierCode: String?,
     val estimatedPrizeFen: Long?,
+    val betCount: Long,
+    val tierWins: List<PrizeTierWin>,
 )
 
 /**
  * 整张彩票的中奖测算结果。
  *
  * @property status 测算状态。
- * @property lineResults 保留票面行顺序的逐注结果。
+ * @property lineResults 保留票面行顺序的逐行结果。
  * @property estimatedPrizeFen 整票税前奖金，金额不完整时为 `null`。
  * @property message 不能完成测算或金额待定时的简体中文说明。
  */

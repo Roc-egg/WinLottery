@@ -3,7 +3,7 @@ package roc.win.lottery.domain
 /** 收集一条校验问题。 */
 private typealias ProblemCollector = (TicketValidationStatus, String, String) -> Unit
 
-/** 校验移动首版已确认彩票的领域约束。 */
+/** 校验移动首版已确认彩票的领域约束，单式与复式投注共用同一套规则。 */
 class TicketValidator(
     /** 将多期票展开为逐期查询列表的安全能力。 */
     private val issueSequenceResolver: IssueSequenceResolver = IssueSequenceResolver(),
@@ -50,7 +50,7 @@ class TicketValidator(
             addProblem(TicketValidationStatus.INVALID, "multiplier", "投注倍数必须在 1 至 99 之间")
         }
         if (ticket.betLines.isEmpty()) {
-            addProblem(TicketValidationStatus.INVALID, "betLines", "彩票至少需要一行单式投注")
+            addProblem(TicketValidationStatus.INVALID, "betLines", "彩票至少需要一注投注")
         }
 
         ticket.betLines.forEachIndexed { index, line ->
@@ -77,7 +77,7 @@ class TicketValidator(
         }
     }
 
-    /** 校验一行单式号码。 */
+    /** 校验一行单式或复式号码。 */
     private fun validateLine(
         lotteryType: LotteryType,
         index: Int,
@@ -106,24 +106,18 @@ class TicketValidator(
         }
     }
 
-    /** 校验一个号码区域的数量、范围和唯一性。 */
+    /** 校验一个号码区域的数量、范围和唯一性；多于单式数量的号码按复式投注展开。 */
     private fun validateNumberArea(
         lineIndex: Int,
         field: String,
         numbers: List<Int>,
-        expectedCount: Int,
+        minimumCount: Int,
         allowedRange: IntRange,
         addProblem: ProblemCollector,
     ) {
         val path = "betLines[$lineIndex].$field"
-        when {
-            numbers.size > expectedCount -> {
-                addProblem(TicketValidationStatus.UNSUPPORTED, path, "号码数量超过单式投注范围")
-            }
-
-            numbers.size < expectedCount -> {
-                addProblem(TicketValidationStatus.INVALID, path, "号码数量不足，单式投注需要 $expectedCount 个号码")
-            }
+        if (numbers.size < minimumCount) {
+            addProblem(TicketValidationStatus.INVALID, path, "号码数量不足，至少需要 $minimumCount 个号码")
         }
         if (numbers.any { it !in allowedRange }) {
             addProblem(
@@ -137,7 +131,7 @@ class TicketValidator(
         }
     }
 
-    /** 校验投注金额与投注行、倍数和追加属性是否严格一致。 */
+    /** 校验投注金额与展开后的单式注数、倍数和追加属性是否严格一致。 */
     private fun validateAmount(
         ticket: ConfirmedTicket,
         addProblem: ProblemCollector,
@@ -153,11 +147,14 @@ class TicketValidator(
             return
         }
 
+        val lotteryType = ticket.lotteryType.value
+        val betCount = ticket.betLines.sumOf { it.betCount(lotteryType) }
+        val additionalBetCount = ticket.betLines.filter { it.isAdditional.value }.sumOf { it.betCount(lotteryType) }
         val baseAmountFen =
             TicketAmountCalculator.calculate(
-                lotteryType = ticket.lotteryType.value,
-                betLineCount = ticket.betLines.size,
-                additionalLineCount = 0,
+                lotteryType = lotteryType,
+                betCount = betCount,
+                additionalBetCount = 0L,
                 multiplier = ticket.multiplier.value,
                 periodCount = ticket.periodCount.value,
             ) ?: run {
@@ -166,9 +163,9 @@ class TicketValidator(
             }
         val expectedAmountFen =
             TicketAmountCalculator.calculate(
-                lotteryType = ticket.lotteryType.value,
-                betLineCount = ticket.betLines.size,
-                additionalLineCount = ticket.betLines.count { it.isAdditional.value },
+                lotteryType = lotteryType,
+                betCount = betCount,
+                additionalBetCount = additionalBetCount,
                 multiplier = ticket.multiplier.value,
                 periodCount = ticket.periodCount.value,
             ) ?: run {
@@ -177,7 +174,7 @@ class TicketValidator(
             }
 
         val maxAmountFen =
-            if (ticket.lotteryType.value == LotteryType.SUPER_LOTTO) {
+            if (lotteryType == LotteryType.SUPER_LOTTO) {
                 SUPER_LOTTO_MAX_TOTAL_FEN
             } else {
                 DOUBLE_COLOR_BALL_MAX_TOTAL_FEN
@@ -189,25 +186,25 @@ class TicketValidator(
             addProblem(
                 TicketValidationStatus.INVALID,
                 "paidAmountFen",
-                "票面金额与投注行、倍数或追加属性不一致",
+                "票面金额与投注注数、倍数或追加属性不一致",
             )
         }
     }
 
     /** 号码区域规则。 */
     private data class NumberSpec(
-        /** 主号码数量。 */
+        /** 单式主号码数量，也是复式主号码的最少数量。 */
         val primaryCount: Int,
         /** 主号码合法范围。 */
         val primaryRange: IntRange,
-        /** 次号码数量。 */
+        /** 单式次号码数量，也是复式次号码的最少数量。 */
         val secondaryCount: Int,
         /** 次号码合法范围。 */
         val secondaryRange: IntRange,
     ) {
         /** 创建指定彩种的号码规则。 */
         companion object {
-            /** 返回指定彩种当前 V1 单式号码规则。 */
+            /** 返回指定彩种当前号码规则。 */
             fun forLottery(lotteryType: LotteryType): NumberSpec =
                 when (lotteryType) {
                     LotteryType.SUPER_LOTTO -> NumberSpec(5, 1..35, 2, 1..12)

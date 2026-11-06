@@ -1,38 +1,38 @@
 package roc.win.lottery.domain
 
-/** 按 V1 单式投注规则计算整张彩票的理论支付金额。 */
+/** 按单式注数计算整张彩票的理论支付金额；复式投注先按 [BetCombinations] 展开为单式注数。 */
 object TicketAmountCalculator {
     /**
-     * 根据投注行、倍数、期数和追加行数计算理论金额。
+     * 根据单式注数、倍数、期数和追加注数计算理论金额。
      *
      * @param lotteryType 彩票玩法。
-     * @param betLineCount 单式投注行数。
-     * @param additionalLineCount 大乐透追加投注行数。
+     * @param betCount 全票展开后的单式注数。
+     * @param additionalBetCount 其中大乐透追加投注的单式注数。
      * @param multiplier 投注倍数。
      * @param periodCount 投注期数。
      * @return 理论支付金额，单位为分；参数不合法或计算溢出时返回 `null`。
      */
     fun calculate(
         lotteryType: LotteryType,
-        betLineCount: Int,
-        additionalLineCount: Int,
+        betCount: Long,
+        additionalBetCount: Long,
         multiplier: Int,
         periodCount: Int,
     ): Long? {
         if (
-            betLineCount < 0 ||
-            additionalLineCount !in 0..betLineCount ||
+            betCount < 0L ||
+            additionalBetCount !in 0L..betCount ||
             multiplier <= 0 ||
             periodCount <= 0 ||
-            (lotteryType == LotteryType.DOUBLE_COLOR_BALL && additionalLineCount != 0)
+            (lotteryType == LotteryType.DOUBLE_COLOR_BALL && additionalBetCount != 0L)
         ) {
             return null
         }
 
-        val baseAmountFen = multiplyExactOrNull(BASE_BET_PRICE_FEN, betLineCount.toLong()) ?: return null
+        val baseAmountFen = multiplyExactOrNull(BASE_BET_PRICE_FEN, betCount) ?: return null
         val additionalAmountFen =
             if (lotteryType == LotteryType.SUPER_LOTTO) {
-                multiplyExactOrNull(ADDITIONAL_BET_PRICE_FEN, additionalLineCount.toLong()) ?: return null
+                multiplyExactOrNull(ADDITIONAL_BET_PRICE_FEN, additionalBetCount) ?: return null
             } else {
                 0L
             }

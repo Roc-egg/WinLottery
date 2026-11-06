@@ -346,7 +346,7 @@ object SuperLottoPrizeTierValidator {
  * B2 本地中奖规则计算器。
  *
  * 只要官方开奖号码可用就逐注比对并给出中奖或未中奖结论；奖级金额缺失、重复或异常时只把对应金额留空，
- * 不再阻断中奖结论。
+ * 不再阻断中奖结论。复式行按组合数统计展开后每个奖级的中奖注数，与逐注展开比对的结果一致。
  */
 class LotteryPrizeCalculator(
     /** 按期号选择规则版本的能力。 */
@@ -357,7 +357,8 @@ class LotteryPrizeCalculator(
         ticket: ConfirmedTicket,
         drawResult: DrawResult,
     ): PrizeCheckResult {
-        ruleVersionSelector.select(ticket.lotteryType.value, ticket.issue.value)
+        val lotteryType = ticket.lotteryType.value
+        ruleVersionSelector.select(lotteryType, ticket.issue.value)
             ?: return unsupportedRuleResult()
         val comparisonProblem = findComparisonProblem(ticket, drawResult)
         if (comparisonProblem != null) return notCalculatedResult(comparisonProblem)
@@ -381,46 +382,51 @@ class LotteryPrizeCalculator(
                     .toSet()
                     .intersect(drawResult.secondaryNumbers.toSet())
                     .size
-            val tierCode =
-                LotteryPrizeRules.findPrizeTierCode(
-                    lotteryType = ticket.lotteryType.value,
-                    policy = policy,
-                    primaryHitCount = primaryHits,
-                    secondaryHitCount = secondaryHits,
-                )
-            if (tierCode == null) {
-                lineResults += BetLinePrizeResult(index, primaryHits, secondaryHits, null, 0L)
+            val betCount = line.betCount(lotteryType)
+            val winningBetCounts = countWinningBets(lotteryType, policy, line, primaryHits, secondaryHits)
+            if (winningBetCounts.isEmpty()) {
+                lineResults += BetLinePrizeResult(index, primaryHits, secondaryHits, null, 0L, betCount, emptyList())
                 return@forEachIndexed
             }
 
             hasWinner = true
-            // 重复奖级无法确定取哪一份金额，按金额未知处理。
-            val tier = tiersByCode[tierCode]?.singleOrNull()
-            val amount = calculateLineAmount(ticket, line, tierCode, tier, drawResult.status)
-            when (amount) {
-                LineAmount.Missing -> {
-                    hasMissingAmount = true
-                }
+            var linePrizeFen: Long? = 0L
+            val tierWins =
+                winningBetCounts.map { (tierCode, winningBetCount) ->
+                    // 重复奖级无法确定取哪一份金额，按金额未知处理。
+                    val tier = tiersByCode[tierCode]?.singleOrNull()
+                    val amount = calculateTierAmount(ticket, line, tierCode, tier, winningBetCount, drawResult.status)
+                    when (amount) {
+                        LineAmount.Missing -> {
+                            hasMissingAmount = true
+                            linePrizeFen = null
+                        }
 
-                LineAmount.Overflow -> {
-                    hasOverflow = true
-                }
+                        LineAmount.Overflow -> {
+                            hasOverflow = true
+                            linePrizeFen = null
+                        }
 
-                is LineAmount.Value -> {
-                    if (totalPrizeFen > Long.MAX_VALUE - amount.fen) {
-                        hasOverflow = true
-                    } else {
-                        totalPrizeFen += amount.fen
+                        is LineAmount.Value -> {
+                            linePrizeFen = linePrizeFen?.let { safeAdd(it, amount.fen) }
+                            if (totalPrizeFen > Long.MAX_VALUE - amount.fen) {
+                                hasOverflow = true
+                            } else {
+                                totalPrizeFen += amount.fen
+                            }
+                        }
                     }
+                    PrizeTierWin(tierCode, winningBetCount, (amount as? LineAmount.Value)?.fen)
                 }
-            }
             lineResults +=
                 BetLinePrizeResult(
                     lineIndex = index,
                     primaryHitCount = primaryHits,
                     secondaryHitCount = secondaryHits,
-                    prizeTierCode = tierCode,
-                    estimatedPrizeFen = (amount as? LineAmount.Value)?.fen,
+                    prizeTierCode = tierWins.first().prizeTierCode,
+                    estimatedPrizeFen = linePrizeFen,
+                    betCount = betCount,
+                    tierWins = tierWins,
                 )
         }
 
@@ -471,11 +477,48 @@ class LotteryPrizeCalculator(
         }
         if (ticket.betLines.isEmpty()) return "票面没有可比对的投注行"
         ticket.betLines.forEachIndexed { index, line ->
-            if (!spec.matches(line.primaryNumbers.value, line.secondaryNumbers.value)) {
-                return "第 ${index + 1} 注号码不是有效的单式投注，无法比对"
+            if (!spec.acceptsBet(line.primaryNumbers.value, line.secondaryNumbers.value)) {
+                return "第 ${index + 1} 注号码不是有效的单式或复式投注，无法比对"
             }
         }
         return null
+    }
+
+    /**
+     * 按组合数统计一行投注展开后各奖级的中奖注数。
+     *
+     * 主区从本行命中的号码中取 `i` 个、未命中的号码中取单式数量减 `i` 个，次区同理取 `j` 个命中号码，
+     * 组成的单式注恰好命中 `i + j`；单式行只有唯一一种命中组合。结果按奖级从高到低排列，未中奖组合不计入。
+     */
+    private fun countWinningBets(
+        lotteryType: LotteryType,
+        policy: DrawPolicy,
+        line: BetLine,
+        primaryHitCount: Int,
+        secondaryHitCount: Int,
+    ): List<Pair<String, Long>> {
+        val primaryCount = BetCombinations.primaryCount(lotteryType)
+        val secondaryCount = BetCombinations.secondaryCount(lotteryType)
+        val primaryMissCount = line.primaryNumbers.value.size - primaryHitCount
+        val secondaryMissCount = line.secondaryNumbers.value.size - secondaryHitCount
+        val countsByTier = mutableMapOf<String, Long>()
+        for (primaryMatches in 0..primaryCount) {
+            val primaryWays =
+                BetCombinations.combinations(primaryHitCount, primaryMatches) *
+                    BetCombinations.combinations(primaryMissCount, primaryCount - primaryMatches)
+            if (primaryWays == 0L) continue
+            for (secondaryMatches in 0..secondaryCount) {
+                val secondaryWays =
+                    BetCombinations.combinations(secondaryHitCount, secondaryMatches) *
+                        BetCombinations.combinations(secondaryMissCount, secondaryCount - secondaryMatches)
+                if (secondaryWays == 0L) continue
+                val tierCode =
+                    LotteryPrizeRules.findPrizeTierCode(lotteryType, policy, primaryMatches, secondaryMatches)
+                        ?: continue
+                countsByTier[tierCode] = (countsByTier[tierCode] ?: 0L) + primaryWays * secondaryWays
+            }
+        }
+        return countsByTier.toList().sortedBy { (tierCode, _) -> PRIZE_TIER_ORDER.indexOf(tierCode) }
     }
 
     /** 已知特别规定期间固定启用福运奖，其余期次以官方数据给出的政策为准。 */
@@ -489,12 +532,13 @@ class LotteryPrizeCalculator(
             drawResult.policy
         }
 
-    /** 计算一行投注计入倍数和追加后的金额。 */
-    private fun calculateLineAmount(
+    /** 计算一行中命中同一奖级的若干注计入倍数和追加后的金额。 */
+    private fun calculateTierAmount(
         ticket: ConfirmedTicket,
         line: BetLine,
         tierCode: String,
         tier: PrizeTier?,
+        winningBetCount: Long,
         drawStatus: DrawStatus,
     ): LineAmount {
         if (drawStatus != DrawStatus.FINAL_PAYOUT || ticket.multiplier.value < 1) return LineAmount.Missing
@@ -510,7 +554,8 @@ class LotteryPrizeCalculator(
                 0L
             }
         val singleBetTotal = safeAdd(basePrizeFen, additionalPrizeFen) ?: return LineAmount.Overflow
-        val multiplied = safeMultiply(singleBetTotal, ticket.multiplier.value.toLong()) ?: return LineAmount.Overflow
+        val winningBetsTotal = safeMultiply(singleBetTotal, winningBetCount) ?: return LineAmount.Overflow
+        val multiplied = safeMultiply(winningBetsTotal, ticket.multiplier.value.toLong()) ?: return LineAmount.Overflow
         return LineAmount.Value(multiplied)
     }
 
@@ -555,7 +600,7 @@ class LotteryPrizeCalculator(
         /** 次号码范围。 */
         val secondaryRange: IntRange,
     ) {
-        /** 判断一组号码是否满足单式投注或开奖号码的数量、范围和唯一性。 */
+        /** 判断一组开奖号码是否满足数量、范围和唯一性。 */
         fun matches(
             primaryNumbers: List<Int>,
             secondaryNumbers: List<Int>,
@@ -565,6 +610,18 @@ class LotteryPrizeCalculator(
                 primaryNumbers.all { it in primaryRange } &&
                 secondaryNumbers.size == secondaryCount &&
                 secondaryNumbers.distinct().size == secondaryCount &&
+                secondaryNumbers.all { it in secondaryRange }
+
+        /** 判断一组投注号码是否满足单式或复式投注的最少数量、范围和唯一性。 */
+        fun acceptsBet(
+            primaryNumbers: List<Int>,
+            secondaryNumbers: List<Int>,
+        ): Boolean =
+            primaryNumbers.size >= primaryCount &&
+                primaryNumbers.distinct().size == primaryNumbers.size &&
+                primaryNumbers.all { it in primaryRange } &&
+                secondaryNumbers.size >= secondaryCount &&
+                secondaryNumbers.distinct().size == secondaryNumbers.size &&
                 secondaryNumbers.all { it in secondaryRange }
 
         /** 按彩种创建号码格式。 */
@@ -578,7 +635,7 @@ class LotteryPrizeCalculator(
         }
     }
 
-    /** 一行中奖金额的内部计算状态。 */
+    /** 一个奖级中奖金额的内部计算状态。 */
     private sealed interface LineAmount {
         /** 官网尚未提供该奖级所需金额。 */
         data object Missing : LineAmount
@@ -600,6 +657,19 @@ class LotteryPrizeCalculator(
 
         /** 大乐透追加投注会增加奖金的奖级。 */
         val ADDITIONAL_PRIZE_TIER_CODES = setOf(PrizeTierCodes.FIRST, PrizeTierCodes.SECOND)
+
+        /** 逐行结果中奖级从高到低的排列顺序。 */
+        val PRIZE_TIER_ORDER =
+            listOf(
+                PrizeTierCodes.FIRST,
+                PrizeTierCodes.SECOND,
+                PrizeTierCodes.THIRD,
+                PrizeTierCodes.FOURTH,
+                PrizeTierCodes.FIFTH,
+                PrizeTierCodes.SIXTH,
+                PrizeTierCodes.SEVENTH,
+                PrizeTierCodes.FORTUNE,
+            )
 
         /** 双色球特别规定首期。 */
         const val SSQ_FORTUNE_FIRST_ISSUE = "2026014"

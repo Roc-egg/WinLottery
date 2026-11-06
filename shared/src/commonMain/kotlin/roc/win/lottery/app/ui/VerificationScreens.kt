@@ -38,6 +38,7 @@ import roc.win.lottery.domain.PrizeCheckResult
 import roc.win.lottery.domain.PrizeCheckStatus
 import roc.win.lottery.domain.PrizeTierCodes
 import roc.win.lottery.domain.SourceEvidence
+import roc.win.lottery.domain.isCompound
 import kotlin.time.Instant
 
 /**
@@ -402,11 +403,18 @@ private fun PeriodVerificationItem(result: PeriodVerification) {
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    val winningLines = result.prizeCheckResult.lineResults.filter { it.prizeTierCode != null }
+                    val lineResults = result.prizeCheckResult.lineResults
+                    val ticketHasCompound = lineResults.any { it.isCompound }
+                    val winningLines = lineResults.filter { it.prizeTierCode != null }
                     if (winningLines.isNotEmpty()) {
                         Text(
                             winningLines.joinToString(separator = "；") { line ->
-                                "第 ${line.lineIndex + 1} 注${checkNotNull(line.prizeTierCode).displayPrizeTier()}"
+                                val label = betLineLabel(line.lineIndex, ticketHasCompound)
+                                if (line.isCompound) {
+                                    "$label ${line.tierWins.tierWinsText { result.drawResult.prizeTierName(it) }}"
+                                } else {
+                                    "$label${result.drawResult.prizeTierName(checkNotNull(line.prizeTierCode))}"
+                                }
                             },
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.primary,
@@ -518,7 +526,7 @@ private fun NumberRow(
     }
 }
 
-/** 展示一行票面投注的命中数、奖级和金额。 */
+/** 展示一行票面投注的命中数、奖级和金额；复式行列出展开后各奖级的中奖注数。 */
 @Composable
 private fun BetLineResult(
     ticket: ConfirmedTicket,
@@ -526,9 +534,12 @@ private fun BetLineResult(
     result: BetLinePrizeResult,
 ) {
     val line = ticket.betLines.getOrNull(result.lineIndex)
+    val lotteryType = ticket.lotteryType.value
+    val ticketHasCompound = ticket.betLines.any { it.isCompound(lotteryType) }
+    val winningBetCount = result.tierWins.sumOf { it.winningBetCount }
     val tierName =
         result.prizeTierCode?.let { code ->
-            drawResult.prizeTiers.firstOrNull { it.code == code }?.displayName ?: code.displayPrizeTier()
+            if (result.isCompound) "中奖 $winningBetCount 注" else drawResult.prizeTierName(code)
         }
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -542,7 +553,10 @@ private fun BetLineResult(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text("第 ${result.lineIndex + 1} 注", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    betLineTitle(result.lineIndex, result.betCount, result.isCompound, ticketHasCompound),
+                    style = MaterialTheme.typography.titleMedium,
+                )
                 Text(
                     tierName ?: "未中奖",
                     style = MaterialTheme.typography.titleMedium,
@@ -565,6 +579,13 @@ private fun BetLineResult(
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            if (result.isCompound && result.tierWins.isNotEmpty()) {
+                Text(
+                    "其中 ${result.tierWins.tierWinsText { drawResult.prizeTierName(it) }}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
             line?.let {
                 val betType = if (it.isAdditional.value) "追加投注" else "基本投注"
                 Text(
@@ -574,8 +595,9 @@ private fun BetLineResult(
                 )
             }
             if (tierName != null) {
+                val scope = if (result.isCompound) "本组" else "本注"
                 Text(
-                    result.estimatedPrizeFen?.let { "本注税前奖金 ${it.toPrizeYuanText()}" } ?: "本注奖金待官方确认",
+                    result.estimatedPrizeFen?.let { "${scope}税前奖金 ${it.toPrizeYuanText()}" } ?: "${scope}奖金待官方确认",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.primary,
                 )
@@ -678,6 +700,14 @@ private fun PrizeCheckResult.detail(): String =
             message ?: "当前无法用官方开奖号码完成比对"
         }
     }
+
+/** 本行是否为复式；复式至少展开为两注，单式恰好一注。 */
+private val BetLinePrizeResult.isCompound: Boolean
+    get() = betCount > 1L
+
+/** 返回奖级名称，优先使用官方数据中的名称。 */
+private fun DrawResult.prizeTierName(code: String): String =
+    prizeTiers.firstOrNull { it.code == code }?.displayName ?: code.displayPrizeTier()
 
 /** 返回逐注命中数的玩法化文案。 */
 private fun BetLinePrizeResult.hitSummary(lotteryType: LotteryType): String =

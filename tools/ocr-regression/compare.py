@@ -19,13 +19,27 @@ def load(path):
         return {record["image"]: record for record in map(json.loads, filter(str.strip, handle))}
 
 
+# 各彩种单式投注的主区、次区号码数量。
+SINGLE_BET_COUNTS = {"SUPER_LOTTO": (5, 2), "DOUBLE_COLOR_BALL": (6, 1)}
+
+
+def bet_count(lottery, bet):
+    """返回一行投注展开后的单式注数，复式按两区组合数相乘。"""
+    primary, secondary = bet.removesuffix("追加").split("+")
+    primary_count, secondary_count = SINGLE_BET_COUNTS[lottery]
+    return math.comb(len(primary.split()), primary_count) * math.comb(len(secondary.split()), secondary_count)
+
+
 def is_consistent(record):
-    """金额等于注数、期数、倍数与单注价格之积时视为自洽；字段不全时返回 False。"""
+    """金额等于展开注数、期数、倍数与单注价格之积时视为自洽；字段不全时返回 False。"""
     bets = record.get("bets") or []
     periods, multiplier, amount = record.get("periods"), record.get("multiplier"), record.get("amountFen")
-    if not bets or None in (periods, multiplier, amount) or any(bet.endswith("?") for bet in bets):
+    lottery = record.get("lottery")
+    if not bets or None in (periods, multiplier, amount) or lottery not in SINGLE_BET_COUNTS:
         return False
-    per_period = sum(300 if bet.endswith("追加") else 200 for bet in bets)
+    if any(bet.endswith("?") for bet in bets):
+        return False
+    per_period = sum((300 if bet.endswith("追加") else 200) * bet_count(lottery, bet) for bet in bets)
     return per_period * periods * multiplier == amount
 
 

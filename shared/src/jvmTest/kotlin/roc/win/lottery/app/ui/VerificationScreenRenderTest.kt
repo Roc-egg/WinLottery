@@ -58,6 +58,54 @@ class VerificationScreenRenderTest {
         }
     }
 
+    /** 复式行按组展示展开注数、各奖级中奖注数和本组奖金。 */
+    @Test
+    fun compoundLineShowsTierWinCounts() {
+        val ticket =
+            ticket(periodCount = 1).let { single ->
+                single.copy(
+                    betLines =
+                        listOf(
+                            single.betLines.single().copy(
+                                primaryNumbers =
+                                    ConfirmedValue(listOf(2, 7, 14, 20, 22, 24, 26), TicketFieldOrigin.USER),
+                                secondaryNumbers = ConfirmedValue(listOf(4, 9, 11), TicketFieldOrigin.USER),
+                            ),
+                        ),
+                    paidAmountFen = ConfirmedValue(12_600L, TicketFieldOrigin.OCR),
+                )
+            }
+        val draw =
+            draw("26090").copy(
+                prizeTiers =
+                    listOf(
+                        PrizeTier(PrizeTierCodes.FIFTH, "五等奖", 20_000L, null),
+                        PrizeTier(PrizeTierCodes.SIXTH, "六等奖", 1_800L, null),
+                        PrizeTier(PrizeTierCodes.SEVENTH, "七等奖", 700L, null),
+                    ),
+            )
+        ImageComposeScene(390, 2400).use { scene ->
+            scene.setContent {
+                LotteryTheme {
+                    VerificationResultScreen(
+                        ticket = ticket,
+                        drawResult = draw,
+                        prizeCheckResult = LotteryPrizeCalculator().calculate(ticket, draw),
+                        isFromLocalStore = false,
+                        onRetry = {},
+                        onBack = {},
+                        onDone = {},
+                    )
+                }
+            }
+            scene.settle()
+            assertTrue(scene.hasText("第 1 组 · 复式 63 注"))
+            assertTrue(scene.hasText("中奖 57 注"))
+            assertTrue(scene.hasText("其中 五等奖 6 注、六等奖 24 注、七等奖 27 注"))
+            assertTrue(scene.hasText("本组税前奖金 1,821.00 元"))
+        }
+    }
+
     /** 有未完成期次时同时提供补查和全部重新核对；全部完成时只保留重新核对。 */
     @Test
     fun multiPeriodResultSeparatesRetryAndForceRefresh() {

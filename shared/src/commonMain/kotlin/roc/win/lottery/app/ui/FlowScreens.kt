@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -247,11 +248,24 @@ fun ReviewScreen(
         }
         val selectedLotteryType = editor.lotteryType.value
         if (selectedLotteryType != null) {
+            val hasCompound = editor.betLines.any { it.isCompound(selectedLotteryType) }
             Spacer(Modifier.height(24.dp))
             Text(
-                "投注号码（共 ${editor.betLines.size} 注）",
+                if (hasCompound) {
+                    "投注号码（共 ${editor.betLines.size} 组 · ${editor.betCount} 注）"
+                } else {
+                    "投注号码（共 ${editor.betLines.size} 注）"
+                },
                 style = MaterialTheme.typography.titleLarge,
             )
+            if (isManualEntry) {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "一组号码可以多选，多于单式数量时按复式展开计算注数和金额。",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             Spacer(Modifier.height(12.dp))
             editor.betLines.forEachIndexed { index, line ->
                 val removeAction: (() -> Unit)? =
@@ -262,7 +276,17 @@ fun ReviewScreen(
                     }
                 TicketLineEditor(
                     lineIndex = index,
-                    lineCount = editor.betLines.size,
+                    title =
+                        if (hasCompound) {
+                            betLineTitle(
+                                lineIndex = index,
+                                betCount = line.betCount(selectedLotteryType),
+                                isCompound = line.isCompound(selectedLotteryType),
+                                ticketHasCompound = true,
+                            )
+                        } else {
+                            "第 ${index + 1} 注 / 共 ${editor.betLines.size} 注"
+                        },
                     line = line,
                     lotteryType = selectedLotteryType,
                     problems = evaluation.problems,
@@ -439,10 +463,10 @@ private fun CandidateChoiceRow(
 }
 
 /**
- * 显示一行单式投注的号码球编辑器。
+ * 显示一行单式或复式投注的号码球编辑器。
  *
  * @param lineIndex 投注行下标。
- * @param lineCount 当前票面的投注总注数。
+ * @param title 投注行标题，含编号和复式注数。
  * @param line 当前行编辑状态。
  * @param lotteryType 当前玩法。
  * @param problems 当前领域问题。
@@ -453,7 +477,7 @@ private fun CandidateChoiceRow(
 @Composable
 private fun TicketLineEditor(
     lineIndex: Int,
-    lineCount: Int,
+    title: String,
     line: TicketLineReviewState,
     lotteryType: LotteryType,
     problems: List<TicketValidationProblem>,
@@ -474,10 +498,7 @@ private fun TicketLineEditor(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(
-                    "第 ${lineIndex + 1} 注 / 共 $lineCount 注",
-                    style = MaterialTheme.typography.titleMedium,
-                )
+                Text(title, style = MaterialTheme.typography.titleMedium)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         line.displayOrigin().displayName(),
@@ -532,9 +553,10 @@ private fun TicketLineEditor(
 }
 
 /**
- * 在一行内完整显示本注已选号码，未选满的位置以短横线占位。
+ * 完整显示本注已选号码，未选满的位置以短横线占位。
  *
- * 号码球尺寸按可用宽度缩放，保证手机竖屏无需横向滚动即可核对整注号码。
+ * 号码球尺寸按可用宽度缩放，保证手机竖屏无需横向滚动即可核对整注号码；复式号码较多、最小球径也排不下
+ * 一行时自动换行。
  */
 @Composable
 private fun SelectedNumbersLine(
@@ -558,17 +580,18 @@ private fun SelectedNumbersLine(
         val ballSize =
             ((maxWidth - SELECTED_LINE_SPACING * (slotCount - 1)) / slotCount)
                 .coerceIn(SELECTED_LINE_MIN_BALL_SIZE, SELECTED_LINE_MAX_BALL_SIZE)
-        Row(
+        FlowRow(
             horizontalArrangement = Arrangement.spacedBy(SELECTED_LINE_SPACING),
-            verticalAlignment = Alignment.CenterVertically,
+            verticalArrangement = Arrangement.spacedBy(SELECTED_LINE_SPACING),
         ) {
             primarySlots.forEach { number -> SelectedNumberBall(number, ballSize, primaryColor) }
-            Text(
-                "+",
-                modifier = Modifier.width(ballSize),
-                style = MaterialTheme.typography.titleMedium,
-                textAlign = TextAlign.Center,
-            )
+            Box(modifier = Modifier.size(ballSize), contentAlignment = Alignment.Center) {
+                Text(
+                    "+",
+                    style = MaterialTheme.typography.titleMedium,
+                    textAlign = TextAlign.Center,
+                )
+            }
             secondarySlots.forEach { number -> SelectedNumberBall(number, ballSize, secondaryColor) }
         }
     }
@@ -616,7 +639,11 @@ private fun NumberAreaEditor(
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
-            "$title（已选 ${selectedNumbers.size}/$expectedCount）",
+            if (selectedNumbers.size > expectedCount) {
+                "$title（已选 ${selectedNumbers.size} 个，复式）"
+            } else {
+                "$title（已选 ${selectedNumbers.size}/$expectedCount）"
+            },
             style = MaterialTheme.typography.bodyMedium,
         )
         val lastVisibleNumber = maxOf(range.last, selectedNumbers.maxOrNull() ?: range.last)
@@ -1242,7 +1269,7 @@ private data class LotteryNumberSpec(
     val secondaryCount: Int,
     val secondaryRange: IntRange,
 ) {
-    /** 创建当前玩法的 V1 单式号码规格。 */
+    /** 创建当前玩法的单式号码规格，复式在此基础上多选。 */
     companion object {
         /** 返回当前玩法的号码规格。 */
         fun forLottery(lotteryType: LotteryType): LotteryNumberSpec =
@@ -1266,8 +1293,8 @@ private const val MAX_MULTIPLIER = 99
 
 /** 关于页展示的 V1 已支持票面范围。 */
 internal const val V1_SUPPORTED_TICKET_SCOPE_TEXT =
-    "单张电脑打印的超级大乐透或双色球彩票；支持 1 至 20 期受控连续投注、补打票、单式、多注单式、倍数及大乐透追加。"
+    "单张电脑打印的超级大乐透或双色球彩票；支持 1 至 20 期受控连续投注、补打票、单式、多注单式、复式、倍数及大乐透追加。"
 
 /** 关于页展示的 V1 未支持票面范围。 */
 internal const val V1_UNSUPPORTED_TICKET_SCOPE_TEXT =
-    "不支持复式、胆拖、超过 20 期、跨年度未知期次、手写票、电子截图或未知票面版式。"
+    "不支持胆拖、超过 20 期、跨年度未知期次、手写票、电子截图或未知票面版式。"

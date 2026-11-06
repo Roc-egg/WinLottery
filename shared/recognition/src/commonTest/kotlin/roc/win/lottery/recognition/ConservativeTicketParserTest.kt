@@ -837,10 +837,243 @@ class ConservativeTicketParserTest {
         assertTrue(correction.message.contains("越界"))
     }
 
-    /** 玩法标题明确为复式时应阻断，不能按号码数量尝试降级为单式。 */
+    /** 大乐透复式票按前区、后区标签行解析，侧边纵排噪声不进入号码、区域和置信度，校验码中的加号不算投注行。 */
     @Test
-    fun complexPlayIsUnsupported() {
+    fun superLottoCompoundTicketIsReadyForReview() {
         val result =
+            parser.parse(
+                OcrDocument(
+                    imageId = TEST_IMAGE_ID,
+                    engineName = TEST_ENGINE_NAME,
+                    lines =
+                        listOf(
+                            line("超级大乐透", left = 0.27f, top = 0.105f, width = 0.46f, height = 0.138f),
+                            line("第 26126期", left = 0.144f, top = 0.235f, width = 0.145f, height = 0.037f),
+                            line(
+                                "120000-340000-560000-780000 900000 Ab+Cd",
+                                left = 0.143f,
+                                top = 0.272f,
+                                width = 0.608f,
+                                height = 0.035f,
+                            ),
+                            line("合计126元", left = 0.612f, top = 0.315f, width = 0.14f, height = 0.041f),
+                            line("1倍", left = 0.393f, top = 0.322f, width = 0.057f, height = 0.046f),
+                            line("复式票", left = 0.144f, top = 0.332f, width = 0.093f, height = 0.039f),
+                            line(
+                                "前区 03 09 14 18 22 27 33",
+                                left = 0.192f,
+                                top = 0.383f,
+                                width = 0.514f,
+                                height = 0.057f,
+                            ),
+                            line("中", left = 0.775f, top = 0.40f, width = 0.039f, height = 0.036f, confidence = 0.57f),
+                            line("后区 02 06 11", left = 0.192f, top = 0.426f, width = 0.256f, height = 0.047f),
+                            line("国", left = 0.775f, top = 0.436f, width = 0.039f, height = 0.036f, confidence = 0.57f),
+                        ),
+                ),
+            )
+
+        val ready = assertIs<TicketParseResult.ReadyForReview>(result)
+        val line = ready.draft.betLines.single()
+        assertEquals(LotteryType.SUPER_LOTTO, ready.draft.lotteryType)
+        assertEquals("26126", ready.draft.issue)
+        assertEquals(listOf(3, 9, 14, 18, 22, 27, 33), line.primaryNumbers)
+        assertEquals(listOf(2, 6, 11), line.secondaryNumbers)
+        assertEquals(false, line.isAdditional)
+        assertEquals("前区 03 09 14 18 22 27 33；后区 02 06 11", line.originalText)
+        assertEquals(1, ready.draft.multiplier)
+        assertEquals(12_600L, ready.draft.paidAmountFen)
+        val region = ready.fieldRegions.single { it.field == TicketFieldReference.BetLine(0) }
+        assertTrue(region.bounds.right < 0.71f)
+        assertEquals(TEST_CONFIDENCE, region.rawConfidence)
+    }
+
+    /** 双色球复式票按红复、蓝复标签解析，“玩法”前缀误识别时仍读取“倍数：N”。 */
+    @Test
+    fun doubleColorBallCompoundTicketIsReadyForReview() {
+        val result =
+            parser.parse(
+                document(
+                    "中国福利彩票",
+                    "元法：双色球-复式(活动票)",
+                    "红复:02 05 09 14 19 23 27 31",
+                    "蓝复:06 15",
+                    "倍数：1",
+                    "开奖期：2026127 26-11-05",
+                    "合计:112元",
+                ),
+            )
+
+        val ready = assertIs<TicketParseResult.ReadyForReview>(result)
+        val line = ready.draft.betLines.single()
+        assertEquals(LotteryType.DOUBLE_COLOR_BALL, ready.draft.lotteryType)
+        assertEquals("2026127", ready.draft.issue)
+        assertEquals(listOf(2, 5, 9, 14, 19, 23, 27, 31), line.primaryNumbers)
+        assertEquals(listOf(6, 15), line.secondaryNumbers)
+        assertEquals(1, ready.draft.multiplier)
+        assertEquals(11_200L, ready.draft.paidAmountFen)
+        assertTrue(ready.fieldRegions.any { it.field == TicketFieldReference.Multiplier })
+    }
+
+    /** 号码较多折行打印时，紧邻的纯号码行应并入上一号码区，标签与号码分属不同片段也能识别。 */
+    @Test
+    fun wrappedCompoundNumbersAreMergedIntoPreviousArea() {
+        val result =
+            parser.parse(
+                OcrDocument(
+                    imageId = TEST_IMAGE_ID,
+                    engineName = TEST_ENGINE_NAME,
+                    lines =
+                        listOf(
+                            line("超级大乐透", left = 0.27f, top = 0.10f, width = 0.46f, height = 0.10f),
+                            line("第26126期", left = 0.14f, top = 0.22f, width = 0.15f, height = 0.04f),
+                            line("复式票 1倍 合计1584元", left = 0.14f, top = 0.30f, width = 0.60f, height = 0.04f),
+                            line("前区", left = 0.14f, top = 0.36f, width = 0.08f, height = 0.04f),
+                            line("01 03 05 07 09 11 13 15", left = 0.25f, top = 0.36f, width = 0.50f, height = 0.04f),
+                            line("17 19 21 23", left = 0.25f, top = 0.41f, width = 0.25f, height = 0.04f),
+                            line("后区", left = 0.14f, top = 0.46f, width = 0.08f, height = 0.04f),
+                            line("02 04", left = 0.25f, top = 0.46f, width = 0.12f, height = 0.04f),
+                            line("感谢您为公益事业贡献554.40元", left = 0.20f, top = 0.55f, width = 0.50f, height = 0.04f),
+                        ),
+                ),
+            )
+
+        val ready = assertIs<TicketParseResult.ReadyForReview>(result)
+        val line = ready.draft.betLines.single()
+        assertEquals(listOf(1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23), line.primaryNumbers)
+        assertEquals(listOf(2, 4), line.secondaryNumbers)
+        assertEquals(158_400L, ready.draft.paidAmountFen)
+    }
+
+    /** 套餐票同时打印单式行和复式号码区，两者都要保留并按票面顺序合并后核对金额。 */
+    @Test
+    fun packageTicketKeepsSingleAndCompoundBets() {
+        val result =
+            parser.parse(
+                document(
+                    "体彩 超级大乐透幸运",
+                    "第 25070期",
+                    "套餐票 1倍 合计88元",
+                    "① 03 05 08 10 31 + 10 12",
+                    "② 03 06 14 20 35 + 07 12",
+                    "③ 01 02 05 15 29 + 01 11",
+                    "④ 01 13 19 20 25 + 03 07",
+                    "⑤ 15 19 22 30 32 + 05 06",
+                    "前区 05 08 11 16 17 21 33",
+                    "后区 02 09",
+                    "前区 08 09 11 15 20 22",
+                    "后区 01 06 09",
+                ),
+            )
+
+        val ready = assertIs<TicketParseResult.ReadyForReview>(result)
+        assertEquals(7, ready.draft.betLines.size)
+        assertEquals(listOf(15, 19, 22, 30, 32), ready.draft.betLines[4].primaryNumbers)
+        assertEquals(listOf(5, 8, 11, 16, 17, 21, 33), ready.draft.betLines[5].primaryNumbers)
+        assertEquals(listOf(1, 6, 9), ready.draft.betLines[6].secondaryNumbers)
+        assertEquals(8_800L, ready.draft.paidAmountFen)
+    }
+
+    /** 号码区有标签锚定时，丢失前导零的一位数字仍按号码读取，折行号码继续并入红球。 */
+    @Test
+    fun singleDigitNumbersInLabelledAreaAreAccepted() {
+        val result =
+            parser.parse(
+                OcrDocument(
+                    imageId = TEST_IMAGE_ID,
+                    engineName = TEST_ENGINE_NAME,
+                    lines =
+                        listOf(
+                            line("中国福利彩票", left = 0.39f, top = 0.045f, width = 0.45f, height = 0.07f),
+                            line("玩法:双色球-复式", left = 0.05f, top = 0.13f, width = 0.36f, height = 0.047f),
+                            line(
+                                "红复：6 8 12 16 21 26 28 29",
+                                left = 0.045f,
+                                top = 0.196f,
+                                width = 0.87f,
+                                height = 0.061f,
+                            ),
+                            line("32", left = 0.15f, top = 0.25f, width = 0.12f, height = 0.06f),
+                            line("蓝单：15", left = 0.04f, top = 0.33f, width = 0.22f, height = 0.06f),
+                            line("倍数：1", left = 0.042f, top = 0.41f, width = 0.18f, height = 0.06f),
+                            line("开奖期：2026019 26-02-21", left = 0.05f, top = 0.49f, width = 0.5f, height = 0.04f),
+                            line("合计168元", left = 0.64f, top = 0.55f, width = 0.24f, height = 0.06f),
+                        ),
+                ),
+            )
+
+        val ready = assertIs<TicketParseResult.ReadyForReview>(result)
+        val line = ready.draft.betLines.single()
+        assertEquals(listOf(6, 8, 12, 16, 21, 26, 28, 29, 32), line.primaryNumbers)
+        assertEquals(listOf(15), line.secondaryNumbers)
+        assertEquals(16_800L, ready.draft.paidAmountFen)
+    }
+
+    /** 复式金额必须按展开注数核对，倍数和追加属性仍来自投注摘要。 */
+    @Test
+    fun compoundAmountIsReconciledWithExpandedBetCount() {
+        val additional =
+            parser.parse(
+                document(
+                    "超级大乐透",
+                    "第26126期",
+                    "复式票 追加投注 1倍 合计18元",
+                    "前区 01 02 03 04 05 06",
+                    "后区 01 02",
+                ),
+            )
+        val mismatched =
+            parser.parse(
+                document(
+                    "超级大乐透",
+                    "第26126期",
+                    "复式票 1倍 合计2元",
+                    "前区 01 02 03 04 05 06",
+                    "后区 01 02",
+                ),
+            )
+
+        val ready = assertIs<TicketParseResult.ReadyForReview>(additional)
+        assertEquals(
+            true,
+            ready.draft.betLines
+                .single()
+                .isAdditional,
+        )
+        val correction = assertIs<TicketParseResult.NeedsCorrection>(mismatched)
+        assertTrue(correction.message.contains("票面金额与投注注数"))
+        assertEquals(
+            6,
+            assertNotNull(correction.draft)
+                .betLines
+                .single()
+                .primaryNumbers.size,
+        )
+    }
+
+    /** 复式号码区缺少后区、号码异常或完全无法读取时都必须进入人工校正，不能降级为单式。 */
+    @Test
+    fun incompleteCompoundTicketNeedsCorrection() {
+        val missingSecondary =
+            parser.parse(
+                document(
+                    "超级大乐透",
+                    "第26126期",
+                    "复式票 1倍 合计12元",
+                    "前区 01 02 03 04 05 06",
+                ),
+            )
+        val descending =
+            parser.parse(
+                document(
+                    "超级大乐透",
+                    "第26126期",
+                    "复式票 1倍 合计12元",
+                    "前区 01 02 03 05 04 06",
+                    "后区 01 02",
+                ),
+            )
+        val unreadable =
             parser.parse(
                 document(
                     "玩法：双色球-复式",
@@ -849,8 +1082,39 @@ class ConservativeTicketParserTest {
                 ),
             )
 
-        val unsupported = assertIs<TicketParseResult.Unsupported>(result)
-        assertTrue(unsupported.message.contains("复式"))
+        assertTrue(assertIs<TicketParseResult.NeedsCorrection>(missingSecondary).message.contains("号码区不完整"))
+        assertTrue(assertIs<TicketParseResult.NeedsCorrection>(descending).message.contains("顺序异常"))
+        assertTrue(assertIs<TicketParseResult.NeedsCorrection>(unreadable).message.contains("复式"))
+    }
+
+    /** 胆拖票的玩法标题或胆码、拖码号码区都应明确阻断，“玩法”前缀误识别时同样阻断。 */
+    @Test
+    fun bankerPlayIsUnsupported() {
+        val titled =
+            parser.parse(
+                document(
+                    "元法：双色球-胆拖",
+                    "红胆:01 02",
+                    "红拖:03 04 05 06 07",
+                    "蓝单:08",
+                    "开奖期：2026999",
+                    "合计：20元",
+                ),
+            )
+        val labelled =
+            parser.parse(
+                document(
+                    "超级大乐透",
+                    "第26126期",
+                    "1倍 合计20元",
+                    "前区胆 01 02",
+                    "前区拖 03 04 05 06",
+                    "后区 01 02",
+                ),
+            )
+
+        assertTrue(assertIs<TicketParseResult.Unsupported>(titled).message.contains("胆拖"))
+        assertTrue(assertIs<TicketParseResult.Unsupported>(labelled).message.contains("胆拖"))
     }
 
     /** 广告中的“复式”文字不能把明确单式票误判成复杂玩法。 */

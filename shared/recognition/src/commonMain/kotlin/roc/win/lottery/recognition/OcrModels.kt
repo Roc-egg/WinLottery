@@ -83,7 +83,7 @@ sealed interface TicketFieldReference {
     data object Issue : TicketFieldReference
 
     /**
-     * 一行单式投注号码。
+     * 一行单式或复式投注号码。
      *
      * @property index 投注行在草稿中的下标。
      */

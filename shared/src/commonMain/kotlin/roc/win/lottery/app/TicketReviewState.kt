@@ -1,5 +1,6 @@
 package roc.win.lottery.app
 
+import roc.win.lottery.domain.BetCombinations
 import roc.win.lottery.domain.BetLine
 import roc.win.lottery.domain.ConfirmedTicket
 import roc.win.lottery.domain.ConfirmedValue
@@ -65,11 +66,11 @@ sealed interface TicketReviewAction {
         val number: Int,
     ) : TicketReviewAction
 
-    /** 在手动录入票据末尾增加一行空的单式投注。 */
+    /** 在手动录入票据末尾增加一行空投注，多选号码即为复式。 */
     data object AddBetLine : TicketReviewAction
 
     /**
-     * 删除一行手动录入的单式投注。
+     * 删除一行手动录入的投注。
      *
      * @property lineIndex 待删除的投注行下标。
      */
@@ -118,7 +119,7 @@ sealed interface TicketReviewAction {
 }
 
 /**
- * 一行等待用户校正的单式投注。
+ * 一行等待用户校正的单式或复式投注。
  *
  * @property primaryNumbers 前区或红球号码。
  * @property secondaryNumbers 后区或蓝球号码。
@@ -130,7 +131,16 @@ data class TicketLineReviewState(
     val secondaryNumbers: TicketReviewField<List<Int>>,
     val isAdditional: TicketReviewField<Boolean?>,
     val originalText: String,
-)
+) {
+    /** 本行按当前号码展开的单式注数；任一区号码尚未选满时为 `0`。 */
+    fun betCount(lotteryType: LotteryType): Long =
+        BetCombinations.betCount(lotteryType, primaryNumbers.value.size, secondaryNumbers.value.size)
+
+    /** 本行是否已选成复式，即任一区号码多于单式数量。 */
+    fun isCompound(lotteryType: LotteryType): Boolean =
+        primaryNumbers.value.size > BetCombinations.primaryCount(lotteryType) ||
+            secondaryNumbers.value.size > BetCombinations.secondaryCount(lotteryType)
+}
 
 /**
  * 一次票面编辑的领域评估结果。
@@ -169,17 +179,26 @@ data class TicketReviewState(
     val isAdditional: Boolean?
         get() = betLines.map { it.isAdditional.value }.toSet().singleOrNull()
 
+    /** 全票按当前号码展开的单式注数，号码未选满的行不计入；玩法尚未选择时为 `null`。 */
+    val betCount: Long?
+        get() {
+            val selectedLotteryType = lotteryType.value ?: return null
+            return betLines.sumOf { it.betCount(selectedLotteryType) }
+        }
+
     /** 根据当前投注结构计算出的理论金额，单位为分。 */
     val calculatedAmountFen: Long?
         get() {
             val selectedLotteryType = lotteryType.value ?: return null
             val selectedMultiplier = multiplier.value ?: return null
-            val additionalValues = betLines.map { it.isAdditional.value }
-            if (additionalValues.any { it == null }) return null
+            if (betLines.any { it.isAdditional.value == null }) return null
+            // 号码尚未选满的行按一注单式估算，与录入过程中逐行累加的预期一致。
+            val lineBetCounts = betLines.map { it.betCount(selectedLotteryType).coerceAtLeast(1L) }
             return TicketAmountCalculator.calculate(
                 lotteryType = selectedLotteryType,
-                betLineCount = betLines.size,
-                additionalLineCount = additionalValues.count { it == true },
+                betCount = lineBetCounts.sum(),
+                additionalBetCount =
+                    betLines.indices.filter { betLines[it].isAdditional.value == true }.sumOf { lineBetCounts[it] },
                 multiplier = selectedMultiplier,
                 periodCount = periodCount.value,
             )
@@ -274,7 +293,7 @@ data class TicketReviewState(
         return copy(betLines = betLines.replaceAt(action.lineIndex, updatedLine))
     }
 
-    /** 增加一行空单式投注，并继承当前全票追加属性。 */
+    /** 增加一行空投注，并继承当前全票追加属性。 */
     private fun addBetLine(): TicketReviewState {
         val additionalField: TicketReviewField<Boolean?> =
             when (lotteryType.value) {
@@ -324,7 +343,7 @@ data class TicketReviewState(
         return copy(periodCount = periodCount.withUserValue(value))
     }
 
-    /** 修改大乐透追加属性，并同步到每一行单式投注。 */
+    /** 修改大乐透追加属性，并同步到每一行投注。 */
     private fun changeAdditional(value: Boolean): TicketReviewState {
         if (lotteryType.value != LotteryType.SUPER_LOTTO) return this
         return copy(
@@ -414,7 +433,7 @@ data class TicketReviewState(
     /** 创建手动录入或 OCR 校正所需的初始状态。 */
     companion object {
         /**
-         * 创建一张等待用户完整录入的单式彩票。
+         * 创建一张等待用户完整录入的彩票，每行可录入单式或复式号码。
          *
          * 所有影响查询和金额的字段均保持未确认，只有固定为 1 的期数使用推导来源。
          */

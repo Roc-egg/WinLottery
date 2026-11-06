@@ -1,5 +1,6 @@
 package roc.win.lottery.recognition
 
+import roc.win.lottery.domain.BetCombinations
 import roc.win.lottery.domain.BetLineDraft
 import roc.win.lottery.domain.LotteryType
 import roc.win.lottery.domain.TicketAmountCalculator
@@ -7,10 +8,10 @@ import roc.win.lottery.domain.TicketDraft
 import kotlin.math.abs
 
 /**
- * 从平台标准 OCR 行中保守提取单式票字段。
+ * 从平台标准 OCR 行中保守提取单式票和复式票字段。
  *
- * 解析器只接受能够由票面文字、坐标结构和金额关系共同证明的值。复式和胆拖会被明确阻断；
- * 补打及多期票仍需通过完整金额闭环，并由领域层限制可安全逐期查询的范围。
+ * 解析器只接受能够由票面文字、坐标结构和金额关系共同证明的值。复式票按号码区标签行解析，金额按展开后的
+ * 单式注数闭环；胆拖会被明确阻断。补打及多期票仍需通过完整金额闭环，并由领域层限制可安全逐期查询的范围。
  */
 class ConservativeTicketParser : TicketParser {
     /** 解析一份标准 OCR 文档，并返回等待确认或明确阻断状态。 */
@@ -130,7 +131,7 @@ class ConservativeTicketParser : TicketParser {
                 recoverDamagedSummary(
                     rows = rows,
                     lotteryType = lotteryType,
-                    betLineCount = parsedBets.size,
+                    betCount = parsedBets.sumOf { it.betCount(lotteryType) },
                     isAdditional = additionalExtraction.value,
                     paidAmountFen = paidAmountFen,
                     knownPeriodCount = explicitPeriodCount,
@@ -170,12 +171,13 @@ class ConservativeTicketParser : TicketParser {
                         rawConfidence = recovered.rawConfidence,
                     )
                 }
+        val betCount = betRows.sumOf { it.betCount(lotteryType) }
         val expectedAmountFen =
             if (multiplier != null && isAdditional != null) {
                 TicketAmountCalculator.calculate(
                     lotteryType = lotteryType,
-                    betLineCount = betRows.size,
-                    additionalLineCount = if (isAdditional) betRows.size else 0,
+                    betCount = betCount,
+                    additionalBetCount = if (isAdditional) betCount else 0L,
                     multiplier = multiplier,
                     periodCount = periodCount,
                 )
@@ -251,7 +253,7 @@ class ConservativeTicketParser : TicketParser {
                 if (paidAmountFen == null) {
                     add("票面合计金额缺失或格式错误，请在票面校正页补充")
                 } else if (expectedAmountFen != null && expectedAmountFen != paidAmountFen) {
-                    add("票面金额与投注行、倍数、期数或追加属性不一致")
+                    add("票面金额与投注注数、倍数、期数或追加属性不一致")
                 }
                 if (multiplier != null && isAdditional != null && expectedAmountFen == null) {
                     add("无法根据当前投注结构计算金额")
@@ -380,7 +382,7 @@ class ConservativeTicketParser : TicketParser {
                 }
             if (matchingTypes.isEmpty()) {
                 val explicitCandidate =
-                    normalized.contains(PLUS_SIGN) &&
+                    normalized.hasNumberSeparator &&
                         extractTwoDigitNumbers(normalized).size >= MIN_NUMBER_TOKENS_FOR_BET_CANDIDATE
                 if (explicitCandidate) return null
                 return@forEach
@@ -417,22 +419,33 @@ class ConservativeTicketParser : TicketParser {
             }
         }
 
-    /** 识别无需继续解析即可确定的不支持票型。 */
+    /** 识别无需继续解析即可确定的不支持票型：胆拖票的玩法标题，或胆码、拖码号码区。 */
     private fun detectUnsupportedTicket(rows: List<VisualRow>): String? {
-        val compactTexts = rows.map { it.text.compactForKeywords() }
         val unsupportedPlay =
-            compactTexts.firstOrNull { text ->
-                UNSUPPORTED_PLAY_KEYWORDS.any { keyword ->
-                    (text.startsWith(PLAY_PREFIX) && text.contains(keyword)) ||
-                        text.contains("${keyword}票") ||
-                        text.contains("${keyword}投注")
-                }
+            rows.firstOrNull { row ->
+                val text = row.text.compactForKeywords()
+                text.isMarkedAsPlay(BANKER_PLAY_KEYWORD) || BANKER_AREA_LABEL_REGEX.containsMatchIn(text)
             }
         if (unsupportedPlay != null) {
-            return "识别到复式或胆拖票，当前版本仅支持单式投注"
+            return "识别到胆拖票，当前版本仅支持单式和复式投注"
         }
         return null
     }
+
+    /** 判断票面玩法标题或投注摘要是否明确标示为复式。 */
+    private fun isMarkedCompound(rows: List<VisualRow>): Boolean =
+        rows.any { row -> row.text.compactForKeywords().isMarkedAsPlay(COMPOUND_PLAY_KEYWORD) }
+
+    /**
+     * 判断紧凑文本是否把关键词标示为本票玩法，而不是广告中的普通文字。
+     *
+     * 双色球的“玩法”前缀可能被误识别，此时仍保留“彩种-玩法”的连字符结构。
+     */
+    private fun String.isMarkedAsPlay(keyword: String): Boolean =
+        (startsWith(PLAY_PREFIX) && contains(keyword)) ||
+            contains("${keyword}票") ||
+            contains("${keyword}投注") ||
+            contains("-$keyword")
 
     /** 从带倍数的投注摘要行提取明确期数，避免把开奖期号误识别为期数。 */
     private fun extractExplicitPeriodCounts(rows: List<VisualRow>): List<LocatedValue<Int>> =
@@ -472,32 +485,38 @@ class ConservativeTicketParser : TicketParser {
         return candidates
     }
 
-    /** 解析所有外观上属于投注号码的行，并对数量、范围和顺序执行严格校验。 */
+    /**
+     * 解析所有外观上属于投注号码的行，并对数量、范围和顺序执行严格校验。
+     *
+     * 复式号码区标签行按组解析，其余行按单式解析；套餐票在同一张票上同时打印两种投注，按票面纵向顺序合并。
+     */
     private fun parseBetRows(
         rows: List<VisualRow>,
         lotteryType: LotteryType,
     ): BetRowsResult {
         val spec = BetNumberSpec.forLottery(lotteryType)
+        val compound = parseCompoundBetRows(rows, lotteryType)
         val parsedRows = mutableListOf<ParsedBetRow>()
         var malformedCandidateFound = false
         var invalidCandidateFound = false
-        rows.forEach { row ->
+        rows.forEachIndexed { index, row ->
+            if (index in compound.consumedRowIndices) return@forEachIndexed
             val normalized = row.text.normalizedForParsing()
             val split = extractBetNumberSplit(row, spec)
             if (split == null) {
                 if (
-                    normalized.contains(PLUS_SIGN) &&
+                    normalized.hasNumberSeparator &&
                     extractTwoDigitNumbers(normalized).size >= MIN_NUMBER_TOKENS_FOR_BET_CANDIDATE
                 ) {
                     malformedCandidateFound = true
                 }
-                return@forEach
+                return@forEachIndexed
             }
             if (!numbersAreValid(split.primaryNumbers, spec.primaryRange) ||
                 !numbersAreValid(split.secondaryNumbers, spec.secondaryRange)
             ) {
                 invalidCandidateFound = true
-                return@forEach
+                return@forEachIndexed
             }
             parsedRows +=
                 ParsedBetRow(
@@ -509,19 +528,34 @@ class ConservativeTicketParser : TicketParser {
                     rawConfidence = row.rawConfidence,
                 )
         }
-        if (parsedRows.isEmpty()) {
-            return when {
-                invalidCandidateFound -> BetRowsResult.Failed("投注号码存在越界、重复或顺序异常，请人工核对")
-                malformedCandidateFound -> BetRowsResult.Failed("至少一行投注号码不完整，请重新拍摄或人工核对")
-                else -> BetRowsResult.Failed("未识别到完整的单式投注号码")
-            }
-        }
         val merged = mergeRepeatedMarkerRows(parsedRows)
+        val allRows = (merged.rows + compound.rows).sortedBy { it.bounds.top }
+        if (allRows.isEmpty()) {
+            return BetRowsResult.Failed(
+                when {
+                    compound.invalidGroupFound -> "复式投注号码存在越界、重复或顺序异常，请人工核对"
+                    compound.hasAreaRows -> "复式投注的号码区不完整，请重新拍摄或人工核对"
+                    isMarkedCompound(rows) -> "识别到复式票，但未识别到完整的复式号码，请重新拍摄或人工核对"
+                    invalidCandidateFound -> "投注号码存在越界、重复或顺序异常，请人工核对"
+                    malformedCandidateFound -> "至少一行投注号码不完整，请重新拍摄或人工核对"
+                    else -> "未识别到完整的单式投注号码"
+                },
+            )
+        }
         val correctionMessages =
             buildList {
                 when {
                     invalidCandidateFound -> add("部分投注号码存在越界、重复或顺序异常，已保留其余完整行，请人工核对")
                     malformedCandidateFound -> add("至少一行投注号码不完整，已保留其余完整行，请重新拍摄或人工补充")
+                }
+                when {
+                    compound.invalidGroupFound -> {
+                        add("部分复式投注号码存在越界、重复或顺序异常，已保留其余完整投注，请人工核对")
+                    }
+
+                    compound.incompleteGroupFound -> {
+                        add("部分复式投注的号码区不完整，已保留其余完整投注，请重新拍摄或人工补充")
+                    }
                 }
                 if (merged.conflictedRowNumbers.isNotEmpty()) {
                     add(
@@ -531,10 +565,192 @@ class ConservativeTicketParser : TicketParser {
                 }
             }
         return BetRowsResult.Success(
-            rows = merged.rows,
+            rows = allRows,
             correctionMessage = correctionMessages.joinToString(separator = "；").ifEmpty { null },
         )
     }
+
+    /**
+     * 解析复式票按号码区分行打印的投注。
+     *
+     * 大乐透以“前区”“后区”、双色球以“红复”“蓝复”等标签各占一行，每个主区标签与随后的次区标签组成一组；
+     * 号码较多折行打印时，紧随其后的纯号码行并入上一标签。号码数量不足、缺少配对标签或号码异常的组不会
+     * 降级为单式，只记录问题并交给人工校正。
+     */
+    private fun parseCompoundBetRows(
+        rows: List<VisualRow>,
+        lotteryType: LotteryType,
+    ): CompoundBetRows {
+        val areaRows = extractNumberAreaRows(rows, lotteryType)
+        val groups = mutableListOf<Pair<NumberAreaRow, NumberAreaRow>>()
+        var incompleteGroupFound = false
+        var pendingPrimary: NumberAreaRow? = null
+        for (areaRow in areaRows) {
+            when (areaRow.area) {
+                NumberArea.PRIMARY -> {
+                    if (pendingPrimary != null) incompleteGroupFound = true
+                    pendingPrimary = areaRow
+                }
+
+                NumberArea.SECONDARY -> {
+                    val primary = pendingPrimary
+                    if (primary == null) incompleteGroupFound = true else groups += primary to areaRow
+                    pendingPrimary = null
+                }
+            }
+        }
+        if (pendingPrimary != null) incompleteGroupFound = true
+
+        val spec = BetNumberSpec.forLottery(lotteryType)
+        val parsedRows = mutableListOf<ParsedBetRow>()
+        var invalidGroupFound = false
+        for ((primary, secondary) in groups) {
+            if (primary.numbers.size < spec.primaryCount || secondary.numbers.size < spec.secondaryCount) {
+                incompleteGroupFound = true
+                continue
+            }
+            if (!numbersAreValid(primary.numbers, spec.primaryRange) ||
+                !numbersAreValid(secondary.numbers, spec.secondaryRange)
+            ) {
+                invalidGroupFound = true
+                continue
+            }
+            val fragments = primary.fragments + secondary.fragments
+            parsedRows +=
+                ParsedBetRow(
+                    primaryNumbers = primary.numbers,
+                    secondaryNumbers = secondary.numbers,
+                    rowMultiplier = null,
+                    originalText = "${primary.text}$NUMBER_AREA_SEPARATOR${secondary.text}",
+                    bounds = checkNotNull(fragments.map { it.bounds }.coveringBoundsOrNull()),
+                    rawConfidence = fragments.map { it.confidence }.minimumCompleteConfidence(),
+                )
+        }
+        return CompoundBetRows(
+            rows = parsedRows,
+            consumedRowIndices = areaRows.flatMap { it.rowIndices }.toSet(),
+            incompleteGroupFound = incompleteGroupFound,
+            invalidGroupFound = invalidGroupFound,
+        )
+    }
+
+    /**
+     * 按票面顺序提取号码区标签行，并把紧随其后的折行纯号码并入对应标签。
+     *
+     * 不含数字的片段视为侧边纵排文字等噪声，不参与号码、原文、区域和置信度；折行只接受与上一号码行
+     * 纵向紧邻的纯号码行，遇到下一个标签或其他含数字的文字即停止。
+     */
+    private fun extractNumberAreaRows(
+        rows: List<VisualRow>,
+        lotteryType: LotteryType,
+    ): List<NumberAreaRow> {
+        val labelRegex =
+            when (lotteryType) {
+                LotteryType.SUPER_LOTTO -> SUPER_LOTTO_AREA_ROW_REGEX
+                LotteryType.DOUBLE_COLOR_BALL -> DOUBLE_COLOR_BALL_AREA_ROW_REGEX
+            }
+        val areaRows = mutableListOf<NumberAreaRow>()
+        var index = 0
+        while (index < rows.size) {
+            val label = matchNumberAreaLabel(rows[index], labelRegex)
+            index++
+            if (label == null) continue
+
+            val numbers = label.numbers.toMutableList()
+            val texts = mutableListOf(label.text)
+            val fragments = label.fragments.toMutableList()
+            val rowIndices = mutableListOf(index - 1)
+            var lastBounds = checkNotNull(label.fragments.map { it.bounds }.coveringBoundsOrNull())
+            while (index < rows.size && matchNumberAreaLabel(rows[index], labelRegex) == null) {
+                val continuationFragments = rows[index].fragments.filter { it.containsDigit }
+                if (continuationFragments.isEmpty()) {
+                    index++
+                    continue
+                }
+                val continuationText = continuationFragments.joinToString(ASCII_SPACE.toString()) { it.text.trim() }
+                val continuationBounds = checkNotNull(continuationFragments.map { it.bounds }.coveringBoundsOrNull())
+                val continuationNumbers = parseAreaNumbers(continuationText.normalizedForParsing()) ?: break
+                if (continuationNumbers.isEmpty() ||
+                    continuationBounds.top - lastBounds.bottom > lastBounds.height * MAX_AREA_CONTINUATION_GAP_RATIO
+                ) {
+                    break
+                }
+                numbers += continuationNumbers
+                texts += continuationText
+                fragments += continuationFragments
+                rowIndices += index
+                lastBounds = continuationBounds
+                index++
+            }
+            if (numbers.isEmpty()) continue
+            areaRows +=
+                NumberAreaRow(
+                    area = label.area,
+                    numbers = numbers.toList(),
+                    text = texts.joinToString(ASCII_SPACE.toString()),
+                    fragments = fragments.toList(),
+                    rowIndices = rowIndices.toList(),
+                )
+        }
+        return areaRows
+    }
+
+    /**
+     * 匹配行首的号码区标签，并解析同一行标签后的号码。
+     *
+     * 标签位于行首，因此保留首个片段，其余片段只保留含数字的部分；标签后允许没有号码（号码折行打印），
+     * 末尾的非数字噪声会被忽略。号码含其他字符时不视为标签行。
+     */
+    private fun matchNumberAreaLabel(
+        row: VisualRow,
+        labelRegex: Regex,
+    ): NumberAreaLabel? {
+        val fragments =
+            row.fragments.filterIndexed { fragmentIndex, fragment ->
+                fragmentIndex == 0 || fragment.containsDigit
+            }
+        val text = fragments.joinToString(ASCII_SPACE.toString()) { it.text.trim() }
+        val match = labelRegex.find(text.normalizedForParsing()) ?: return null
+        val numbers = parseAreaNumbers(match.groupValues[2].trimEnd { !it.isDigit() }) ?: return null
+        val isPrimary = match.groupValues[1].first() in PRIMARY_AREA_LABEL_PREFIXES
+        return NumberAreaLabel(
+            area = if (isPrimary) NumberArea.PRIMARY else NumberArea.SECONDARY,
+            numbers = numbers,
+            text = text,
+            fragments = fragments,
+        )
+    }
+
+    /**
+     * 把号码区中以空白分隔的数字串解析为号码。
+     *
+     * 偶数位数字串按两位切分，兼容 OCR 吞掉号码间空格；有标签锚定时单独一位数字视为丢失前导零的号码。
+     *
+     * @return 号码列表，没有号码时为空；含其他字符或数字串为三位及以上奇数位时为 `null`。
+     */
+    private fun parseAreaNumbers(text: String): List<Int>? {
+        val tokens = text.split(WHITESPACE_REGEX).filter(String::isNotEmpty)
+        if (tokens.any { token ->
+                token.any { !it.isDigit() } ||
+                    (token.length != 1 && token.length % TWO_DIGIT_NUMBER_LENGTH != 0)
+            }
+        ) {
+            return null
+        }
+        return tokens.flatMap { token -> token.chunked(TWO_DIGIT_NUMBER_LENGTH).map(String::toInt) }
+    }
+
+    /** 文字中是否有紧邻号码的加号；校验码等随机字符中的加号不能把流水号行当成疑似投注行。 */
+    private val String.hasNumberSeparator: Boolean
+        get() = NUMBER_SEPARATOR_REGEX.containsMatchIn(this)
+
+    /** 返回一行已解析投注展开后的单式注数。 */
+    private fun ParsedBetRow.betCount(lotteryType: LotteryType): Long =
+        BetCombinations.betCount(lotteryType, primaryNumbers.size, secondaryNumbers.size)
+
+    /** OCR 片段是否包含阿拉伯数字。 */
+    private val OcrTextLine.containsDigit: Boolean
+        get() = text.normalizedForParsing().any(Char::isDigit)
 
     /**
      * 合并紧邻两行带有同一圆圈注序号、号码至多相差一个的重复识别。
@@ -645,7 +861,7 @@ class ConservativeTicketParser : TicketParser {
      *
      * 只在期数、倍数、追加属性和合计金额均为票面明确值时启用：当前注数与金额不符、减少一注后恰好相符，
      * 且全票只有一对相邻行号码至多相差一个、并且两行没有互不相同的注序号时，才合并为一注；
-     * 结果总是要求人工核对。存在多对候选或任一条件不满足时保持原样，交由金额不一致提示处理。
+     * 结果总是要求人工核对。存在多对候选、含复式行或任一条件不满足时保持原样，交由金额不一致提示处理。
      */
     private fun reconcileRepeatedRowWithAmount(
         rows: List<ParsedBetRow>,
@@ -656,12 +872,12 @@ class ConservativeTicketParser : TicketParser {
         paidAmountFen: Long?,
     ): AmountReconciliation? {
         if (isAdditional == null || multiplier == null || periodCount == null || paidAmountFen == null) return null
-        if (rows.size < 2) return null
+        if (rows.size < 2 || rows.any { it.betCount(lotteryType) != 1L }) return null
         val amountFor = { count: Int ->
             TicketAmountCalculator.calculate(
                 lotteryType = lotteryType,
-                betLineCount = count,
-                additionalLineCount = if (isAdditional) count else 0,
+                betCount = count.toLong(),
+                additionalBetCount = if (isAdditional) count.toLong() else 0L,
                 multiplier = multiplier,
                 periodCount = periodCount,
             )
@@ -845,7 +1061,7 @@ class ConservativeTicketParser : TicketParser {
             numbers.distinct().size == numbers.size &&
             numbers.zipWithNext().all { (left, right) -> left < right }
 
-    /** 提取全票统一倍数及所在区域；双色球可从每行一致的 `xN` 标记取得倍数。 */
+    /** 提取全票统一倍数及所在区域；双色球可从“倍数：N”或每行一致的 `xN` 标记取得倍数。 */
     private fun extractMultiplier(
         rows: List<VisualRow>,
         parsedBets: List<ParsedBetRow>,
@@ -857,8 +1073,7 @@ class ConservativeTicketParser : TicketParser {
                 .mapNotNull { row ->
                     val text = row.text.normalizedForParsing()
                     val value =
-                        EXACT_MULTIPLIER_REGEX
-                            .find(text)
+                        (EXACT_MULTIPLIER_REGEX.find(text) ?: MULTIPLIER_FIELD_REGEX.find(text))
                             ?.groupValues
                             ?.get(1)
                             ?.toIntOrNull()
@@ -904,7 +1119,8 @@ class ConservativeTicketParser : TicketParser {
                         EXACT_MULTIPLIER_REGEX.containsMatchIn(text) ||
                         extractDegradedSummary(row) != null ||
                         compactText.contains(ADDITIONAL_KEYWORD) ||
-                        compactText.contains(SINGLE_PLAY_KEYWORD)
+                        compactText.contains(SINGLE_PLAY_KEYWORD) ||
+                        compactText.contains(COMPOUND_SUMMARY_KEYWORD)
                     ) {
                         LocatedValue(compactText.contains(ADDITIONAL_KEYWORD), row.bounds, row.rawConfidence)
                     } else {
@@ -918,7 +1134,7 @@ class ConservativeTicketParser : TicketParser {
         )
     }
 
-    /** 仅在“单式票或追加投注 + 两个数值 + 合计”完整锚点内恢复被 OCR 损坏的期数和倍数单位。 */
+    /** 仅在“单式票、复式票或追加投注 + 两个数值 + 合计”完整锚点内恢复被 OCR 损坏的期数和倍数单位。 */
     private fun extractDegradedSummary(row: VisualRow): DegradedSummary? {
         val match = DEGRADED_SUMMARY_REGEX.find(row.text.normalizedForParsing()) ?: return null
         val periodCount = match.groupValues[1].toIntOrNull() ?: return null
@@ -935,13 +1151,13 @@ class ConservativeTicketParser : TicketParser {
     private fun recoverDamagedSummary(
         rows: List<VisualRow>,
         lotteryType: LotteryType,
-        betLineCount: Int,
+        betCount: Long,
         isAdditional: Boolean?,
         paidAmountFen: Long?,
         knownPeriodCount: Int?,
         knownMultiplier: Int?,
     ): RecoveredSummary? {
-        if (isAdditional == null || paidAmountFen == null || betLineCount <= 0) return null
+        if (isAdditional == null || paidAmountFen == null || betCount <= 0L) return null
         val candidates =
             rows.flatMap { row ->
                 val body =
@@ -957,8 +1173,8 @@ class ConservativeTicketParser : TicketParser {
                     }.filter { (periodCount, multiplier) ->
                         TicketAmountCalculator.calculate(
                             lotteryType = lotteryType,
-                            betLineCount = betLineCount,
-                            additionalLineCount = if (isAdditional) betLineCount else 0,
+                            betCount = betCount,
+                            additionalBetCount = if (isAdditional) betCount else 0L,
                             multiplier = multiplier,
                             periodCount = periodCount,
                         ) == paidAmountFen
@@ -1329,6 +1545,66 @@ class ConservativeTicketParser : TicketParser {
         val rowMultiplier: Int?,
     )
 
+    /** 复式票的号码区。 */
+    private enum class NumberArea {
+        /** 大乐透前区或双色球红球。 */
+        PRIMARY,
+
+        /** 大乐透后区或双色球蓝球。 */
+        SECONDARY,
+    }
+
+    /**
+     * 行首号码区标签及同一行标签后的号码。
+     *
+     * @property area 标签对应的号码区。
+     * @property numbers 标签后按票面顺序读出的号码，号码折行打印时可以为空。
+     * @property text 去除无数字噪声片段后的 OCR 原文。
+     * @property fragments 参与解析的 OCR 片段。
+     */
+    private data class NumberAreaLabel(
+        val area: NumberArea,
+        val numbers: List<Int>,
+        val text: String,
+        val fragments: List<OcrTextLine>,
+    )
+
+    /**
+     * 复式票中一个号码区标签及其折行号码。
+     *
+     * @property area 号码区。
+     * @property numbers 按票面顺序读出的全部号码。
+     * @property text 标签行与折行去除噪声后的 OCR 原文。
+     * @property fragments 标签行与折行中参与解析的 OCR 片段。
+     * @property rowIndices 标签行与折行在视觉行列表中的下标，这些行不再按单式解析。
+     */
+    private data class NumberAreaRow(
+        val area: NumberArea,
+        val numbers: List<Int>,
+        val text: String,
+        val fragments: List<OcrTextLine>,
+        val rowIndices: List<Int>,
+    )
+
+    /**
+     * 复式号码区的解析结果。
+     *
+     * @property rows 号码完整合法的复式投注，按票面顺序排列。
+     * @property consumedRowIndices 号码区标签行与折行的视觉行下标。
+     * @property incompleteGroupFound 是否存在缺少配对标签或号码数量不足的组。
+     * @property invalidGroupFound 是否存在号码越界、重复或顺序异常的组。
+     */
+    private data class CompoundBetRows(
+        val rows: List<ParsedBetRow>,
+        val consumedRowIndices: Set<Int>,
+        val incompleteGroupFound: Boolean,
+        val invalidGroupFound: Boolean,
+    ) {
+        /** 票面是否出现过号码区标签行。 */
+        val hasAreaRows: Boolean
+            get() = consumedRowIndices.isNotEmpty()
+    }
+
     /**
      * 保留横向位置的两位号码。
      *
@@ -1472,8 +1748,36 @@ class ConservativeTicketParser : TicketParser {
         /** 明确表示基本单式投注的关键词。 */
         const val SINGLE_PLAY_KEYWORD = "单式票"
 
-        /** 不支持的复杂玩法关键词。 */
-        val UNSUPPORTED_PLAY_KEYWORDS = listOf("复式", "胆拖")
+        /** 大乐透复式票投注摘要关键词。 */
+        const val COMPOUND_SUMMARY_KEYWORD = "复式票"
+
+        /** 复式玩法关键词。 */
+        const val COMPOUND_PLAY_KEYWORD = "复式"
+
+        /** 当前不支持的胆拖玩法关键词。 */
+        const val BANKER_PLAY_KEYWORD = "胆拖"
+
+        /** 胆拖票的胆码、拖码号码区标签，如“前区胆”“红拖”“胆码”，按紧凑文本匹配。 */
+        val BANKER_AREA_LABEL_REGEX = Regex("^[①-⑩]?(?:前区|后区|红|蓝)?[胆拖]码?:?\\d")
+
+        /** 大乐透复式票号码区标签行：可选注序号、“前区”或“后区”（允许 OCR 丢掉“区”）、可选冒号和其后的号码。 */
+        val SUPER_LOTTO_AREA_ROW_REGEX = Regex("^[①-⑩]?\\s*(前区?|后区?)\\s*:?\\s*(.*)$")
+
+        /** 双色球复式票号码区标签行：可选注序号、“红复”“蓝复”等标签、可选冒号和其后的号码。 */
+        val DOUBLE_COLOR_BALL_AREA_ROW_REGEX =
+            Regex("^(?:[①-⑩]|[A-Ea-e]\\s*[.、]?)?\\s*(红|蓝)\\s*[复单球区]?\\s*:?\\s*(.*)$")
+
+        /** 表示主号码区的标签首字。 */
+        val PRIMARY_AREA_LABEL_PREFIXES = setOf('前', '红')
+
+        /** 原文中连接同一组复式投注各号码区的分隔符。 */
+        const val NUMBER_AREA_SEPARATOR = "；"
+
+        /** 折行号码与上一号码行的纵向间隔不超过上一行高度的该倍数。 */
+        const val MAX_AREA_CONTINUATION_GAP_RATIO = 1f
+
+        /** 号码之间的空白。 */
+        val WHITESPACE_REGEX = Regex("\\s+")
 
         /** 玩法标题前缀。 */
         const val PLAY_PREFIX = "玩法"
@@ -1491,12 +1795,15 @@ class ConservativeTicketParser : TicketParser {
         /** 只接受阿拉伯数字组成的明确倍数。 */
         val EXACT_MULTIPLIER_REGEX = Regex("(?<![\\dA-Za-z])(\\d{1,2})\\s*倍")
 
+        /** 双色球复式票“倍数：N”字段。 */
+        val MULTIPLIER_FIELD_REGEX = Regex("倍数\\s*:?\\s*(\\d{1,2})(?!\\d)")
+
         /** 期、倍单位损坏时，只在完整投注摘要锚点之间提取两个数值。 */
         val DEGRADED_SUMMARY_REGEX =
-            Regex("(?:单式票|追加投注)\\s*(\\d{1,2})\\D{1,4}(\\d{1,2})\\D{0,4}(?=(?:合计|总计))")
+            Regex("(?:单式票|复式票|追加投注)\\s*(\\d{1,2})\\D{1,4}(\\d{1,2})\\D{0,4}(?=(?:合计|总计))")
 
-        /** 单式或追加摘要与合计金额之间的短文本。 */
-        val SUMMARY_BODY_REGEX = Regex("(?:单式票|追加投注)\\s*(.{2,12}?)\\s*(?=(?:合计|总计))")
+        /** 单式、复式或追加摘要与合计金额之间的短文本。 */
+        val SUMMARY_BODY_REGEX = Regex("(?:单式票|复式票|追加投注)\\s*(.{2,12}?)\\s*(?=(?:合计|总计))")
 
         /** 双色球投注行末尾的倍数。 */
         val ROW_MULTIPLIER_REGEX = Regex("[xX]\\s*(\\d{1,2})(?!\\d)")
@@ -1581,6 +1888,9 @@ class ConservativeTicketParser : TicketParser {
 
         /** 加号分隔符。 */
         const val PLUS_SIGN = '+'
+
+        /** 至少一侧紧邻数字的加号，排除校验码中夹在字母之间的加号。 */
+        val NUMBER_SEPARATOR_REGEX = Regex("\\d\\s*\\+|\\+\\s*\\d")
 
         /** 全角加号。 */
         const val FULL_WIDTH_PLUS = '＋'
