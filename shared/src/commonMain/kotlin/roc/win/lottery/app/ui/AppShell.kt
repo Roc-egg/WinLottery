@@ -5,9 +5,11 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -33,9 +35,15 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
@@ -95,70 +103,88 @@ fun AppShell(
                 Modifier
                     .fillMaxSize()
                     .statusBarsPadding()
-                    .navigationBarsPadding()
-                    .imePadding(),
+                    .navigationBarsPadding(),
         ) {
-            if (immersiveContent) {
-                Box(Modifier.fillMaxSize().safeDrawingPadding()) { content() }
-                return@BoxWithConstraints
-            }
+            // 导航形态只按窗口尺寸决定，不扣除输入法高度：竖屏手机弹出键盘后可用高度会低于紧凑阈值，
+            // 外壳一旦切换布局就会重建正文，输入框随即失焦、键盘收起，高度恢复后又切回原布局。
             val usesSideNavigation =
                 mainDestination != null && maxWidth >= WIDE_NAVIGATION_THRESHOLD
             val usesCompactNavigation =
                 mainDestination != null &&
                     (compactChrome || maxHeight < SHORT_NAVIGATION_HEIGHT_THRESHOLD)
-            if (usesCompactNavigation) {
-                CompactMainAppShellBody(
-                    title = title,
-                    selectedDestination = checkNotNull(mainDestination),
-                    destinations = availableMainDestinations,
-                    onDestinationSelected = onMainDestinationSelected,
-                    actions = actions,
-                    content = content,
-                )
-            } else if (usesSideNavigation) {
-                Row(modifier = Modifier.fillMaxSize()) {
-                    MainNavigationRail(
-                        selectedDestination = checkNotNull(mainDestination),
-                        destinations = availableMainDestinations,
-                        onDestinationSelected = onMainDestinationSelected,
-                    )
-                    VerticalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                    AppShellBody(
-                        modifier = Modifier.weight(1f),
-                        title = title,
-                        navigationIcon = navigationIcon,
-                        onNavigate = onNavigate,
-                        actionIcon = actionIcon,
-                        actionDescription = actionDescription,
-                        onAction = onAction,
-                        actions = actions,
-                        scrollableContent = scrollableContent,
-                        horizontalPadding = 32.dp,
-                        content = content,
-                    )
-                }
-            } else {
-                Column(modifier = Modifier.fillMaxSize()) {
-                    AppShellBody(
-                        modifier = Modifier.weight(1f),
-                        title = title,
-                        navigationIcon = navigationIcon,
-                        onNavigate = onNavigate,
-                        actionIcon = actionIcon,
-                        actionDescription = actionDescription,
-                        onAction = onAction,
-                        actions = actions,
-                        scrollableContent = scrollableContent,
-                        horizontalPadding = 20.dp,
-                        content = content,
-                    )
-                    mainDestination?.let { selectedDestination ->
-                        MainNavigationBar(
-                            selectedDestination = selectedDestination,
+            // 键盘只让正文内容区避让，顶部栏和底部导航保持原位，底部导航直接被键盘遮住。
+            Box(modifier = Modifier.fillMaxSize()) {
+                when {
+                    immersiveContent -> {
+                        // 安全绘制区域已包含输入法区域。
+                        Box(Modifier.fillMaxSize().safeDrawingPadding()) { content() }
+                    }
+
+                    usesCompactNavigation -> {
+                        CompactMainAppShellBody(
+                            title = title,
+                            selectedDestination = checkNotNull(mainDestination),
                             destinations = availableMainDestinations,
                             onDestinationSelected = onMainDestinationSelected,
+                            actions = actions,
+                            content = content,
                         )
+                    }
+
+                    usesSideNavigation -> {
+                        Row(modifier = Modifier.fillMaxSize()) {
+                            MainNavigationRail(
+                                selectedDestination = checkNotNull(mainDestination),
+                                destinations = availableMainDestinations,
+                                onDestinationSelected = onMainDestinationSelected,
+                            )
+                            VerticalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                            AppShellBody(
+                                modifier = Modifier.weight(1f),
+                                title = title,
+                                navigationIcon = navigationIcon,
+                                onNavigate = onNavigate,
+                                actionIcon = actionIcon,
+                                actionDescription = actionDescription,
+                                onAction = onAction,
+                                actions = actions,
+                                scrollableContent = scrollableContent,
+                                horizontalPadding = 32.dp,
+                                content = content,
+                            )
+                        }
+                    }
+
+                    else -> {
+                        val density = LocalDensity.current
+                        var navigationBarHeight by remember { mutableStateOf(0.dp) }
+                        Column(modifier = Modifier.fillMaxSize()) {
+                            AppShellBody(
+                                modifier = Modifier.weight(1f),
+                                title = title,
+                                navigationIcon = navigationIcon,
+                                onNavigate = onNavigate,
+                                actionIcon = actionIcon,
+                                actionDescription = actionDescription,
+                                onAction = onAction,
+                                actions = actions,
+                                scrollableContent = scrollableContent,
+                                horizontalPadding = 20.dp,
+                                bottomNavigationHeight = if (mainDestination != null) navigationBarHeight else 0.dp,
+                                content = content,
+                            )
+                            mainDestination?.let { selectedDestination ->
+                                MainNavigationBar(
+                                    modifier =
+                                        Modifier.onSizeChanged { size ->
+                                            navigationBarHeight = with(density) { size.height.toDp() }
+                                        },
+                                    selectedDestination = selectedDestination,
+                                    destinations = availableMainDestinations,
+                                    onDestinationSelected = onMainDestinationSelected,
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -226,7 +252,8 @@ private fun CompactMainAppShellBody(
                 Modifier
                     .fillMaxWidth()
                     .weight(1f)
-                    .background(MaterialTheme.colorScheme.background),
+                    .background(MaterialTheme.colorScheme.background)
+                    .imePadding(),
             contentAlignment = Alignment.TopCenter,
         ) {
             Box(
@@ -242,7 +269,12 @@ private fun CompactMainAppShellBody(
     }
 }
 
-/** 绘制除一级导航之外的顶部栏和正文。 */
+/**
+ * 绘制除一级导航之外的顶部栏和正文。
+ *
+ * 只有正文内容区避让输入法；[bottomNavigationHeight] 是正文下方底部导航的高度，键盘先遮住底部导航，
+ * 再遮住正文，因此正文只需让出超过底部导航的那部分键盘高度。
+ */
 @Composable
 private fun AppShellBody(
     modifier: Modifier,
@@ -255,6 +287,7 @@ private fun AppShellBody(
     actions: @Composable RowScope.() -> Unit,
     scrollableContent: Boolean,
     horizontalPadding: Dp,
+    bottomNavigationHeight: Dp = 0.dp,
     content: @Composable () -> Unit,
 ) {
     Column(modifier = modifier) {
@@ -291,7 +324,9 @@ private fun AppShellBody(
                 Modifier
                     .fillMaxWidth()
                     .weight(1f)
-                    .background(MaterialTheme.colorScheme.background),
+                    .background(MaterialTheme.colorScheme.background)
+                    .consumeWindowInsets(PaddingValues(bottom = bottomNavigationHeight))
+                    .imePadding(),
             contentAlignment = Alignment.TopCenter,
         ) {
             if (scrollableContent) {
@@ -326,11 +361,12 @@ private fun AppShellBody(
 /** 绘制移动宽度的底部一级导航。 */
 @Composable
 private fun MainNavigationBar(
+    modifier: Modifier,
     selectedDestination: MainDestination,
     destinations: List<MainDestination>,
     onDestinationSelected: (MainDestination) -> Unit,
 ) {
-    NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
+    NavigationBar(modifier = modifier, containerColor = MaterialTheme.colorScheme.surface) {
         destinations.forEach { destination ->
             NavigationBarItem(
                 selected = destination == selectedDestination,

@@ -283,7 +283,7 @@ fun MultiPeriodVerificationScreen(
         Spacer(Modifier.height(12.dp))
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             result.periodResults.forEach { periodResult ->
-                PeriodVerificationItem(periodResult)
+                PeriodVerificationItem(result.ticket, periodResult)
             }
         }
         Spacer(Modifier.height(20.dp))
@@ -364,9 +364,12 @@ private fun MultiPeriodSummary(result: AppScreen.MultiPeriodVerificationResult) 
     }
 }
 
-/** 展示一个期次的号码、测算摘要或不可用原因。 */
+/** 展示一个期次的号码、测算摘要或不可用原因；已核对期次可展开查看每注命中号码。 */
 @Composable
-private fun PeriodVerificationItem(result: PeriodVerification) {
+private fun PeriodVerificationItem(
+    ticket: ConfirmedTicket,
+    result: PeriodVerification,
+) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.small,
@@ -413,7 +416,7 @@ private fun PeriodVerificationItem(result: PeriodVerification) {
                                 if (line.isCompound) {
                                     "$label ${line.tierWins.tierWinsText { result.drawResult.prizeTierName(it) }}"
                                 } else {
-                                    "$label${result.drawResult.prizeTierName(checkNotNull(line.prizeTierCode))}"
+                                    "$label ${result.drawResult.prizeTierName(checkNotNull(line.prizeTierCode))}"
                                 }
                             },
                             style = MaterialTheme.typography.bodyMedium,
@@ -432,6 +435,15 @@ private fun PeriodVerificationItem(result: PeriodVerification) {
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.secondary,
                         )
+                    }
+                    if (lineResults.isNotEmpty()) {
+                        ExpandableSection(
+                            collapsedLabel = "查看每注命中号码",
+                            expandedLabel = "收起每注命中号码",
+                            stateKey = result.issue.value,
+                        ) {
+                            PeriodHitDetails(ticket, result.drawResult, lineResults)
+                        }
                     }
                 }
 
@@ -536,11 +548,7 @@ private fun BetLineResult(
     val line = ticket.betLines.getOrNull(result.lineIndex)
     val lotteryType = ticket.lotteryType.value
     val ticketHasCompound = ticket.betLines.any { it.isCompound(lotteryType) }
-    val winningBetCount = result.tierWins.sumOf { it.winningBetCount }
-    val tierName =
-        result.prizeTierCode?.let { code ->
-            if (result.isCompound) "中奖 $winningBetCount 注" else drawResult.prizeTierName(code)
-        }
+    val isWin = result.prizeTierCode != null
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.small,
@@ -558,13 +566,13 @@ private fun BetLineResult(
                     style = MaterialTheme.typography.titleMedium,
                 )
                 Text(
-                    tierName ?: "未中奖",
+                    result.outcomeText(drawResult),
                     style = MaterialTheme.typography.titleMedium,
                     color =
-                        if (tierName == null) {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        } else {
+                        if (isWin) {
                             MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
                         },
                 )
             }
@@ -594,7 +602,7 @@ private fun BetLineResult(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            if (tierName != null) {
+            if (isWin) {
                 val scope = if (result.isCompound) "本组" else "本注"
                 Text(
                     result.estimatedPrizeFen?.let { "${scope}税前奖金 ${it.toPrizeYuanText()}" } ?: "${scope}奖金待官方确认",
@@ -602,7 +610,64 @@ private fun BetLineResult(
                     color = MaterialTheme.colorScheme.primary,
                 )
             }
+            line?.let {
+                ExpandableSection(
+                    collapsedLabel = "查看命中号码",
+                    expandedLabel = "收起命中号码",
+                    stateKey = result.lineIndex,
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        BetHitNumbers(lotteryType, it.primaryNumbers.value, it.secondaryNumbers.value, drawResult)
+                        HitNumbersLegend()
+                    }
+                }
+            }
         }
+    }
+}
+
+/** 逐注列出一个期次中每注号码与开奖号码的命中情况和本注结果。 */
+@Composable
+private fun PeriodHitDetails(
+    ticket: ConfirmedTicket,
+    drawResult: DrawResult,
+    lineResults: List<BetLinePrizeResult>,
+) {
+    val lotteryType = ticket.lotteryType.value
+    val ticketHasCompound = ticket.betLines.any { it.isCompound(lotteryType) }
+    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        lineResults.forEach { lineResult ->
+            val line = ticket.betLines.getOrNull(lineResult.lineIndex) ?: return@forEach
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        betLineTitle(
+                            lineResult.lineIndex,
+                            lineResult.betCount,
+                            lineResult.isCompound,
+                            ticketHasCompound,
+                        ),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Text(
+                        lineResult.outcomeText(drawResult),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color =
+                            if (lineResult.prizeTierCode != null) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                    )
+                }
+                BetHitNumbers(lotteryType, line.primaryNumbers.value, line.secondaryNumbers.value, drawResult)
+            }
+        }
+        HitNumbersLegend()
     }
 }
 
@@ -700,6 +765,12 @@ private fun PrizeCheckResult.detail(): String =
             message ?: "当前无法用官方开奖号码完成比对"
         }
     }
+
+/** 返回一行的中奖结论：单式为奖级名称，复式为中奖注数，未中奖时为“未中奖”。 */
+private fun BetLinePrizeResult.outcomeText(drawResult: DrawResult): String {
+    val tierCode = prizeTierCode ?: return "未中奖"
+    return if (isCompound) "中奖 ${tierWins.sumOf { it.winningBetCount }} 注" else drawResult.prizeTierName(tierCode)
+}
 
 /** 本行是否为复式；复式至少展开为两注，单式恰好一注。 */
 private val BetLinePrizeResult.isCompound: Boolean

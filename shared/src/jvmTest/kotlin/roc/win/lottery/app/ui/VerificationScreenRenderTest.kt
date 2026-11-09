@@ -103,6 +103,15 @@ class VerificationScreenRenderTest {
             assertTrue(scene.hasText("中奖 57 注"))
             assertTrue(scene.hasText("其中 五等奖 6 注、六等奖 24 注、七等奖 27 注"))
             assertTrue(scene.hasText("本组税前奖金 1,821.00 元"))
+
+            // 命中号码默认收起，点开后才逐个标出命中号码，再点收起。
+            val hitDescription = "前区 02 07 14 20 22 24 26，命中 02 07 14；后区 04 09 11，命中 04 09"
+            assertFalse(scene.hasDescription(hitDescription))
+            scene.clickText("查看命中号码")
+            assertTrue(scene.hasDescription(hitDescription))
+            scene.clickText("收起命中号码")
+            assertFalse(scene.hasDescription(hitDescription))
+            assertTrue(scene.hasText("查看命中号码"))
         }
     }
 
@@ -127,6 +136,12 @@ class VerificationScreenRenderTest {
         render(AppScreen.MultiPeriodVerificationResult(ticket(), listOf(local, pending)), actions) { scene ->
             assertTrue(scene.hasTextStartingWith("使用本机保存的开奖 · 核对于"))
             assertTrue(scene.hasText("本期尚未发起官网查询"))
+            // 只有已核对期次提供逐注命中号码，默认收起。
+            val hitDescription = "前区 01 03 05 08 10，未命中；后区 01 02，未命中"
+            assertEquals(1, scene.nodes().count { "查看每注命中号码" in it.texts() })
+            assertFalse(scene.hasDescription(hitDescription))
+            scene.clickText("查看每注命中号码")
+            assertTrue(scene.hasDescription(hitDescription))
             scene.clickText("重查未完成期次")
             scene.clickText("重新联网核对全部期次")
             assertEquals(listOf("retry", "force"), actions)
@@ -231,6 +246,10 @@ class VerificationScreenRenderTest {
 
     /** 判断是否存在完整文本。 */
     private fun ImageComposeScene.hasText(text: String): Boolean = nodes().any { text in it.texts() }
+
+    /** 判断是否存在完整匹配的语义说明。 */
+    private fun ImageComposeScene.hasDescription(text: String): Boolean =
+        nodes().any { text in it.config.getOrNull(SemanticsProperties.ContentDescription).orEmpty() }
 
     /** 判断是否存在以指定内容开头的文本。 */
     private fun ImageComposeScene.hasTextStartingWith(prefix: String): Boolean =
