@@ -4,7 +4,7 @@
   <p><strong>基于 Kotlin Multiplatform 的纸质彩票识别与中奖测算工具</strong></p>
   <p>Android、iOS、Windows 与 macOS 共享业务规则、数据访问、结构化存储和 Compose Multiplatform 界面。</p>
   <p>
-    <img alt="当前版本" src="https://img.shields.io/badge/version-1.3.6-2f7d32">
+    <img alt="当前版本" src="https://img.shields.io/badge/version-1.3.7-2f7d32">
     <img alt="项目状态" src="https://img.shields.io/badge/status-V1.4%20in%20progress-d97706">
     <img alt="技术架构" src="https://img.shields.io/badge/Kotlin-Multiplatform-7f52ff">
     <img alt="目标平台" src="https://img.shields.io/badge/platform-Android%20%7C%20iOS%20%7C%20Windows%20%7C%20macOS-1565c0">
@@ -22,7 +22,7 @@
 
 ## 项目总进度
 
-更新日期：2026-11-09。当前稳定版本为 `1.3.6 (11)`，支持中彩快乐8 单式（选一至选十）的识别与开奖核对，开奖结果可展开查看每注命中号码，AI 分析的连接配置保存在本机并支持 Anthropic Messages、OpenAI Chat Completions 与 OpenAI Responses 三种接口格式，并修复输入框弹出键盘后又收起；此前的 `1.3.5 (10)` 支持复式票的识别与中奖测算，并在识别前校正整页朝向。各版本更新内容见 [docs/release-notes](docs/release-notes)。V1.4 已立项推进，V1.5 尚未开始。
+更新日期：2026-11-09。当前稳定版本为 `1.3.7 (12)`，界面全面改版：全新设计系统、深色模式（可在“关于与隐私”中选择跟随系统、浅色或深色）和液态玻璃风格的浮动底部导航；此前的 `1.3.6 (11)` 支持中彩快乐8 单式（选一至选十）的识别与开奖核对，开奖结果可展开查看每注命中号码，AI 分析的连接配置保存在本机并支持三种接口格式。各版本更新内容见 [docs/release-notes](docs/release-notes)。V1.4 已立项推进，V1.5 尚未开始。
 
 | 状态 | 版本数量 | 当前范围 |
 |---|---:|---|
