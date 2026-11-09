@@ -22,6 +22,7 @@ import roc.win.lottery.data.OfficialDrawRepository
 import roc.win.lottery.domain.LotteryPrizeCalculator
 import roc.win.lottery.domain.TicketValidator
 import roc.win.lottery.persistence.createAndroidAiConnectionStore
+import roc.win.lottery.persistence.createAndroidAppearanceStore
 import roc.win.lottery.persistence.createAndroidLocalStorage
 import roc.win.lottery.recognition.AndroidAppPaths
 import roc.win.lottery.recognition.AndroidLuminanceImageDecoder
@@ -115,6 +116,7 @@ class AndroidLotteryAppViewModel(
             historicalDrawRepository = officialDrawRepository,
             aiAnalysisProvider = HttpAiAnalysisProvider(),
             aiConnectionStore = createAndroidAiConnectionStore(application),
+            appearanceStore = createAndroidAppearanceStore(application),
             prizeCalculator = LotteryPrizeCalculator(),
             appPaths = appPaths,
             ticketValidator = TicketValidator(),

@@ -9,6 +9,7 @@ import roc.win.lottery.domain.LotteryPrizeCalculator
 import roc.win.lottery.domain.PrizeCalculator
 import roc.win.lottery.domain.TicketValidator
 import roc.win.lottery.persistence.AiConnectionStore
+import roc.win.lottery.persistence.AppearanceStore
 import roc.win.lottery.persistence.DrawResultStore
 import roc.win.lottery.persistence.HistoricalDrawStore
 import roc.win.lottery.persistence.TicketRecordStore
@@ -46,6 +47,7 @@ import roc.win.lottery.recognition.TicketRecognizer
  * @property historicalDrawStore 与票据共用数据库的本机官方历史开奖缓存；未接入的平台为 `null`。
  * @property drawResultStore 与票据共用数据库的已开奖查询结果缓存；未接入的平台为 `null`。
  * @property ticketRecordFileExchange 当前平台的系统逻辑包文件接口；未接入的平台为 `null`。
+ * @property appearanceStore 本机保存的外观偏好仓库；未接入的平台为 `null`，主题选择只在本次运行有效。
  * @property ocrConfidenceDiagnostics Debug 包使用的匿名字段置信度诊断，默认禁用。
  */
 class AppContainer(
@@ -69,6 +71,7 @@ class AppContainer(
     val historicalDrawStore: HistoricalDrawStore? = null,
     val drawResultStore: DrawResultStore? = null,
     val ticketRecordFileExchange: TicketRecordFileExchange? = null,
+    val appearanceStore: AppearanceStore? = null,
     val ocrConfidenceDiagnostics: OcrConfidenceDiagnostics = OcrConfidenceDiagnostics.Disabled,
 ) {
     /** 清理临时票图，并关闭容器持有的数据库连接、识别会话和网络客户端；两类开奖缓存随票据仓库共用的数据库一并关闭。 */

@@ -8,6 +8,7 @@ import roc.win.lottery.data.OfficialDrawRepository
 import roc.win.lottery.domain.LotteryPrizeCalculator
 import roc.win.lottery.domain.TicketValidator
 import roc.win.lottery.persistence.createJvmAiConnectionStore
+import roc.win.lottery.persistence.createJvmAppearanceStore
 import roc.win.lottery.persistence.createJvmLocalStorage
 import roc.win.lottery.recognition.ConservativeTicketParser
 import roc.win.lottery.recognition.DesktopAppPaths
@@ -77,6 +78,7 @@ internal fun createDesktopAppContainer(
         historicalDrawRepository = officialDrawRepository,
         aiAnalysisProvider = HttpAiAnalysisProvider(),
         aiConnectionStore = createJvmAiConnectionStore(applicationDataDirectory),
+        appearanceStore = createJvmAppearanceStore(applicationDataDirectory),
         prizeCalculator = LotteryPrizeCalculator(),
         appPaths = appPaths,
         ticketValidator = TicketValidator(),

@@ -15,6 +15,7 @@ import roc.win.lottery.data.OfficialDrawRepository
 import roc.win.lottery.domain.LotteryPrizeCalculator
 import roc.win.lottery.domain.TicketValidator
 import roc.win.lottery.persistence.createIOSAiConnectionStore
+import roc.win.lottery.persistence.createIOSAppearanceStore
 import roc.win.lottery.persistence.createIOSLocalStorage
 import roc.win.lottery.recognition.ConservativeTicketParser
 import roc.win.lottery.recognition.IOSAppPaths
@@ -81,6 +82,7 @@ fun createIOSRecognitionContainer(
             historicalDrawRepository = officialDrawRepository,
             aiAnalysisProvider = HttpAiAnalysisProvider(),
             aiConnectionStore = createIOSAiConnectionStore(),
+            appearanceStore = createIOSAppearanceStore(),
             prizeCalculator = LotteryPrizeCalculator(),
             appPaths = appPaths,
             ticketValidator = TicketValidator(),

@@ -34,6 +34,7 @@ import roc.win.lottery.domain.LotteryType
 import roc.win.lottery.domain.RandomNumberGenerationResult
 import roc.win.lottery.persistence.SavedAiConnection
 import roc.win.lottery.persistence.TICKET_RECORD_EXPORT_EXTENSION
+import roc.win.lottery.persistence.ThemePreference
 import roc.win.lottery.persistence.TicketAcquisitionSource
 import roc.win.lottery.persistence.TicketRecordImportConflictPolicy
 import roc.win.lottery.persistence.TicketRecordImportException
@@ -160,6 +161,35 @@ class LotteryAppController(
 
     /** AI 页输入框展示的服务商密钥。 */
     val aiApiKey: StateFlow<String> = mutableAiApiKey.asStateFlow()
+
+    /** 当前主题偏好；启动时同步读取本机保存值，首帧即可确定深浅色。 */
+    private val mutableThemePreference =
+        MutableStateFlow(
+            container.appearanceStore
+                ?.let { store -> runCatching { store.loadThemePreference() }.getOrNull() }
+                ?: ThemePreference.SYSTEM,
+        )
+
+    /** 界面使用的主题偏好：跟随系统、浅色或深色。 */
+    val themePreference: StateFlow<ThemePreference> = mutableThemePreference.asStateFlow()
+
+    /** 串行写入主题偏好，连续切换时最后写入的总是最终选择。 */
+    private val themeSaveMutex = Mutex()
+
+    /**
+     * 立即切换主题，并把选择保存在本机；写入失败时本次运行仍按新选择显示。
+     *
+     * @param preference 用户选择的主题偏好。
+     */
+    suspend fun updateThemePreference(preference: ThemePreference) {
+        if (mutableThemePreference.value == preference) return
+        mutableThemePreference.value = preference
+        val store = container.appearanceStore ?: return
+        themeSaveMutex.withLock {
+            runCatching { store.saveThemePreference(mutableThemePreference.value) }
+                .onFailure { error -> if (error is CancellationException) throw error }
+        }
+    }
 
     /** 当前平台能否把 AI 密钥加密保存在本机；否则密钥只在本次运行有效。 */
     val savesAiApiKeyLocally: Boolean

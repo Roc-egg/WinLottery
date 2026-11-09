@@ -62,6 +62,7 @@ import roc.win.lottery.domain.LotteryType
 import roc.win.lottery.domain.PrizeTierCodes
 import roc.win.lottery.domain.TicketFieldOrigin
 import roc.win.lottery.domain.TicketValidationProblem
+import roc.win.lottery.persistence.ThemePreference
 import roc.win.lottery.recognition.ImageRef
 import roc.win.lottery.recognition.TicketFieldCandidate
 import roc.win.lottery.recognition.TicketFieldRegion
@@ -1016,12 +1017,16 @@ fun ErrorScreen(
  * 显示关于、隐私和 V1 支持范围，并提供清除本机开奖缓存的入口。
  *
  * @param screen 当前关于页状态，包含清除进度和结果说明。
+ * @param themePreference 当前主题偏好。
+ * @param onThemePreferenceChange 切换跟随系统、浅色或深色主题。
  * @param onBack 返回上一页。
  * @param onClearHistory 用户确认后清除本机保存的官方历史开奖。
  */
 @Composable
 fun AboutScreen(
     screen: AppScreen.About,
+    themePreference: ThemePreference,
+    onThemePreferenceChange: (ThemePreference) -> Unit,
     onBack: () -> Unit,
     onClearHistory: () -> Unit,
 ) {
@@ -1044,6 +1049,27 @@ fun AboutScreen(
                     )
                 }
             }
+        }
+        Spacer(Modifier.height(SectionSpacing))
+        SectionHeader(title = "外观")
+        Spacer(Modifier.height(SectionTitleSpacing))
+        LotteryCard(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            FieldLabel("主题")
+            SegmentedControl(
+                options = ThemePreference.entries,
+                selected = themePreference,
+                label = { it.displayName() },
+                onSelect = onThemePreferenceChange,
+            )
+            Text(
+                when (themePreference) {
+                    ThemePreference.SYSTEM -> "随设备的深浅色设置自动切换。"
+                    ThemePreference.LIGHT -> "始终使用浅色外观。"
+                    ThemePreference.DARK -> "始终使用深色外观。"
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
         Spacer(Modifier.height(SectionSpacing))
         SectionHeader(title = "数据如何处理")
@@ -1166,6 +1192,14 @@ private fun ScopeRow(
         }
     }
 }
+
+/** 返回主题偏好的简体中文名称。 */
+private fun ThemePreference.displayName(): String =
+    when (this) {
+        ThemePreference.SYSTEM -> "跟随系统"
+        ThemePreference.LIGHT -> "浅色"
+        ThemePreference.DARK -> "深色"
+    }
 
 /** 返回彩种的中文名称。 */
 private fun LotteryType?.displayName(): String =

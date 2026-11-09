@@ -1,5 +1,6 @@
 package roc.win.lottery
 
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
@@ -18,6 +19,7 @@ import roc.win.lottery.app.LotteryAppSession
 import roc.win.lottery.app.MainDestination
 import roc.win.lottery.app.TicketReviewAction
 import roc.win.lottery.app.theme.LotteryTheme
+import roc.win.lottery.app.theme.PlatformAppearanceEffect
 import roc.win.lottery.app.ui.AboutScreen
 import roc.win.lottery.app.ui.AiAnalysisScreen
 import roc.win.lottery.app.ui.AnalysisScreen
@@ -33,6 +35,7 @@ import roc.win.lottery.app.ui.TicketRecordsScreen
 import roc.win.lottery.app.ui.TrendScreen
 import roc.win.lottery.app.ui.VerificationResultScreen
 import roc.win.lottery.persistence.StoredTicketRecord
+import roc.win.lottery.persistence.ThemePreference
 import roc.win.lottery.recognition.ImageAcquisitionSource
 
 /**
@@ -63,6 +66,14 @@ fun App(session: LotteryAppSession) {
     val container = session.container
     val controller = session.controller
     val uiState by controller.uiState.collectAsState()
+    val themePreference by controller.themePreference.collectAsState()
+    val systemDarkTheme = isSystemInDarkTheme()
+    val darkTheme =
+        when (themePreference) {
+            ThemePreference.SYSTEM -> systemDarkTheme
+            ThemePreference.LIGHT -> false
+            ThemePreference.DARK -> true
+        }
     val scope = session.scope
     val ticketRecordStore = container.ticketRecordStore
     val availableMainDestinations =
@@ -134,7 +145,8 @@ fun App(session: LotteryAppSession) {
         scope.launch { controller.navigateBack() }
     }
 
-    LotteryTheme {
+    PlatformAppearanceEffect(themePreference, darkTheme)
+    LotteryTheme(darkTheme = darkTheme) {
         when (val screen = uiState.screen) {
             AppScreen.Home -> {
                 HomeScreen(
@@ -364,6 +376,10 @@ fun App(session: LotteryAppSession) {
             is AppScreen.About -> {
                 AboutScreen(
                     screen = screen,
+                    themePreference = themePreference,
+                    onThemePreferenceChange = { preference ->
+                        scope.launch { controller.updateThemePreference(preference) }
+                    },
                     onBack = { scope.launch { controller.navigateBack() } },
                     onClearHistory = { scope.launch { controller.clearHistoricalDrawCache() } },
                 )
