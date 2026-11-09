@@ -179,7 +179,13 @@ fun TrendScreen(
                     onRetry = { onAction(TrendChartAction.Retry) },
                 )
             } else {
-                Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
+                // 基本走势底部有统计口径栏，整体让出浮动导航栏，避免被遮挡。
+                Column(
+                    Modifier
+                        .fillMaxSize()
+                        .padding(bottom = LocalMainBarInset.current)
+                        .background(MaterialTheme.colorScheme.surface),
+                ) {
                     TrendToolbar(
                         chart,
                         fullscreen,

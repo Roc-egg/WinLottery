@@ -131,7 +131,7 @@ fun AiAnalysisScreen(
     ) {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(top = 4.dp, bottom = 40.dp),
+            contentPadding = PaddingValues(top = 4.dp, bottom = 40.dp + LocalMainBarInset.current),
         ) {
             item(key = "configuration") {
                 CenteredAiContent {

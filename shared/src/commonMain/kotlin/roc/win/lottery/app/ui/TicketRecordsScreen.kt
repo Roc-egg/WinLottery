@@ -195,7 +195,7 @@ fun TicketRecordsScreen(
             Spacer(Modifier.height(8.dp))
             LazyColumn(
                 modifier = Modifier.fillMaxWidth().weight(1f),
-                contentPadding = PaddingValues(bottom = 32.dp),
+                contentPadding = PaddingValues(bottom = 32.dp + LocalMainBarInset.current),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 when {

@@ -193,7 +193,7 @@ private fun ResearchReadyContent(
     LazyColumn(
         modifier = modifier,
         state = listState,
-        contentPadding = PaddingValues(bottom = 32.dp),
+        contentPadding = PaddingValues(bottom = 32.dp + LocalMainBarInset.current),
     ) {
         item(key = "research-status") {
             ResearchProtocolStatus(analysis = analysis, sourceName = sourceName)
