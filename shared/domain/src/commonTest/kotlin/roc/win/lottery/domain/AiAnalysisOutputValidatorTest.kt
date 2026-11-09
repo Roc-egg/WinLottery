@@ -180,6 +180,21 @@ class AiAnalysisOutputValidatorTest {
         }
     }
 
+    /** 输出上限只能取可选值，超时按上限放宽。 */
+    @Test
+    fun enforcesOutputTokenLimitsAndScalesTimeout() {
+        assertFailsWith<IllegalArgumentException> {
+            AiAnalysisRequest(snapshot, AiAnalysisTemplate.COMPREHENSIVE, candidateCount = 1, maxOutputTokens = 2048)
+        }
+        assertEquals(
+            32768,
+            AiAnalysisRequest(snapshot, AiAnalysisTemplate.COMPREHENSIVE, 1, maxOutputTokens = 32768).maxOutputTokens,
+        )
+        assertEquals(8192, AiAnalysisRequest(snapshot, AiAnalysisTemplate.COMPREHENSIVE, 1).maxOutputTokens)
+        assertEquals(264, AiAnalysisProtocol.requestTimeoutSeconds(8192))
+        assertEquals(879, AiAnalysisProtocol.requestTimeoutSeconds(32768))
+    }
+
     /** 首发模板标识必须唯一且带显式版本。 */
     @Test
     fun exposesUniqueVersionedTemplateIds() {

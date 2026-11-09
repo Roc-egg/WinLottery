@@ -177,13 +177,24 @@ fun App(session: LotteryAppSession) {
             }
 
             is AppScreen.AiAnalysis -> {
+                val aiApiKey by controller.aiApiKey.collectAsState()
                 AiAnalysisScreen(
                     workspace = screen.workspace,
                     availableMainDestinations = availableMainDestinations,
                     onMainDestinationSelected = onMainDestinationSelected,
+                    apiKey = aiApiKey,
+                    savesApiKeyLocally = controller.savesAiApiKeyLocally,
                     onSettingsChange = { settings ->
                         scope.launch { controller.updateAiAnalysisSettings(settings) }
                     },
+                    onApiKeyChange = { apiKey ->
+                        controller.updateAiApiKey(apiKey)
+                        scope.launch { controller.saveAiConnection() }
+                    },
+                    onClearSavedConnection = { scope.launch { controller.clearSavedAiConnection() } },
+                    onFetchModels = { scope.launch { controller.fetchAiModels() } },
+                    onSelectModel = { model -> scope.launch { controller.selectAiModel(model) } },
+                    onDismissModels = controller::dismissAiModels,
                     onRetryHistory = { scope.launch { controller.retryAiAnalysisHistory() } },
                     onRefreshHistory = { scope.launch { controller.refreshAiAnalysisHistory() } },
                     onPreparePreview = controller::prepareAiAnalysisPreview,

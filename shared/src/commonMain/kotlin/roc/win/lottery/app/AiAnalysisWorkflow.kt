@@ -2,6 +2,9 @@ package roc.win.lottery.app
 
 import kotlinx.coroutines.CancellationException
 import roc.win.lottery.data.AiAnalysisProvider
+import roc.win.lottery.data.AiApiFormat
+import roc.win.lottery.data.AiModelCatalogRequestResult
+import roc.win.lottery.data.AiModelCatalogResult
 import roc.win.lottery.data.AiProviderConfiguration
 import roc.win.lottery.data.AiProviderConfigurationResult
 import roc.win.lottery.data.AiProviderConfigurationValidator
@@ -23,8 +26,10 @@ import kotlin.time.Clock
  * AI 分析页可编辑且不包含密钥的会话配置。
  *
  * @property providerName 用户填写的服务商展示名称。
- * @property endpointUrl 用户填写的完整 Responses 风格 HTTPS 地址。
+ * @property apiFormat 用户选择的接口格式。
+ * @property baseUrl 用户填写的 HTTP 或 HTTPS Base URL。
  * @property model 用户填写的模型标识。
+ * @property maxOutputTokens 用户选择的模型输出 token 上限。
  * @property lotteryType 当前分析彩种。
  * @property sampleSize 当前真实历史开奖样本范围。
  * @property template 当前版本化分析模板。
@@ -32,8 +37,10 @@ import kotlin.time.Clock
  */
 data class AiAnalysisSettings(
     val providerName: String = "",
-    val endpointUrl: String = "",
+    val apiFormat: AiApiFormat = AiApiFormat.OPENAI_CHAT_COMPLETIONS,
+    val baseUrl: String = "",
     val model: String = "",
+    val maxOutputTokens: Int = AiAnalysisProtocol.DEFAULT_OUTPUT_TOKEN_LIMIT,
     val lotteryType: LotteryType = LotteryType.SUPER_LOTTO,
     val sampleSize: TrendSampleSize = TrendSampleSize.LAST_50,
     val template: AiAnalysisTemplate = AiAnalysisTemplate.COMPREHENSIVE,
@@ -42,6 +49,9 @@ data class AiAnalysisSettings(
     init {
         require(candidateCount in AiAnalysisProtocol.MIN_CANDIDATE_COUNT..AiAnalysisProtocol.MAX_CANDIDATE_COUNT) {
             "AI 候选注数必须位于 ${AiAnalysisProtocol.MIN_CANDIDATE_COUNT}..${AiAnalysisProtocol.MAX_CANDIDATE_COUNT}"
+        }
+        require(maxOutputTokens in AiAnalysisProtocol.OUTPUT_TOKEN_LIMITS) {
+            "AI 输出上限必须是 ${AiAnalysisProtocol.OUTPUT_TOKEN_LIMITS.joinToString("、")} 之一"
         }
     }
 }
@@ -98,6 +108,33 @@ sealed interface AiAnalysisOperation {
     ) : AiAnalysisOperation
 }
 
+/** AI 页模型列表弹窗状态。 */
+sealed interface AiModelCatalogState {
+    /** 弹窗未打开。 */
+    data object Hidden : AiModelCatalogState
+
+    /** 正在向服务商读取模型列表。 */
+    data object Loading : AiModelCatalogState
+
+    /**
+     * 已读取到可选模型。
+     *
+     * @property models 去重排序后的模型标识，至少包含一项。
+     */
+    data class Loaded(
+        val models: List<String>,
+    ) : AiModelCatalogState
+
+    /**
+     * 读取失败或本地校验未通过。
+     *
+     * @property message 面向用户的简体中文说明。
+     */
+    data class Failed(
+        val message: String,
+    ) : AiModelCatalogState
+}
+
 /**
  * 当前进程会话内最近一次通过本地校验的 AI 分析结果。
  *
@@ -114,7 +151,7 @@ data class AiAnalysisSessionResult(
 )
 
 /**
- * AI 分析共享界面状态，不包含会话密钥、完整请求体或完整响应。
+ * AI 分析共享界面状态，不包含密钥、完整请求体或完整响应。
  *
  * @property settings 当前非敏感配置。
  * @property history 当前彩种的官方历史开奖可用性。
@@ -122,6 +159,7 @@ data class AiAnalysisSessionResult(
  * @property lastResult 当前进程内最近一次合法结果。
  * @property errorMessage 最近一次本地阻断或单次请求失败说明。
  * @property historyRefresh 已展示本机历史开奖时与官网核对的进度。
+ * @property modelCatalog 用户主动读取的服务商模型列表弹窗状态。
  */
 data class AiAnalysisWorkspaceState(
     val settings: AiAnalysisSettings = AiAnalysisSettings(),
@@ -130,6 +168,7 @@ data class AiAnalysisWorkspaceState(
     val lastResult: AiAnalysisSessionResult? = null,
     val errorMessage: String? = null,
     val historyRefresh: HistoricalDrawRefreshStatus = HistoricalDrawRefreshStatus.Idle,
+    val modelCatalog: AiModelCatalogState = AiModelCatalogState.Hidden,
 )
 
 /**
@@ -162,6 +201,9 @@ internal class AiAnalysisWorkflow(
 
     /** 用于丢弃取消后迟到模型响应的单调代次。 */
     private var requestGeneration: Long = 0L
+
+    /** 用于丢弃弹窗关闭、离开页面或再次读取后迟到的模型列表的单调代次。 */
+    private var modelCatalogGeneration: Long = 0L
 
     /** 更新非敏感配置；任何变化都会使旧预览失效。 */
     fun updateSettings(settings: AiAnalysisSettings) {
@@ -276,9 +318,9 @@ internal class AiAnalysisWorkflow(
     }
 
     /**
-     * 使用当前非敏感配置、会话密钥和历史缓存构建精确发送预览。
+     * 使用当前非敏感配置、密钥和历史缓存构建精确发送预览。
      *
-     * @param apiKey 只进入私有待确认配置的当前会话密钥。
+     * @param apiKey 只进入私有待确认配置的当前密钥。
      * @return 是否已经形成可供用户确认的预览。
      */
     fun preparePreview(apiKey: String): Boolean {
@@ -290,7 +332,8 @@ internal class AiAnalysisWorkflow(
                 val result =
                     configurationValidator.validate(
                         displayName = state.settings.providerName,
-                        endpointUrl = state.settings.endpointUrl,
+                        apiFormat = state.settings.apiFormat,
+                        baseUrl = state.settings.baseUrl,
                         model = state.settings.model,
                         apiKey = apiKey,
                     )
@@ -315,6 +358,7 @@ internal class AiAnalysisWorkflow(
                 snapshot = snapshot,
                 template = state.settings.template,
                 candidateCount = state.settings.candidateCount,
+                maxOutputTokens = state.settings.maxOutputTokens,
             )
         val preview =
             when (val result = provider.preview(configuration, request)) {
@@ -340,7 +384,61 @@ internal class AiAnalysisWorkflow(
         return true
     }
 
-    /** 取消尚未消费的发送预览并立即解除会话密钥引用。 */
+    /**
+     * 用户主动读取服务商模型列表；弹窗关闭、离开页面或再次读取后，旧请求的结果被丢弃。
+     *
+     * @param apiKey 当前填写的密钥，只用于本次模型列表请求。
+     */
+    suspend fun fetchModelCatalog(apiKey: String) {
+        if (state.operation is AiAnalysisOperation.Requesting) return
+        val generation = ++modelCatalogGeneration
+        val request =
+            when (
+                val result =
+                    configurationValidator.validateModelCatalog(
+                        state.settings.apiFormat,
+                        state.settings.baseUrl,
+                        apiKey,
+                    )
+            ) {
+                is AiModelCatalogRequestResult.Success -> {
+                    result.request
+                }
+
+                is AiModelCatalogRequestResult.Invalid -> {
+                    publish(state.copy(modelCatalog = AiModelCatalogState.Failed(result.message)))
+                    return
+                }
+            }
+        publish(state.copy(modelCatalog = AiModelCatalogState.Loading))
+        val result = provider.listModels(request)
+        if (generation != modelCatalogGeneration) return
+        publish(
+            state.copy(
+                modelCatalog =
+                    when (result) {
+                        is AiModelCatalogResult.Success -> AiModelCatalogState.Loaded(result.models)
+                        is AiModelCatalogResult.Failure -> AiModelCatalogState.Failed(result.message)
+                    },
+            ),
+        )
+    }
+
+    /** 关闭模型列表弹窗，并使进行中的读取结果失效。 */
+    fun dismissModelCatalog() {
+        modelCatalogGeneration += 1L
+        if (state.modelCatalog != AiModelCatalogState.Hidden) {
+            publish(state.copy(modelCatalog = AiModelCatalogState.Hidden))
+        }
+    }
+
+    /** 选用模型列表中的一项：关闭弹窗并写入模型字段。 */
+    fun selectModel(model: String) {
+        dismissModelCatalog()
+        updateSettings(state.settings.copy(model = model))
+    }
+
+    /** 取消尚未消费的发送预览并立即解除密钥引用。 */
     fun dismissPreview() {
         if (state.operation !is AiAnalysisOperation.AwaitingConfirmation) return
         clearPendingRequest()
@@ -430,8 +528,9 @@ internal class AiAnalysisWorkflow(
         }
     }
 
-    /** 离开 AI 工作区时清除预览和请求授权，不清除当前会话合法结果。 */
+    /** 离开 AI 工作区时清除预览、请求授权和模型列表弹窗，不清除当前会话合法结果。 */
     fun clearTransientRequest() {
+        dismissModelCatalog()
         val hadTransientOperation = state.operation !is AiAnalysisOperation.Idle
         invalidateTransientRequest()
         if (hadTransientOperation) {
@@ -469,7 +568,7 @@ internal class AiAnalysisWorkflow(
     }
 
     /**
-     * 等待一次确认的私有请求，唯一敏感成员是配置内部的会话密钥。
+     * 等待一次确认的私有请求，唯一敏感成员是配置内部的密钥。
      *
      * @property configuration 已校验且调试文本固定脱敏的 Provider 配置。
      * @property request 已绑定规范化历史快照的领域请求。

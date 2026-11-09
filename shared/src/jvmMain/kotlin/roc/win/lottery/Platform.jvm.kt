@@ -2,11 +2,12 @@ package roc.win.lottery
 
 import roc.win.lottery.app.AppContainer
 import roc.win.lottery.app.DesktopTicketRecordFileExchange
+import roc.win.lottery.data.HttpAiAnalysisProvider
 import roc.win.lottery.data.JvmSuperLottoPdfTextExtractor
 import roc.win.lottery.data.OfficialDrawRepository
-import roc.win.lottery.data.ResponsesAiAnalysisProvider
 import roc.win.lottery.domain.LotteryPrizeCalculator
 import roc.win.lottery.domain.TicketValidator
+import roc.win.lottery.persistence.createJvmAiConnectionStore
 import roc.win.lottery.persistence.createJvmLocalStorage
 import roc.win.lottery.recognition.ConservativeTicketParser
 import roc.win.lottery.recognition.DesktopAppPaths
@@ -74,7 +75,8 @@ internal fun createDesktopAppContainer(
         ticketParser = ConservativeTicketParser(),
         drawRepository = officialDrawRepository,
         historicalDrawRepository = officialDrawRepository,
-        aiAnalysisProvider = ResponsesAiAnalysisProvider(),
+        aiAnalysisProvider = HttpAiAnalysisProvider(),
+        aiConnectionStore = createJvmAiConnectionStore(applicationDataDirectory),
         prizeCalculator = LotteryPrizeCalculator(),
         appPaths = appPaths,
         ticketValidator = TicketValidator(),

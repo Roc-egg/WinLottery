@@ -20,11 +20,25 @@ object AiAnalysisProtocol {
     /** 完整模型请求体允许占用的最多 UTF-8 字节数。 */
     const val MAX_REQUEST_BODY_BYTES = 128 * 1024
 
-    /** 模型输出 token 固定上限。 */
-    const val MAX_OUTPUT_TOKENS = 2048
+    /** 用户可选的模型输出 token 上限；推理模型的思考过程也计入上限。 */
+    val OUTPUT_TOKEN_LIMITS = listOf(4096, 8192, 16384, 32768)
 
-    /** 单次模型请求固定超时秒数。 */
-    const val REQUEST_TIMEOUT_SECONDS = 60
+    /** 默认输出 token 上限；主流非推理模型都接受这个值。 */
+    const val DEFAULT_OUTPUT_TOKEN_LIMIT = 8192
+
+    /** 单次模型请求的基础超时秒数，另按输出上限追加生成时间。 */
+    const val BASE_REQUEST_TIMEOUT_SECONDS = 60
+
+    /** 估算超时时按每秒至少生成的 token 数。 */
+    private const val MIN_OUTPUT_TOKENS_PER_SECOND = 40
+
+    /**
+     * 返回指定输出上限下单次请求的超时秒数：基础 60 秒，加上按每秒 40 token 生成满上限所需的时间。
+     *
+     * @param maxOutputTokens 本次请求的输出 token 上限。
+     */
+    fun requestTimeoutSeconds(maxOutputTokens: Int): Int =
+        BASE_REQUEST_TIMEOUT_SECONDS + maxOutputTokens / MIN_OUTPUT_TOKENS_PER_SECOND
 
     /** 分析摘要允许的最多字符数。 */
     const val MAX_SUMMARY_LENGTH = 1200
@@ -106,15 +120,20 @@ class AiHistorySnapshot internal constructor(
  * @property snapshot 经过完整校验且可复核的历史快照。
  * @property template 用户选择的冻结分析模板。
  * @property candidateCount 需要模型返回的候选注数。
+ * @property maxOutputTokens 模型输出 token 上限，取自 [AiAnalysisProtocol.OUTPUT_TOKEN_LIMITS]。
  */
 data class AiAnalysisRequest(
     val snapshot: AiHistorySnapshot,
     val template: AiAnalysisTemplate,
     val candidateCount: Int,
+    val maxOutputTokens: Int = AiAnalysisProtocol.DEFAULT_OUTPUT_TOKEN_LIMIT,
 ) {
     init {
         require(candidateCount in AiAnalysisProtocol.MIN_CANDIDATE_COUNT..AiAnalysisProtocol.MAX_CANDIDATE_COUNT) {
             "AI 候选注数必须位于 ${AiAnalysisProtocol.MIN_CANDIDATE_COUNT}..${AiAnalysisProtocol.MAX_CANDIDATE_COUNT}"
+        }
+        require(maxOutputTokens in AiAnalysisProtocol.OUTPUT_TOKEN_LIMITS) {
+            "AI 输出上限必须是 ${AiAnalysisProtocol.OUTPUT_TOKEN_LIMITS.joinToString("、")} 之一"
         }
     }
 }

@@ -87,5 +87,5 @@ private const val SERVER_ERROR_STATUS = NetworkPolicy.SERVER_ERROR_STATUS
 /** AI 请求建连超时毫秒数。 */
 private const val AI_CONNECT_TIMEOUT_MILLIS = 10_000L
 
-/** AI 请求和套接字超时毫秒数。 */
-private const val AI_REQUEST_TIMEOUT_MILLIS = AiAnalysisProtocol.REQUEST_TIMEOUT_SECONDS * 1_000L
+/** AI 请求和套接字的默认超时毫秒数；分析请求按输出上限单独放宽。 */
+private const val AI_REQUEST_TIMEOUT_MILLIS = AiAnalysisProtocol.BASE_REQUEST_TIMEOUT_SECONDS * 1_000L

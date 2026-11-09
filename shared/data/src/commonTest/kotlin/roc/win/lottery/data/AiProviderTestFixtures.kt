@@ -21,14 +21,16 @@ internal const val TEST_AI_API_KEY = "test-session-secret"
 
 /** 构造经过生产校验器验证的测试服务配置。 */
 internal fun testAiProviderConfiguration(
-    endpointUrl: String = "https://api.example.test/v1/responses",
+    apiFormat: AiApiFormat = AiApiFormat.OPENAI_RESPONSES,
+    baseUrl: String = "https://api.example.test/v1",
     model: String = "test-model-v1",
     apiKey: String = TEST_AI_API_KEY,
 ): AiProviderConfiguration =
     assertIs<AiProviderConfigurationResult.Success>(
         AiProviderConfigurationValidator().validate(
             displayName = "测试服务",
-            endpointUrl = endpointUrl,
+            apiFormat = apiFormat,
+            baseUrl = baseUrl,
             model = model,
             apiKey = apiKey,
         ),
@@ -39,6 +41,7 @@ internal fun testAiAnalysisRequest(
     lotteryType: LotteryType = LotteryType.SUPER_LOTTO,
     sampleSize: TrendSampleSize = TrendSampleSize.LAST_50,
     candidateCount: Int = 2,
+    maxOutputTokens: Int = AiAnalysisProtocol.DEFAULT_OUTPUT_TOKEN_LIMIT,
 ): AiAnalysisRequest {
     val snapshot =
         assertIs<AiHistorySnapshotBuildResult.Success>(
@@ -52,6 +55,7 @@ internal fun testAiAnalysisRequest(
         snapshot = snapshot,
         template = AiAnalysisTemplate.COMPREHENSIVE,
         candidateCount = candidateCount,
+        maxOutputTokens = maxOutputTokens,
     )
 }
 
@@ -102,6 +106,67 @@ internal fun completedResponsesBody(outputText: String): String =
                 )
             },
         )
+    }.toString()
+
+/** 构造 Chat Completions 已完成响应。 */
+internal fun completedChatCompletionsBody(
+    content: String,
+    finishReason: String = "stop",
+): String =
+    buildJsonObject {
+        put("id", "chatcmpl_test")
+        put("object", "chat.completion")
+        put(
+            "choices",
+            buildJsonArray {
+                add(
+                    buildJsonObject {
+                        put("index", 0)
+                        put(
+                            "message",
+                            buildJsonObject {
+                                put("role", "assistant")
+                                put("content", content)
+                            },
+                        )
+                        put("finish_reason", finishReason)
+                    },
+                )
+            },
+        )
+    }.toString()
+
+/** 构造 Anthropic Messages 已完成响应；可选在正文前放一个思考块。 */
+internal fun completedAnthropicMessagesBody(
+    text: String,
+    stopReason: String = "end_turn",
+    withThinking: Boolean = false,
+): String =
+    buildJsonObject {
+        put("id", "msg_test")
+        put("type", "message")
+        put("role", "assistant")
+        put(
+            "content",
+            buildJsonArray {
+                if (withThinking) {
+                    add(
+                        buildJsonObject {
+                            put("type", "thinking")
+                            put("thinking", "先看历史分布")
+                            put("signature", "sig")
+                        },
+                    )
+                }
+                add(
+                    buildJsonObject {
+                        put("type", "text")
+                        put("text", text)
+                    },
+                )
+            },
+        )
+        put("stop_reason", stopReason)
     }.toString()
 
 /** 构造跨年度且年度内部连续的合法历史开奖。 */

@@ -19,6 +19,7 @@ import com.composables.icons.lucide.History
 import com.composables.icons.lucide.Image
 import com.composables.icons.lucide.Info
 import com.composables.icons.lucide.KeyRound
+import com.composables.icons.lucide.ListChecks
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Maximize
 import com.composables.icons.lucide.Menu
@@ -85,13 +86,16 @@ object LotteryIcons {
     /** AI 历史分析一级目的地图标。 */
     val AiAnalysis: ImageVector = Lucide.BrainCircuit
 
-    /** 显示会话密钥图标。 */
+    /** 显示密钥图标。 */
     val ShowSecret: ImageVector = Lucide.Eye
 
-    /** 隐藏会话密钥图标。 */
+    /** 隐藏密钥图标。 */
     val HideSecret: ImageVector = Lucide.EyeOff
 
-    /** 会话密钥输入图标。 */
+    /** 从服务商读取并选择模型的图标。 */
+    val ModelList: ImageVector = Lucide.ListChecks
+
+    /** 密钥输入图标。 */
     val SecretKey: ImageVector = Lucide.KeyRound
 
     /** 发送单次 AI 请求图标。 */

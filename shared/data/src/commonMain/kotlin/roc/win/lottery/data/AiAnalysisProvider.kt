@@ -1,26 +1,48 @@
 package roc.win.lottery.data
 
+import io.ktor.http.URLBuilder
 import io.ktor.http.URLProtocol
 import io.ktor.http.Url
 import io.ktor.http.authority
+import io.ktor.http.encodedPath
 import roc.win.lottery.domain.AiAnalysisRequest
 import roc.win.lottery.domain.AiAnalysisResult
+
+/**
+ * AI 服务接口格式，决定请求路径、鉴权请求头、请求体和响应解析方式。
+ *
+ * @property displayName 连接配置下拉框展示的名称。
+ * @property baseUrlExample Base URL 输入框的示例地址。
+ */
+enum class AiApiFormat(
+    val displayName: String,
+    val baseUrlExample: String,
+) {
+    /** Anthropic Messages：请求 `{Base URL}/v1/messages`，以 `x-api-key` 鉴权，按提示词约束 JSON 输出。 */
+    ANTHROPIC_MESSAGES("Anthropic Messages", "https://api.anthropic.com"),
+
+    /** OpenAI Chat Completions：请求 `{Base URL}/chat/completions`，要求 JSON 对象输出，兼容服务最多。 */
+    OPENAI_CHAT_COMPLETIONS("OpenAI Chat Completions", "https://api.openai.com/v1"),
+
+    /** OpenAI Responses：请求 `{Base URL}/responses`，使用严格 JSON Schema 结构输出。 */
+    OPENAI_RESPONSES("OpenAI Responses", "https://api.openai.com/v1"),
+}
 
 /** AI 服务连接配置问题的稳定编码。 */
 enum class AiProviderConfigurationProblemCode {
     /** 服务商展示名称为空或过长。 */
     INVALID_PROVIDER_NAME,
 
-    /** 服务地址不是结构完整的绝对 URL。 */
+    /** Base URL 不是结构完整的绝对 URL。 */
     INVALID_ENDPOINT,
 
-    /** 服务地址没有使用 HTTPS。 */
-    INSECURE_ENDPOINT,
+    /** Base URL 既不是 HTTP 也不是 HTTPS。 */
+    UNSUPPORTED_SCHEME,
 
     /** 模型标识为空、过长或包含不允许的字符。 */
     INVALID_MODEL,
 
-    /** 会话密钥为空、过长或包含空白控制字符。 */
+    /** 密钥为空、过长或包含空白控制字符。 */
     INVALID_API_KEY,
 }
 
@@ -30,21 +52,26 @@ enum class AiProviderConfigurationProblemCode {
  * 密钥只对数据模块内部可见，`toString` 始终输出脱敏占位符。
  *
  * @property displayName 用户确认页展示的服务商名称。
- * @property endpointUrl 实际接收请求的完整 HTTPS 地址。
- * @property endpointHost 实际接收密钥和数据的 HTTPS 主机与显式端口。
+ * @property apiFormat 请求和响应使用的接口格式。
+ * @property endpointUrl 由 Base URL 和接口格式推导出的实际请求地址。
+ * @property endpointHost 实际接收密钥和数据的主机与显式端口。
+ * @property usesHttps 是否使用加密的 HTTPS 连接；为 `false` 时密钥和数据以明文传输。
  * @property model 用户指定的模型标识。
- * @property apiKey 仅在本次进程会话中使用的用户密钥。
+ * @property apiKey 用户的服务商密钥。
  */
 class AiProviderConfiguration internal constructor(
     val displayName: String,
+    val apiFormat: AiApiFormat,
     val endpointUrl: String,
     val endpointHost: String,
+    val usesHttps: Boolean,
     val model: String,
     internal val apiKey: String,
 ) {
-    /** 返回不包含会话密钥的调试文本。 */
+    /** 返回不包含密钥的调试文本。 */
     override fun toString(): String =
-        "AiProviderConfiguration(displayName=$displayName, endpointHost=$endpointHost, model=$model, apiKey=<已隐藏>)"
+        "AiProviderConfiguration(displayName=$displayName, apiFormat=$apiFormat, endpointHost=$endpointHost, " +
+            "model=$model, apiKey=<已隐藏>)"
 }
 
 /** AI 服务连接配置校验结果。 */
@@ -70,20 +97,90 @@ sealed interface AiProviderConfigurationResult {
     ) : AiProviderConfigurationResult
 }
 
-/** 校验用户在当前会话填写的 AI 服务连接信息。 */
+/**
+ * 已通过本地校验、可以拉取模型列表的连接。
+ *
+ * 密钥只对数据模块内部可见，`toString` 始终输出脱敏占位符。
+ *
+ * @property apiFormat 决定鉴权请求头的接口格式。
+ * @property modelsUrl 由 Base URL 和接口格式推导出的模型列表地址，与分析请求同协议、同主机。
+ * @property endpointHost 实际接收密钥的主机与显式端口。
+ * @property usesHttps 是否使用加密的 HTTPS 连接。
+ * @property apiKey 用户的服务商密钥。
+ */
+class AiModelCatalogRequest internal constructor(
+    val apiFormat: AiApiFormat,
+    val modelsUrl: String,
+    val endpointHost: String,
+    val usesHttps: Boolean,
+    internal val apiKey: String,
+) {
+    /** 返回不包含密钥的调试文本。 */
+    override fun toString(): String = "AiModelCatalogRequest(modelsUrl=$modelsUrl, apiKey=<已隐藏>)"
+}
+
+/** 模型列表连接校验结果。 */
+sealed interface AiModelCatalogRequestResult {
+    /**
+     * 可以发起模型列表请求。
+     *
+     * @property request 已推导模型列表地址的连接。
+     */
+    data class Success(
+        val request: AiModelCatalogRequest,
+    ) : AiModelCatalogRequestResult
+
+    /**
+     * 地址或密钥不满足安全边界。
+     *
+     * @property code 稳定问题编码。
+     * @property message 面向用户的简体中文说明。
+     */
+    data class Invalid(
+        val code: AiProviderConfigurationProblemCode,
+        val message: String,
+    ) : AiModelCatalogRequestResult
+}
+
+/** 拉取服务商模型列表的结果。 */
+sealed interface AiModelCatalogResult {
+    /**
+     * 已读取到可直接填入模型字段的标识。
+     *
+     * @property models 去重后按字母排序、符合模型标识格式的列表，至少包含一项。
+     */
+    data class Success(
+        val models: List<String>,
+    ) : AiModelCatalogResult
+
+    /**
+     * 请求失败或服务商没有返回可用模型。
+     *
+     * @property code 稳定失败编码。
+     * @property message 面向用户的简体中文说明。
+     */
+    data class Failure(
+        val code: AiProviderFailureCode,
+        val message: String,
+    ) : AiModelCatalogResult
+}
+
+/** 校验用户填写的 AI 服务连接信息，并按接口格式由 Base URL 推导实际请求地址。 */
 class AiProviderConfigurationValidator {
     /**
-     * 校验并规范化服务商名称、HTTPS 地址、模型和密钥。
+     * 校验并规范化服务商名称、接口格式、HTTP 或 HTTPS Base URL、模型和密钥。
      *
      * @param displayName 用户填写的服务商展示名称。
-     * @param endpointUrl 用户填写的完整 Responses 风格接口地址。
+     * @param apiFormat 用户选择的接口格式。
+     * @param baseUrl 用户填写的 Base URL；误填完整接口地址时会去掉接口路径。
      * @param model 用户填写的模型标识。
-     * @param apiKey 用户本次会话提供的密钥。
+     * @param apiKey 用户提供的密钥。
      * @return 可用配置或单一明确问题。
      */
     fun validate(
         displayName: String,
-        endpointUrl: String,
+        apiFormat: AiApiFormat,
+        baseUrl: String,
         model: String,
         apiKey: String,
     ): AiProviderConfigurationResult {
@@ -96,16 +193,157 @@ class AiProviderConfigurationValidator {
             return invalid(AiProviderConfigurationProblemCode.INVALID_PROVIDER_NAME, "AI 服务商名称为空或过长")
         }
 
-        val normalizedEndpoint = endpointUrl.trim()
-        if (normalizedEndpoint.length > MAX_ENDPOINT_LENGTH) {
+        val endpoints =
+            when (val endpoint = resolveEndpoints(apiFormat, baseUrl)) {
+                is EndpointCheck.Valid -> endpoint
+
+                is EndpointCheck.Invalid -> return AiProviderConfigurationResult.Invalid(
+                    endpoint.code,
+                    endpoint.message,
+                )
+            }
+
+        val normalizedModel = model.trim()
+        if (!AI_MODEL_ID_PATTERN.matches(normalizedModel)) {
             return invalid(
+                AiProviderConfigurationProblemCode.INVALID_MODEL,
+                "AI 模型标识为空、过长或包含不允许的字符",
+            )
+        }
+        if (!isValidApiKey(apiKey)) {
+            return invalid(AiProviderConfigurationProblemCode.INVALID_API_KEY, INVALID_API_KEY_MESSAGE)
+        }
+
+        return AiProviderConfigurationResult.Success(
+            configuration =
+                AiProviderConfiguration(
+                    displayName = normalizedName,
+                    apiFormat = apiFormat,
+                    endpointUrl = endpoints.requestUrl,
+                    endpointHost = endpoints.url.authority,
+                    usesHttps = endpoints.url.protocol == URLProtocol.HTTPS,
+                    model = normalizedModel,
+                    apiKey = apiKey,
+                ),
+        )
+    }
+
+    /**
+     * 校验 Base URL 和密钥，并按接口格式推导同协议、同主机的模型列表地址。
+     *
+     * @param apiFormat 用户选择的接口格式。
+     * @param baseUrl 用户填写的 Base URL。
+     * @param apiKey 用户提供的密钥。
+     * @return 可发起模型列表请求的连接或单一明确问题。
+     */
+    fun validateModelCatalog(
+        apiFormat: AiApiFormat,
+        baseUrl: String,
+        apiKey: String,
+    ): AiModelCatalogRequestResult {
+        val endpoints =
+            when (val endpoint = resolveEndpoints(apiFormat, baseUrl)) {
+                is EndpointCheck.Valid -> endpoint
+                is EndpointCheck.Invalid -> return AiModelCatalogRequestResult.Invalid(endpoint.code, endpoint.message)
+            }
+        if (!isValidApiKey(apiKey)) {
+            return AiModelCatalogRequestResult.Invalid(
+                AiProviderConfigurationProblemCode.INVALID_API_KEY,
+                INVALID_API_KEY_MESSAGE,
+            )
+        }
+        return AiModelCatalogRequestResult.Success(
+            AiModelCatalogRequest(
+                apiFormat = apiFormat,
+                modelsUrl = endpoints.modelsUrl,
+                endpointHost = endpoints.url.authority,
+                usesHttps = endpoints.url.protocol == URLProtocol.HTTPS,
+                apiKey = apiKey,
+            ),
+        )
+    }
+
+    /**
+     * 返回当前 Base URL 和接口格式实际会请求的地址，供输入框下方展示；Base URL 不合法时为 `null`。
+     *
+     * @param apiFormat 用户选择的接口格式。
+     * @param baseUrl 用户填写的 Base URL。
+     */
+    fun requestUrlOrNull(
+        apiFormat: AiApiFormat,
+        baseUrl: String,
+    ): String? = (resolveEndpoints(apiFormat, baseUrl) as? EndpointCheck.Valid)?.requestUrl
+
+    /**
+     * 解析 Base URL 并推导分析请求与模型列表地址。
+     *
+     * 末尾已带 `/chat/completions`、`/responses`、`/messages` 或 `/models` 时先去掉，兼容直接粘贴完整接口地址；
+     * OpenAI 格式的 Base URL 没有路径时补 `/v1`；Anthropic 格式的 Base URL 末尾带 `/v1` 时不重复追加。
+     */
+    private fun resolveEndpoints(
+        apiFormat: AiApiFormat,
+        baseUrl: String,
+    ): EndpointCheck {
+        val parsed =
+            when (val endpoint = parseEndpoint(baseUrl)) {
+                is ParsedEndpoint.Valid -> endpoint.url
+                is ParsedEndpoint.Invalid -> return EndpointCheck.Invalid(endpoint.code, endpoint.message)
+            }
+        var basePath = URLBuilder(parsed).encodedPath.trimEnd('/')
+        ENDPOINT_PATH_SUFFIXES.firstOrNull(basePath::endsWith)?.let { suffix ->
+            basePath = basePath.removeSuffix(suffix)
+        }
+        val requestPath: String
+        val modelsPath: String
+        when (apiFormat) {
+            AiApiFormat.ANTHROPIC_MESSAGES -> {
+                val root = basePath.removeSuffix(VERSION_PATH)
+                requestPath = "$root$VERSION_PATH$MESSAGES_PATH"
+                modelsPath = "$root$VERSION_PATH$MODELS_PATH"
+            }
+
+            AiApiFormat.OPENAI_CHAT_COMPLETIONS,
+            AiApiFormat.OPENAI_RESPONSES,
+            -> {
+                val root = basePath.ifEmpty { VERSION_PATH }
+                val operationPath =
+                    if (apiFormat == AiApiFormat.OPENAI_RESPONSES) RESPONSES_PATH else CHAT_COMPLETIONS_PATH
+                requestPath = "$root$operationPath"
+                modelsPath = "$root$MODELS_PATH"
+            }
+        }
+        val requestUrl = URLBuilder(parsed).apply { encodedPath = requestPath }.buildString()
+        val modelsUrl =
+            URLBuilder(parsed)
+                .apply {
+                    encodedPath = modelsPath
+                    if (apiFormat == AiApiFormat.ANTHROPIC_MESSAGES) {
+                        // Anthropic 模型列表默认每页 20 项，一次取满上限，避免列表不全。
+                        parameters.append("limit", ANTHROPIC_MODEL_PAGE_LIMIT)
+                    }
+                }.buildString()
+        return EndpointCheck.Valid(url = parsed, requestUrl = requestUrl, modelsUrl = modelsUrl)
+    }
+
+    /** 解析并检查不含账号、查询参数或片段的完整 HTTP 或 HTTPS 地址。 */
+    private fun parseEndpoint(baseUrl: String): ParsedEndpoint {
+        val normalizedEndpoint = baseUrl.trim()
+        if (normalizedEndpoint.length > MAX_ENDPOINT_LENGTH) {
+            return ParsedEndpoint.Invalid(
                 AiProviderConfigurationProblemCode.INVALID_ENDPOINT,
-                "AI 服务地址为空、过长或不是完整 HTTPS 地址",
+                "Base URL 为空、过长或不是完整的 HTTP 或 HTTPS 地址",
             )
         }
         val parsedEndpoint = runCatching { Url(normalizedEndpoint) }.getOrNull()
+        if (parsedEndpoint != null && parsedEndpoint.protocol !in SUPPORTED_PROTOCOLS) {
+            return ParsedEndpoint.Invalid(
+                AiProviderConfigurationProblemCode.UNSUPPORTED_SCHEME,
+                "Base URL 必须使用 HTTP 或 HTTPS",
+            )
+        }
         if (
             parsedEndpoint == null ||
+            !normalizedEndpoint.contains(URL_SCHEME_SEPARATOR) ||
             parsedEndpoint.host.isBlank() ||
             parsedEndpoint.user != null ||
             parsedEndpoint.password != null ||
@@ -113,44 +351,19 @@ class AiProviderConfigurationValidator {
             parsedEndpoint.parameters.entries().isNotEmpty() ||
             parsedEndpoint.trailingQuery
         ) {
-            return invalid(
+            return ParsedEndpoint.Invalid(
                 AiProviderConfigurationProblemCode.INVALID_ENDPOINT,
-                "AI 服务地址必须是不含账号、查询参数或片段的完整 HTTPS 地址",
+                "Base URL 必须是不含账号、查询参数或片段的完整 HTTP 或 HTTPS 地址",
             )
         }
-        if (parsedEndpoint.protocol != URLProtocol.HTTPS) {
-            return invalid(AiProviderConfigurationProblemCode.INSECURE_ENDPOINT, "AI 服务地址必须使用 HTTPS")
-        }
-
-        val normalizedModel = model.trim()
-        if (!MODEL_PATTERN.matches(normalizedModel)) {
-            return invalid(
-                AiProviderConfigurationProblemCode.INVALID_MODEL,
-                "AI 模型标识为空、过长或包含不允许的字符",
-            )
-        }
-        if (
-            apiKey.isEmpty() ||
-            apiKey.length > MAX_API_KEY_LENGTH ||
-            apiKey.any { character -> character.isWhitespace() || character.isISOControl() }
-        ) {
-            return invalid(
-                AiProviderConfigurationProblemCode.INVALID_API_KEY,
-                "AI 会话密钥为空、过长或包含空白字符",
-            )
-        }
-
-        return AiProviderConfigurationResult.Success(
-            configuration =
-                AiProviderConfiguration(
-                    displayName = normalizedName,
-                    endpointUrl = parsedEndpoint.toString(),
-                    endpointHost = parsedEndpoint.authority,
-                    model = normalizedModel,
-                    apiKey = apiKey,
-                ),
-        )
+        return ParsedEndpoint.Valid(parsedEndpoint)
     }
+
+    /** 密钥非空、不过长且不含空白或控制字符。 */
+    private fun isValidApiKey(apiKey: String): Boolean =
+        apiKey.isNotEmpty() &&
+            apiKey.length <= MAX_API_KEY_LENGTH &&
+            apiKey.none { character -> character.isWhitespace() || character.isISOControl() }
 
     /** 构造单一配置问题。 */
     private fun invalid(
@@ -162,27 +375,109 @@ class AiProviderConfigurationValidator {
             message = message,
         )
 
+    /** Base URL 解析结果。 */
+    private sealed interface ParsedEndpoint {
+        /**
+         * 地址合法。
+         *
+         * @property url 解析后的地址。
+         */
+        data class Valid(
+            val url: Url,
+        ) : ParsedEndpoint
+
+        /**
+         * 地址不合法。
+         *
+         * @property code 稳定问题编码。
+         * @property message 面向用户的简体中文说明。
+         */
+        data class Invalid(
+            val code: AiProviderConfigurationProblemCode,
+            val message: String,
+        ) : ParsedEndpoint
+    }
+
+    /** 接口地址推导结果。 */
+    private sealed interface EndpointCheck {
+        /**
+         * 已推导出同协议、同主机的接口地址。
+         *
+         * @property url 解析后的 Base URL。
+         * @property requestUrl 分析请求地址。
+         * @property modelsUrl 模型列表地址。
+         */
+        data class Valid(
+            val url: Url,
+            val requestUrl: String,
+            val modelsUrl: String,
+        ) : EndpointCheck
+
+        /**
+         * Base URL 不合法。
+         *
+         * @property code 稳定问题编码。
+         * @property message 面向用户的简体中文说明。
+         */
+        data class Invalid(
+            val code: AiProviderConfigurationProblemCode,
+            val message: String,
+        ) : EndpointCheck
+    }
+
     /** 配置文本边界常量。 */
     private companion object {
         /** 服务商展示名称最大字符数。 */
         const val MAX_PROVIDER_NAME_LENGTH = 60
 
-        /** 会话密钥最大字符数。 */
+        /** 密钥最大字符数。 */
         const val MAX_API_KEY_LENGTH = 4096
 
-        /** 完整 HTTPS 服务地址最大字符数。 */
+        /** 完整服务地址最大字符数。 */
         const val MAX_ENDPOINT_LENGTH = 2048
 
-        /** Responses 风格模型标识允许的保守字符集合。 */
-        val MODEL_PATTERN = Regex("^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$")
+        /** 允许的服务地址协议。 */
+        val SUPPORTED_PROTOCOLS = setOf(URLProtocol.HTTP, URLProtocol.HTTPS)
+
+        /** 用户必须显式填写协议，避免把不带协议的文本当作默认地址。 */
+        const val URL_SCHEME_SEPARATOR = "://"
+
+        /** API 版本路径。 */
+        const val VERSION_PATH = "/v1"
+
+        /** OpenAI Responses 接口路径。 */
+        const val RESPONSES_PATH = "/responses"
+
+        /** OpenAI Chat Completions 接口路径。 */
+        const val CHAT_COMPLETIONS_PATH = "/chat/completions"
+
+        /** Anthropic Messages 接口路径。 */
+        const val MESSAGES_PATH = "/messages"
+
+        /** 模型列表接口路径。 */
+        const val MODELS_PATH = "/models"
+
+        /** 用户误把完整接口地址填为 Base URL 时需要去掉的路径结尾。 */
+        val ENDPOINT_PATH_SUFFIXES = listOf(CHAT_COMPLETIONS_PATH, RESPONSES_PATH, MESSAGES_PATH, MODELS_PATH)
+
+        /** Anthropic 模型列表单页上限。 */
+        const val ANTHROPIC_MODEL_PAGE_LIMIT = "1000"
+
+        /** 密钥不合法时的统一说明。 */
+        const val INVALID_API_KEY_MESSAGE = "AI 密钥为空、过长或包含空白字符"
     }
 }
+
+/** 模型标识允许的保守字符集合；模型列表只保留可直接通过校验的标识。 */
+internal val AI_MODEL_ID_PATTERN = Regex("^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$")
 
 /**
  * 用户确认前可见且不包含密钥或完整请求体的 AI 请求预览。
  *
  * @property providerName 实际服务商展示名称。
+ * @property apiFormat 实际使用的接口格式。
  * @property endpointHost 实际接收密钥和历史数据的主机。
+ * @property usesHttps 是否使用加密的 HTTPS 连接；为 `false` 时确认页必须提示明文传输风险。
  * @property model 实际请求模型。
  * @property snapshotId 本次历史开奖快照标识。
  * @property sampleCount 实际发送的历史期数。
@@ -197,7 +492,9 @@ class AiProviderConfigurationValidator {
  */
 data class AiProviderRequestPreview(
     val providerName: String,
+    val apiFormat: AiApiFormat,
     val endpointHost: String,
+    val usesHttps: Boolean,
     val model: String,
     val snapshotId: String,
     val sampleCount: Int,
@@ -270,7 +567,7 @@ enum class AiProviderFailureCode {
     /** 响应体超过本地读取上限。 */
     RESPONSE_TOO_LARGE,
 
-    /** 服务响应或模型 JSON 不符合 Responses 严格结构。 */
+    /** 服务响应或模型 JSON 不符合约定结构。 */
     INVALID_RESPONSE,
 
     /** JSON 可解析，但号码或回显字段未通过本地领域校验。 */
@@ -325,4 +622,13 @@ interface AiAnalysisProvider {
         configuration: AiProviderConfiguration,
         request: AiAnalysisRequest,
     ): AiProviderResult
+
+    /**
+     * 由用户主动触发，读取服务商提供的模型列表，不自动重试。
+     *
+     * @param request 已校验并推导出模型列表地址的连接。
+     * @return 可选模型或明确失败状态；未实现的服务商返回失败。
+     */
+    suspend fun listModels(request: AiModelCatalogRequest): AiModelCatalogResult =
+        AiModelCatalogResult.Failure(AiProviderFailureCode.REQUEST_REJECTED, "当前服务不支持获取模型列表")
 }

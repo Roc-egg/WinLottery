@@ -11,10 +11,14 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
+import roc.win.lottery.data.AiApiFormat
 import roc.win.lottery.data.DrawQueryResult
+import roc.win.lottery.domain.AiAnalysisProtocol
 import roc.win.lottery.domain.ConfirmedTicket
 import roc.win.lottery.domain.DrawResult
 import roc.win.lottery.domain.DrawStatus
@@ -28,6 +32,7 @@ import roc.win.lottery.domain.LotteryTrendCalculationResult
 import roc.win.lottery.domain.LotteryTrendCalculator
 import roc.win.lottery.domain.LotteryType
 import roc.win.lottery.domain.RandomNumberGenerationResult
+import roc.win.lottery.persistence.SavedAiConnection
 import roc.win.lottery.persistence.TICKET_RECORD_EXPORT_EXTENSION
 import roc.win.lottery.persistence.TicketAcquisitionSource
 import roc.win.lottery.persistence.TicketRecordImportConflictPolicy
@@ -149,6 +154,25 @@ class LotteryAppController(
                 onStateChanged = ::publishAiWorkspace,
             )
         }
+
+    /** AI 服务商密钥；单独保存，不进入界面状态，避免随状态对象被打印或比较。 */
+    private val mutableAiApiKey = MutableStateFlow("")
+
+    /** AI 页输入框展示的服务商密钥。 */
+    val aiApiKey: StateFlow<String> = mutableAiApiKey.asStateFlow()
+
+    /** 当前平台能否把 AI 密钥加密保存在本机；否则密钥只在本次运行有效。 */
+    val savesAiApiKeyLocally: Boolean
+        get() = container.aiConnectionStore?.savesApiKey == true
+
+    /** 本次运行是否已读取过本机保存的 AI 连接配置。 */
+    private var aiConnectionLoaded = false
+
+    /** 串行写入 AI 连接配置，保证最后写入的总是最新内容。 */
+    private val aiConnectionSaveMutex = Mutex()
+
+    /** 最近一次成功写入本机的 AI 连接配置。 */
+    private var savedAiConnection: SavedAiConnection? = null
 
     /**
      * 从拍照或导图开始一次全新的本地分析。
@@ -610,9 +634,10 @@ class LotteryAppController(
         }
     }
 
-    /** 打开 AI 历史分析一级页面，并优先复用走势或本机已经取得的 500 期官方历史开奖。 */
+    /** 打开 AI 历史分析一级页面，首次进入时读取本机保存的连接配置，并优先复用本机 500 期官方历史开奖。 */
     suspend fun showAiAnalysis() {
         val workflow = aiAnalysisWorkflow ?: return
+        loadSavedAiConnection(workflow)
         val generation = advanceFlowGeneration()
         clearTemporaryImage()
         lastQuerySourceScreen = null
@@ -625,19 +650,118 @@ class LotteryAppController(
         syncAiHistory(workflow.state.settings.lotteryType, generation, force = false)
     }
 
-    /** 更新 AI 非敏感配置；切换彩种时复用本机数据或加载新的完整历史开奖。 */
+    /** 更新 AI 非敏感配置并保存连接配置；切换彩种时复用本机数据或加载新的完整历史开奖。 */
     suspend fun updateAiAnalysisSettings(settings: AiAnalysisSettings) {
         val workflow = aiAnalysisWorkflow ?: return
         if (mutableUiState.value.screen !is AppScreen.AiAnalysis) return
         val previousLotteryType = workflow.state.settings.lotteryType
         workflow.updateSettings(settings)
+        saveAiConnection()
         if (workflow.state.settings != settings || settings.lotteryType == previousLotteryType) return
         val generation = advanceFlowGeneration()
         aiHistoryRevision = null
         syncAiHistory(settings.lotteryType, generation, force = false)
     }
 
-    /** 使用界面当前会话密钥构建精确发送预览，不发起网络请求。 */
+    /**
+     * 同步更新 AI 服务商密钥，保证输入框光标与输入法状态一致；本机保存由 [saveAiConnection] 异步完成。
+     *
+     * @param apiKey 用户输入的密钥。
+     */
+    fun updateAiApiKey(apiKey: String) {
+        mutableAiApiKey.value = apiKey
+    }
+
+    /**
+     * 把当前服务商名称、接口格式、Base URL、模型和密钥写入本机；平台不能加密保存密钥时不写入密钥。
+     *
+     * 写入串行执行并在加锁后读取最新内容，连续输入时最后写入的总是最终值；写入失败不影响本次使用。
+     */
+    suspend fun saveAiConnection() {
+        val store = container.aiConnectionStore ?: return
+        val workflow = aiAnalysisWorkflow ?: return
+        if (!aiConnectionLoaded) return
+        aiConnectionSaveMutex.withLock {
+            val connection = workflow.state.settings.toSavedConnection(mutableAiApiKey.value, store.savesApiKey)
+            if (connection == savedAiConnection) return
+            runCatching { store.save(connection) }
+                .onSuccess { savedAiConnection = connection }
+                .onFailure { error -> if (error is CancellationException) throw error }
+        }
+    }
+
+    /** 用户主动读取当前服务商的模型列表，结果显示在 AI 页弹窗中。 */
+    suspend fun fetchAiModels() {
+        val workflow = aiAnalysisWorkflow ?: return
+        if (mutableUiState.value.screen !is AppScreen.AiAnalysis) return
+        workflow.fetchModelCatalog(mutableAiApiKey.value)
+    }
+
+    /** 关闭模型列表弹窗。 */
+    fun dismissAiModels() {
+        aiAnalysisWorkflow?.dismissModelCatalog()
+    }
+
+    /** 选用模型列表中的一项，并保存连接配置。 */
+    suspend fun selectAiModel(model: String) {
+        val workflow = aiAnalysisWorkflow ?: return
+        if (mutableUiState.value.screen !is AppScreen.AiAnalysis) return
+        workflow.selectModel(model)
+        saveAiConnection()
+    }
+
+    /** 删除本机保存的 AI 连接配置，清空当前填写的服务商、Base URL、模型和密钥，接口格式恢复默认。 */
+    suspend fun clearSavedAiConnection() {
+        val workflow = aiAnalysisWorkflow ?: return
+        if (mutableUiState.value.screen !is AppScreen.AiAnalysis) return
+        mutableAiApiKey.value = ""
+        workflow.updateSettings(
+            workflow.state.settings.copy(
+                providerName = "",
+                apiFormat = AiAnalysisSettings().apiFormat,
+                baseUrl = "",
+                model = "",
+                maxOutputTokens = AiAnalysisProtocol.DEFAULT_OUTPUT_TOKEN_LIMIT,
+            ),
+        )
+        val store = container.aiConnectionStore ?: return
+        aiConnectionSaveMutex.withLock {
+            runCatching { store.clear() }
+                .onSuccess { savedAiConnection = SavedAiConnection() }
+                .onFailure { error -> if (error is CancellationException) throw error }
+        }
+    }
+
+    /** 本次运行首次进入 AI 页时读取本机连接配置；读取失败时保持空白，由用户重新填写。 */
+    private suspend fun loadSavedAiConnection(workflow: AiAnalysisWorkflow) {
+        if (aiConnectionLoaded) return
+        val store = container.aiConnectionStore
+        val saved =
+            store?.let {
+                runCatching { it.load() }
+                    .onFailure { error -> if (error is CancellationException) throw error }
+                    .getOrNull()
+            }
+        aiConnectionLoaded = true
+        savedAiConnection = saved ?: SavedAiConnection()
+        if (saved == null) return
+        workflow.updateSettings(
+            workflow.state.settings.copy(
+                providerName = saved.providerName,
+                apiFormat =
+                    AiApiFormat.entries.firstOrNull { format -> format.name == saved.apiFormat }
+                        ?: AiApiFormat.OPENAI_RESPONSES,
+                baseUrl = saved.baseUrl,
+                model = saved.model,
+                maxOutputTokens =
+                    saved.maxOutputTokens.takeIf { it in AiAnalysisProtocol.OUTPUT_TOKEN_LIMITS }
+                        ?: AiAnalysisProtocol.DEFAULT_OUTPUT_TOKEN_LIMIT,
+            ),
+        )
+        if (store.savesApiKey) mutableAiApiKey.value = saved.apiKey
+    }
+
+    /** 使用界面当前密钥构建精确发送预览，不发起网络请求。 */
     fun prepareAiAnalysisPreview(apiKey: String): Boolean {
         val workflow = aiAnalysisWorkflow ?: return false
         if (mutableUiState.value.screen !is AppScreen.AiAnalysis) return false
@@ -1979,3 +2103,17 @@ private enum class DrawQueryMode {
     /** 用户要求重新联网核对：忽略本机结果和开奖日程，全部重新联网并覆盖本机。 */
     FORCE,
 }
+
+/** 把 AI 页的连接字段转换为本机保存格式；平台不能加密保存密钥时不带密钥。 */
+private fun AiAnalysisSettings.toSavedConnection(
+    apiKey: String,
+    savesApiKey: Boolean,
+): SavedAiConnection =
+    SavedAiConnection(
+        providerName = providerName,
+        baseUrl = baseUrl,
+        model = model,
+        apiKey = if (savesApiKey) apiKey else "",
+        apiFormat = apiFormat.name,
+        maxOutputTokens = maxOutputTokens,
+    )

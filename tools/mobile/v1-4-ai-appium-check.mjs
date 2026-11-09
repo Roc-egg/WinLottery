@@ -45,7 +45,7 @@ const SAMPLE_OPTIONS = ["50 期", "80 期", "120 期", "300 期", "500 期"];
 /** 产品冻结的三个分析模板。 */
 const TEMPLATE_OPTIONS = ["综合历史分析", "频次与遗漏", "分布结构"];
 
-/** 只用于本轮自动化且明确不是真实凭据的会话密钥。 */
+/** 只用于本轮自动化且明确不是真实凭据的API 密钥。 */
 const ACCEPTANCE_API_KEY = "acceptance-key-not-real";
 
 /** 验收页展示的服务商名称。 */
@@ -55,7 +55,7 @@ const ACCEPTANCE_PROVIDER_NAME = "V1.4 Acceptance";
 const ACCEPTANCE_MODEL = "acceptance-model";
 
 /** 非 HTTPS 本地阻断的稳定提示。 */
-const INSECURE_ENDPOINT_MESSAGE = "AI 服务地址必须使用 HTTPS";
+const UNSUPPORTED_SCHEME_MESSAGE = "Base URL 必须使用 HTTP 或 HTTPS";
 
 /** 主动取消后的稳定提示。 */
 const CANCELLED_REQUEST_MESSAGE = "已取消本次 AI 请求，未自动重试";
@@ -713,15 +713,15 @@ async function readInputValue(sessionId, label, platformName) {
   );
 }
 
-/** 验证会话密钥默认隐藏、可主动显示并能再次隐藏。 */
+/** 验证API 密钥默认隐藏、可主动显示并能再次隐藏。 */
 async function verifySecretVisibility(sessionId, platformName) {
   let source = await readSource(sessionId);
   if (source.includes(ACCEPTANCE_API_KEY)) {
-    throw new Error(`${platformName} 会话密钥在默认隐藏状态进入辅助功能树`);
+    throw new Error(`${platformName} API 密钥在默认隐藏状态进入辅助功能树`);
   }
   await clickScrollableElement(sessionId, "显示密钥", "down");
   source = await waitForSourceText(sessionId, "隐藏密钥");
-  const visibleValue = await readInputValue(sessionId, "会话密钥", platformName);
+  const visibleValue = await readInputValue(sessionId, "API 密钥", platformName);
   const valueCanBeRead = source.includes(ACCEPTANCE_API_KEY) || visibleValue !== null;
   if (valueCanBeRead && !source.includes(ACCEPTANCE_API_KEY) && visibleValue !== ACCEPTANCE_API_KEY) {
     throw new Error(`${platformName} 显示密钥后输入值不可复核`);
@@ -735,7 +735,7 @@ async function verifySecretVisibility(sessionId, platformName) {
   await clickScrollableElement(sessionId, "隐藏密钥", "down");
   source = await waitForSourceText(sessionId, "显示密钥");
   if (source.includes(ACCEPTANCE_API_KEY)) {
-    throw new Error(`${platformName} 再次隐藏后会话密钥仍进入辅助功能树`);
+    throw new Error(`${platformName} 再次隐藏后API 密钥仍进入辅助功能树`);
   }
 }
 
@@ -804,24 +804,24 @@ async function verifyAnalysisSelectors(sessionId, platformName) {
 /** 填写本轮不包含真实凭据的连接配置。 */
 async function fillAcceptanceConfiguration(sessionId, platformName, endpointUrl) {
   await replaceInputValue(sessionId, "服务商名称", ACCEPTANCE_PROVIDER_NAME, platformName);
-  await replaceInputValue(sessionId, "Responses HTTPS 地址", endpointUrl, platformName);
+  await replaceInputValue(sessionId, "Base URL", endpointUrl, platformName);
   await replaceInputValue(sessionId, "模型", ACCEPTANCE_MODEL, platformName);
-  await replaceInputValue(sessionId, "会话密钥", ACCEPTANCE_API_KEY, platformName);
+  await replaceInputValue(sessionId, "API 密钥", ACCEPTANCE_API_KEY, platformName);
 }
 
-/** 验证非 HTTPS 配置在联网前被本地阻断。 */
+/** 验证非 HTTP、HTTPS 协议的 Base URL 在联网前被本地阻断。 */
 async function verifyInvalidConfiguration(sessionId, platformName) {
   await fillAcceptanceConfiguration(
     sessionId,
     platformName,
-    `http://127.0.0.1:${stallServerPort}/v1/responses`,
+    `ftp://127.0.0.1:${stallServerPort}/v1`,
   );
   await verifySecretVisibility(sessionId, platformName);
   await clickScrollableElement(sessionId, "查看发送内容", "up");
-  await waitForSourceText(sessionId, INSECURE_ENDPOINT_MESSAGE);
+  await waitForSourceText(sessionId, UNSUPPORTED_SCHEME_MESSAGE);
   const source = await readSource(sessionId);
   if (source.includes("确认发送公开历史数据")) {
-    throw new Error(`${platformName} 非 HTTPS 配置仍生成发送确认`);
+    throw new Error(`${platformName} 非 HTTP、HTTPS 配置仍生成发送确认`);
   }
   await saveScreenshot(sessionId, platformName, "invalid-configuration");
 }
@@ -829,7 +829,7 @@ async function verifyInvalidConfiguration(sessionId, platformName) {
 /** 返回当前平台可以访问宿主机停滞端口的 HTTPS 地址。 */
 function acceptanceEndpoint(platformName) {
   const host = platformName === "Android" ? "10.0.2.2" : "127.0.0.1";
-  return `https://${host}:${stallServerPort}/v1/responses`;
+  return `https://${host}:${stallServerPort}/v1`;
 }
 
 /** 核对确认框包含实际发送摘要且从未回显密钥。 */
@@ -848,7 +848,7 @@ async function verifyPreviewDialog(sessionId, platformName, layoutName) {
     throw new Error(`${platformName} 发送确认主机与实际请求不一致`);
   }
   if (source.includes(ACCEPTANCE_API_KEY)) {
-    throw new Error(`${platformName} 发送确认回显会话密钥`);
+    throw new Error(`${platformName} 发送确认回显API 密钥`);
   }
   await waitForSourcePattern(sessionId, /\d{5} 至 \d{5}，共 500 期/);
   await saveScreenshot(sessionId, platformName, `${layoutName}-preview-top`);
@@ -864,9 +864,9 @@ async function verifyPreviewDialog(sessionId, platformName, layoutName) {
   await scrollContainerUntilVisible(sessionId, "输出上限", platformName, "up");
   source = await readSource(sessionId);
   if (!/\d+ 字节/.test(source)) throw new Error(`${platformName} 确认框缺少请求字节数`);
-  await scrollContainerUntilVisible(sessionId, "2048 token", platformName, "up");
+  await scrollContainerUntilVisible(sessionId, "8192 token", platformName, "up");
   source = await readSource(sessionId);
-  if (!source.includes("2048 token")) throw new Error(`${platformName} 确认框输出上限不匹配`);
+  if (!source.includes("8192 token")) throw new Error(`${platformName} 确认框输出上限不匹配`);
   await scrollContainerUntilVisible(sessionId, "确认标识", platformName, "up");
   await scrollContainerUntilVisible(sessionId, SINGLE_SEND_NOTICE, platformName, "up");
   await scrollSmallestContainerToEnd(sessionId, platformName);
@@ -924,7 +924,7 @@ async function verifyRequestCancellation(sessionId, platformName) {
     if (!source.includes(text)) throw new Error(`${platformName} 请求中状态缺少：${text}`);
   }
   if (source.includes(ACCEPTANCE_API_KEY)) {
-    throw new Error(`${platformName} 请求中状态回显会话密钥`);
+    throw new Error(`${platformName} 请求中状态回显API 密钥`);
   }
   await saveScreenshot(sessionId, platformName, "requesting");
   await clickBottommostExactElement(sessionId, "取消请求");
@@ -947,7 +947,7 @@ async function verifyPlatform(sessionId, platformName) {
   await verifyInvalidConfiguration(sessionId, platformName);
   await replaceInputValue(
     sessionId,
-    "Responses HTTPS 地址",
+    "Base URL",
     acceptanceEndpoint(platformName),
     platformName,
   );

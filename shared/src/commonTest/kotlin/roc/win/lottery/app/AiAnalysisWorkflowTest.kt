@@ -3,9 +3,13 @@ package roc.win.lottery.app
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import roc.win.lottery.data.AiAnalysisProvider
+import roc.win.lottery.data.AiModelCatalogRequest
+import roc.win.lottery.data.AiModelCatalogResult
 import roc.win.lottery.data.AiProviderConfiguration
+import roc.win.lottery.data.AiProviderFailureCode
 import roc.win.lottery.data.AiProviderPreviewResult
 import roc.win.lottery.data.AiProviderRequestPreview
 import roc.win.lottery.data.AiProviderResult
@@ -30,7 +34,7 @@ import kotlin.time.Instant
 
 /** AI 分析共享工作流的密钥、确认和单请求边界测试。 */
 class AiAnalysisWorkflowTest {
-    /** 合法配置必须形成精确预览，且可打印状态绝不能包含会话密钥。 */
+    /** 合法配置必须形成精确预览，且可打印状态绝不能包含密钥。 */
     @Test
     fun preparesPreviewWithoutExposingSessionSecret() {
         val provider = RecordingAiProvider()
@@ -203,7 +207,7 @@ class AiAnalysisWorkflowTest {
         workflow.updateSettings(
             workflow.state.settings.copy(
                 providerName = "测试服务",
-                endpointUrl = "https://api.example.test/v1/responses",
+                baseUrl = "https://api.example.test/v1",
                 model = "test-model-v1",
             ),
         )
@@ -233,6 +237,65 @@ class AiAnalysisWorkflowTest {
         override fun now(): Instant = FIXED_NOW
     }
 
+    /** 模型列表读取成功后可选中模型，选中会写入模型字段并关闭弹窗；读取只发生在用户触发时。 */
+    @Test
+    fun loadsModelCatalogAndSelectsModel() =
+        runTest {
+            val provider = RecordingAiProvider(catalog = AiModelCatalogResult.Success(listOf("model-a", "model-b")))
+            val workflow = configuredWorkflow(provider)
+
+            workflow.fetchModelCatalog(TEST_SESSION_SECRET)
+
+            assertEquals(
+                listOf("model-a", "model-b"),
+                assertIs<AiModelCatalogState.Loaded>(workflow.state.modelCatalog).models,
+            )
+            assertEquals("https://api.example.test/v1/models", provider.catalogUrls.single())
+            assertFalse(workflow.state.toString().contains(TEST_SESSION_SECRET))
+            workflow.selectModel("model-b")
+            assertEquals("model-b", workflow.state.settings.model)
+            assertEquals(AiModelCatalogState.Hidden, workflow.state.modelCatalog)
+        }
+
+    /** 地址或密钥不合法时不联网，直接给出说明；服务商失败时展示失败说明。 */
+    @Test
+    fun modelCatalogFailuresAreShown() =
+        runTest {
+            val provider =
+                RecordingAiProvider(
+                    catalog = AiModelCatalogResult.Failure(AiProviderFailureCode.AUTHENTICATION_FAILED, "密钥无效"),
+                )
+            val workflow = configuredWorkflow(provider)
+
+            workflow.fetchModelCatalog("")
+            assertTrue(assertIs<AiModelCatalogState.Failed>(workflow.state.modelCatalog).message.contains("密钥"))
+            assertTrue(provider.catalogUrls.isEmpty())
+
+            workflow.fetchModelCatalog(TEST_SESSION_SECRET)
+            assertEquals("密钥无效", assertIs<AiModelCatalogState.Failed>(workflow.state.modelCatalog).message)
+        }
+
+    /** 关闭弹窗或离开页面后，迟到的模型列表不得重新打开弹窗。 */
+    @Test
+    fun lateModelCatalogIsDiscardedAfterDismiss() =
+        runTest {
+            val provider =
+                RecordingAiProvider(
+                    catalog = AiModelCatalogResult.Success(listOf("model-a")),
+                    blockCatalog = true,
+                )
+            val workflow = configuredWorkflow(provider)
+
+            val fetch = launch { workflow.fetchModelCatalog(TEST_SESSION_SECRET) }
+            provider.catalogStarted.await()
+            assertEquals(AiModelCatalogState.Loading, workflow.state.modelCatalog)
+            workflow.clearTransientRequest()
+            provider.completeCatalog()
+            fetch.join()
+
+            assertEquals(AiModelCatalogState.Hidden, workflow.state.modelCatalog)
+        }
+
     /** 记录预览和单次请求次数，并可控制请求完成时机的测试 Provider。 */
     private class RecordingAiProvider(
         /** 是否等待测试显式释放请求。 */
@@ -241,7 +304,33 @@ class AiAnalysisWorkflowTest {
         private val fixedResult: AiProviderResult? = null,
         /** 是否在请求时模拟上层取消。 */
         private val throwsCancellation: Boolean = false,
+        /** 模型列表请求返回的固定结果。 */
+        private val catalog: AiModelCatalogResult = AiModelCatalogResult.Success(listOf("test-model-v1")),
+        /** 是否等待测试显式释放模型列表请求。 */
+        private val blockCatalog: Boolean = false,
     ) : AiAnalysisProvider {
+        /** 已请求的模型列表地址。 */
+        val catalogUrls = mutableListOf<String>()
+
+        /** 模型列表请求进入 Provider 后完成的同步信号。 */
+        val catalogStarted = CompletableDeferred<Unit>()
+
+        /** 测试允许阻塞模型列表返回的同步信号。 */
+        private val catalogCompletion = CompletableDeferred<Unit>()
+
+        /** 记录模型列表地址并返回固定结果。 */
+        override suspend fun listModels(request: AiModelCatalogRequest): AiModelCatalogResult {
+            catalogUrls += request.modelsUrl
+            catalogStarted.complete(Unit)
+            if (blockCatalog) catalogCompletion.await()
+            return catalog
+        }
+
+        /** 允许当前阻塞的模型列表请求返回。 */
+        fun completeCatalog() {
+            catalogCompletion.complete(Unit)
+        }
+
         /** 已执行的本地预览次数。 */
         var previewCount: Int = 0
             private set
@@ -265,7 +354,9 @@ class AiAnalysisWorkflowTest {
             return AiProviderPreviewResult.Success(
                 AiProviderRequestPreview(
                     providerName = configuration.displayName,
+                    apiFormat = configuration.apiFormat,
                     endpointHost = configuration.endpointHost,
+                    usesHttps = configuration.usesHttps,
                     model = configuration.model,
                     snapshotId = request.snapshot.id,
                     sampleCount = request.snapshot.sampleCount,
@@ -275,7 +366,7 @@ class AiAnalysisWorkflowTest {
                     candidateCount = request.candidateCount,
                     sentFields = listOf("彩种", "期号", "开奖日期", "主号码", "次号码", "分析模板", "候选数量"),
                     requestBodyByteCount = request.snapshot.byteCount + 1024,
-                    maxOutputTokens = AiAnalysisProtocol.MAX_OUTPUT_TOKENS,
+                    maxOutputTokens = AiAnalysisProtocol.DEFAULT_OUTPUT_TOKEN_LIMIT,
                     requestFingerprint = "fingerprint-${configuration.model}-${request.snapshot.id}",
                 ),
             )
@@ -320,7 +411,7 @@ class AiAnalysisWorkflowTest {
     }
 }
 
-/** 测试使用且不会进入生产代码的会话密钥。 */
+/** 测试使用且不会进入生产代码的密钥。 */
 private const val TEST_SESSION_SECRET = "test-workflow-session-secret"
 
 /** 测试结果固定生成时间。 */

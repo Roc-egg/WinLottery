@@ -6,6 +6,11 @@
 	<true/>
 	<key>CFBundleDisplayName</key>
 	<string>给我中</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+	</dict>
 	<key>NSCameraUsageDescription</key>
 	<string>用于拍摄实体彩票并在本机识别票面信息。</string>
 </dict>

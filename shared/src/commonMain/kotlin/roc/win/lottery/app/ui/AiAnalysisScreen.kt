@@ -1,6 +1,7 @@
 package roc.win.lottery.app.ui
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -27,6 +28,11 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuAnchorType
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -48,6 +54,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
@@ -62,8 +70,11 @@ import roc.win.lottery.app.AiAnalysisSessionResult
 import roc.win.lottery.app.AiAnalysisSettings
 import roc.win.lottery.app.AiAnalysisWorkspaceState
 import roc.win.lottery.app.AiHistoryAvailability
+import roc.win.lottery.app.AiModelCatalogState
 import roc.win.lottery.app.HistoricalDrawRefreshStatus
 import roc.win.lottery.app.MainDestination
+import roc.win.lottery.data.AiApiFormat
+import roc.win.lottery.data.AiProviderConfigurationValidator
 import roc.win.lottery.data.AiProviderRequestPreview
 import roc.win.lottery.domain.AiAnalysisCandidate
 import roc.win.lottery.domain.AiAnalysisProtocol
@@ -78,10 +89,17 @@ import kotlin.time.Instant
  * @param workspace 不含密钥、完整请求体和原始响应的共享工作流状态。
  * @param availableMainDestinations 当前平台可进入的一级目的地。
  * @param onMainDestinationSelected 一级目的地切换操作。
+ * @param apiKey 当前填写的服务商密钥。
+ * @param savesApiKeyLocally 当前平台能否把密钥加密保存在本机。
  * @param onSettingsChange 修改非敏感分析配置。
+ * @param onApiKeyChange 修改服务商密钥。
+ * @param onClearSavedConnection 删除本机保存的连接配置并清空已填写的连接字段。
+ * @param onFetchModels 从服务商读取模型列表。
+ * @param onSelectModel 选用模型列表中的一项。
+ * @param onDismissModels 关闭模型列表弹窗。
  * @param onRetryHistory 主动重试当前彩种的官方历史开奖加载。
  * @param onRefreshHistory 主动与官网增量核对本机保存的历史开奖。
- * @param onPreparePreview 使用当前会话密钥构建精确发送预览。
+ * @param onPreparePreview 使用当前密钥构建精确发送预览。
  * @param onDismissPreview 返回修改并销毁本次待确认请求。
  * @param onConfirmPreview 消费当前指纹并发送至多一次请求。
  * @param onCancelRequest 主动取消正在执行的模型请求。
@@ -91,7 +109,14 @@ fun AiAnalysisScreen(
     workspace: AiAnalysisWorkspaceState,
     availableMainDestinations: List<MainDestination>,
     onMainDestinationSelected: (MainDestination) -> Unit,
+    apiKey: String,
+    savesApiKeyLocally: Boolean,
     onSettingsChange: (AiAnalysisSettings) -> Unit,
+    onApiKeyChange: (String) -> Unit,
+    onClearSavedConnection: () -> Unit,
+    onFetchModels: () -> Unit,
+    onSelectModel: (String) -> Unit,
+    onDismissModels: () -> Unit,
     onRetryHistory: () -> Unit,
     onRefreshHistory: () -> Unit,
     onPreparePreview: (String) -> Boolean,
@@ -99,7 +124,6 @@ fun AiAnalysisScreen(
     onConfirmPreview: (String) -> Unit,
     onCancelRequest: () -> Unit,
 ) {
-    var apiKey by remember { mutableStateOf("") }
     var showsApiKey by remember { mutableStateOf(false) }
     val isRequesting = workspace.operation is AiAnalysisOperation.Requesting
 
@@ -124,19 +148,32 @@ fun AiAnalysisScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Spacer(Modifier.height(24.dp))
-                    AiPrivacyBoundary()
+                    AiPrivacyBoundary(savesApiKeyLocally)
                     Spacer(Modifier.height(28.dp))
                     Text("连接配置", style = MaterialTheme.typography.titleLarge)
                     Spacer(Modifier.height(12.dp))
                     AiConnectionFields(
                         settings = workspace.settings,
                         apiKey = apiKey,
+                        savesApiKeyLocally = savesApiKeyLocally,
                         showsApiKey = showsApiKey,
                         enabled = !isRequesting,
                         onSettingsChange = onSettingsChange,
-                        onApiKeyChange = { value -> apiKey = value.take(MAX_API_KEY_INPUT_LENGTH) },
+                        onApiKeyChange = { value -> onApiKeyChange(value.take(MAX_API_KEY_INPUT_LENGTH)) },
                         onToggleApiKeyVisibility = { showsApiKey = !showsApiKey },
+                        onFetchModels = onFetchModels,
                     )
+                    val hasConnection =
+                        apiKey.isNotEmpty() ||
+                            workspace.settings.providerName.isNotEmpty() ||
+                            workspace.settings.baseUrl.isNotEmpty() ||
+                            workspace.settings.model.isNotEmpty()
+                    TextButton(
+                        onClick = onClearSavedConnection,
+                        enabled = hasConnection && !isRequesting,
+                    ) {
+                        Text("清除本机保存的连接配置")
+                    }
                     Spacer(Modifier.height(30.dp))
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     Spacer(Modifier.height(24.dp))
@@ -228,6 +265,13 @@ fun AiAnalysisScreen(
             )
         }
     }
+    AiModelCatalogDialog(
+        state = workspace.modelCatalog,
+        currentModel = workspace.settings.model,
+        onSelect = onSelectModel,
+        onRetry = onFetchModels,
+        onDismiss = onDismissModels,
+    )
 }
 
 /** 把 AI 页面正文约束到适合手机和宽屏连续填写的宽度。 */
@@ -243,7 +287,7 @@ private fun CenteredAiContent(content: @Composable ColumnScope.() -> Unit) {
 
 /** 展示联网、费用和本机存储边界。 */
 @Composable
-private fun AiPrivacyBoundary() {
+private fun AiPrivacyBoundary(savesApiKeyLocally: Boolean) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.small,
@@ -261,7 +305,11 @@ private fun AiPrivacyBoundary() {
             Spacer(Modifier.width(12.dp))
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(
-                    "密钥、发送快照和分析结果不写入本机记录或导出包。",
+                    if (savesApiKeyLocally) {
+                        "连接配置和密钥只加密保存在本机，不写入票据记录、导出包或云端备份；发送快照和分析结果不保存。"
+                    } else {
+                        "服务商、地址和模型只保存在本机；密钥只在本次运行有效。发送快照和分析结果不保存。"
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSecondaryContainer,
                 )
@@ -275,17 +323,24 @@ private fun AiPrivacyBoundary() {
     }
 }
 
-/** 绘制服务商、HTTPS 地址、模型和会话密钥输入。 */
+/** 绘制服务商、接口格式、Base URL、模型和密钥输入；模型可从服务商读取列表后选择。 */
 @Composable
 private fun AiConnectionFields(
     settings: AiAnalysisSettings,
     apiKey: String,
+    savesApiKeyLocally: Boolean,
     showsApiKey: Boolean,
     enabled: Boolean,
     onSettingsChange: (AiAnalysisSettings) -> Unit,
     onApiKeyChange: (String) -> Unit,
     onToggleApiKeyVisibility: () -> Unit,
+    onFetchModels: () -> Unit,
 ) {
+    val usesCleartext = settings.baseUrl.trim().startsWith(CLEARTEXT_SCHEME_PREFIX, ignoreCase = true)
+    val requestUrl =
+        remember(settings.apiFormat, settings.baseUrl) {
+            AiProviderConfigurationValidator().requestUrlOrNull(settings.apiFormat, settings.baseUrl)
+        }
     OutlinedTextField(
         value = settings.providerName,
         onValueChange = { value ->
@@ -299,16 +354,38 @@ private fun AiConnectionFields(
         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
     )
     Spacer(Modifier.height(12.dp))
+    AiApiFormatField(
+        selected = settings.apiFormat,
+        enabled = enabled,
+        onSelect = { format -> onSettingsChange(settings.copy(apiFormat = format)) },
+    )
+    Spacer(Modifier.height(12.dp))
     OutlinedTextField(
-        value = settings.endpointUrl,
+        value = settings.baseUrl,
         onValueChange = { value ->
-            onSettingsChange(settings.copy(endpointUrl = value.take(MAX_ENDPOINT_INPUT_LENGTH)))
+            onSettingsChange(settings.copy(baseUrl = value.take(MAX_ENDPOINT_INPUT_LENGTH)))
         },
         modifier = Modifier.fillMaxWidth(),
         enabled = enabled,
         singleLine = true,
-        label = { Text("Responses HTTPS 地址") },
-        placeholder = { Text("https://api.example.com/v1/responses") },
+        label = { Text("Base URL") },
+        placeholder = { Text(settings.apiFormat.baseUrlExample) },
+        supportingText =
+            if (usesCleartext || requestUrl != null) {
+                {
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        requestUrl?.let { url -> Text("实际请求：$url") }
+                        if (usesCleartext) {
+                            Text(
+                                "HTTP 不加密：密钥和发送内容可能被同一网络中的他人截获，建议只用于本机或可信局域网",
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        }
+                    }
+                }
+            } else {
+                null
+            },
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Next),
     )
     Spacer(Modifier.height(12.dp))
@@ -321,17 +398,32 @@ private fun AiConnectionFields(
         enabled = enabled,
         singleLine = true,
         label = { Text("模型") },
-        placeholder = { Text("服务商支持严格结构输出的模型") },
+        placeholder = { Text("填写模型标识或从列表选择") },
+        trailingIcon = {
+            IconButton(
+                onClick = onFetchModels,
+                enabled = enabled && settings.baseUrl.isNotBlank(),
+            ) {
+                Icon(LotteryIcons.ModelList, contentDescription = "获取模型列表")
+            }
+        },
+        supportingText = { Text("点右侧按钮可从服务商读取模型列表") },
         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
     )
     Spacer(Modifier.height(12.dp))
+    AiOutputTokenLimitControl(
+        selected = settings.maxOutputTokens,
+        enabled = enabled,
+        onSelect = { limit -> onSettingsChange(settings.copy(maxOutputTokens = limit)) },
+    )
+    Spacer(Modifier.height(16.dp))
     OutlinedTextField(
         value = apiKey,
         onValueChange = onApiKeyChange,
         modifier = Modifier.fillMaxWidth(),
         enabled = enabled,
         singleLine = true,
-        label = { Text("会话密钥") },
+        label = { Text("API 密钥") },
         leadingIcon = {
             Icon(LotteryIcons.SecretKey, contentDescription = null)
         },
@@ -346,10 +438,90 @@ private fun AiConnectionFields(
                 )
             }
         },
-        supportingText = { Text("只在当前进程会话中使用") },
+        supportingText = {
+            Text(if (savesApiKeyLocally) "只加密保存在本机" else "桌面版密钥只在本次运行有效")
+        },
         visualTransformation = if (showsApiKey) VisualTransformation.None else PasswordVisualTransformation(),
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
     )
+}
+
+/** 输出 token 上限选择：推理模型需要更大的上限，部分模型不接受较大的值。 */
+@Composable
+private fun AiOutputTokenLimitControl(
+    selected: Int,
+    enabled: Boolean,
+    onSelect: (Int) -> Unit,
+) {
+    Text("输出上限", style = MaterialTheme.typography.titleMedium)
+    Spacer(Modifier.height(8.dp))
+    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        items(items = AiAnalysisProtocol.OUTPUT_TOKEN_LIMITS, key = { limit -> limit }) { limit ->
+            FilterChip(
+                selected = limit == selected,
+                onClick = { onSelect(limit) },
+                enabled = enabled,
+                label = { Text("${limit / TOKENS_PER_K}K token") },
+            )
+        }
+    }
+    Spacer(Modifier.height(4.dp))
+    Text(
+        "推理模型的思考也计入上限，结果未完成时调高；按实际用量计费。模型不支持较大的上限时会报错，请调低。",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+}
+
+/** 接口格式下拉框：决定请求路径、鉴权请求头和请求体。 */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AiApiFormatField(
+    selected: AiApiFormat,
+    enabled: Boolean,
+    onSelect: (AiApiFormat) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    ExposedDropdownMenuBox(
+        expanded = expanded && enabled,
+        onExpandedChange = { open -> expanded = open && enabled },
+    ) {
+        OutlinedTextField(
+            value = selected.displayName,
+            onValueChange = {},
+            modifier =
+                Modifier
+                    .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable, enabled)
+                    .fillMaxWidth(),
+            enabled = enabled,
+            readOnly = true,
+            singleLine = true,
+            label = { Text("接口格式") },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded && enabled) },
+        )
+        ExposedDropdownMenu(
+            expanded = expanded && enabled,
+            onDismissRequest = { expanded = false },
+        ) {
+            AiApiFormat.entries.forEach { format ->
+                DropdownMenuItem(
+                    text = { Text(format.displayName) },
+                    leadingIcon = {
+                        if (format == selected) {
+                            Icon(LotteryIcons.Done, contentDescription = "当前格式")
+                        } else {
+                            Spacer(Modifier.size(24.dp))
+                        }
+                    },
+                    onClick = {
+                        expanded = false
+                        onSelect(format)
+                    },
+                    contentPadding = ExposedDropdownMenuDefaults.ItemContentPadding,
+                )
+            }
+        }
+    }
 }
 
 /** 绘制彩种、样本、模板和候选数量控件。 */
@@ -684,7 +856,16 @@ private fun AiRequestConfirmationDialog(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 PreviewField("服务商", preview.providerName)
-                PreviewField("HTTPS 接收主机", wrapLongToken(preview.endpointHost))
+                PreviewField("接口格式", preview.apiFormat.displayName)
+                PreviewField("接收主机", wrapLongToken(preview.endpointHost))
+                if (!preview.usesHttps) {
+                    PreviewField("连接方式", "HTTP（不加密）")
+                    Text(
+                        "该服务使用不加密的 HTTP，密钥和发送内容可能被同一网络中的他人截获。",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
                 PreviewField("模型", wrapLongToken(preview.model))
                 PreviewField(
                     "历史样本",
@@ -717,6 +898,122 @@ private fun AiRequestConfirmationDialog(
             }
         },
     )
+}
+
+/** 模型列表弹窗：读取中、失败可重试；读取成功后可搜索并点选模型，当前使用的模型带勾。 */
+@Composable
+private fun AiModelCatalogDialog(
+    state: AiModelCatalogState,
+    currentModel: String,
+    onSelect: (String) -> Unit,
+    onRetry: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    when (state) {
+        AiModelCatalogState.Hidden -> {
+            Unit
+        }
+
+        AiModelCatalogState.Loading -> {
+            AlertDialog(
+                onDismissRequest = onDismiss,
+                title = { Text("获取模型列表") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                        Text("正在从服务商读取模型列表…", style = MaterialTheme.typography.bodyMedium)
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = onDismiss) { Text("取消") }
+                },
+            )
+        }
+
+        is AiModelCatalogState.Failed -> {
+            AlertDialog(
+                onDismissRequest = onDismiss,
+                title = { Text("无法获取模型列表") },
+                text = { Text(state.message, style = MaterialTheme.typography.bodyMedium) },
+                confirmButton = {
+                    TextButton(onClick = onRetry) { Text("重试") }
+                },
+                dismissButton = {
+                    TextButton(onClick = onDismiss) { Text("关闭") }
+                },
+            )
+        }
+
+        is AiModelCatalogState.Loaded -> {
+            var query by remember(state) { mutableStateOf("") }
+            val matches =
+                remember(state, query) {
+                    state.models.filter { model -> model.contains(query.trim(), ignoreCase = true) }
+                }
+            AlertDialog(
+                onDismissRequest = onDismiss,
+                title = { Text("选择模型（共 ${state.models.size} 个）") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (state.models.size > MODEL_SEARCH_THRESHOLD) {
+                            OutlinedTextField(
+                                value = query,
+                                onValueChange = { value -> query = value.take(MAX_MODEL_INPUT_LENGTH) },
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true,
+                                placeholder = { Text("搜索模型") },
+                                leadingIcon = { Icon(LotteryIcons.Search, contentDescription = null) },
+                            )
+                        }
+                        if (matches.isEmpty()) {
+                            Text(
+                                "没有匹配的模型",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = MODEL_LIST_MAX_HEIGHT)) {
+                            items(matches, key = { model -> model }) { model ->
+                                val isCurrent = model == currentModel
+                                Row(
+                                    modifier =
+                                        Modifier
+                                            .fillMaxWidth()
+                                            .heightIn(min = 48.dp)
+                                            .clip(MaterialTheme.shapes.small)
+                                            .clickable(role = Role.Button) { onSelect(model) }
+                                            .padding(horizontal = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Text(
+                                        model,
+                                        modifier = Modifier.weight(1f),
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        color =
+                                            if (isCurrent) {
+                                                MaterialTheme.colorScheme.primary
+                                            } else {
+                                                MaterialTheme.colorScheme.onSurface
+                                            },
+                                    )
+                                    if (isCurrent) {
+                                        Icon(
+                                            LotteryIcons.Done,
+                                            contentDescription = "当前使用",
+                                            tint = MaterialTheme.colorScheme.primary,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = onDismiss) { Text("取消") }
+                },
+            )
+        }
+    }
 }
 
 /** 展示单次请求进行中状态，并保留明确取消操作。 */
@@ -814,13 +1111,25 @@ private val CHINA_TIME_ZONE = TimeZone.of("Asia/Shanghai")
 /** 服务商名称输入最大字符数。 */
 private const val MAX_PROVIDER_NAME_INPUT_LENGTH = 60
 
-/** HTTPS 地址输入最大字符数。 */
+/** 输出上限按 K 展示时的换算基数。 */
+private const val TOKENS_PER_K = 1024
+
+/** 明文 HTTP 地址的协议前缀。 */
+private const val CLEARTEXT_SCHEME_PREFIX = "http://"
+
+/** 模型数量超过该值时在弹窗中显示搜索框。 */
+private const val MODEL_SEARCH_THRESHOLD = 8
+
+/** 模型列表在弹窗中的最大高度。 */
+private val MODEL_LIST_MAX_HEIGHT = 360.dp
+
+/** 接口地址输入最大字符数。 */
 private const val MAX_ENDPOINT_INPUT_LENGTH = 2_048
 
 /** 模型标识输入最大字符数。 */
 private const val MAX_MODEL_INPUT_LENGTH = 128
 
-/** 会话密钥输入最大字符数。 */
+/** 密钥输入最大字符数。 */
 private const val MAX_API_KEY_INPUT_LENGTH = 4_096
 
 /** 结果页展示的快照短标识长度。 */

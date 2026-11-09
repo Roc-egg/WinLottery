@@ -27,7 +27,17 @@ kotlin {
 
     jvm()
     iosArm64()
-    iosSimulatorArm64()
+    iosSimulatorArm64 {
+        // 模拟器从 __TEXT,__entitlements 段读取应用身份；测试程序嵌入后才能访问钥匙串，验证 AI 连接配置的钥匙串读写。
+        binaries.matching { it is org.jetbrains.kotlin.gradle.plugin.mpp.TestExecutable }.configureEach {
+            linkerOpts(
+                "-sectcreate",
+                "__TEXT",
+                "__entitlements",
+                file("src/iosTest/simulator-keychain.entitlements").absolutePath,
+            )
+        }
+    }
 
     sourceSets {
         commonMain.dependencies {

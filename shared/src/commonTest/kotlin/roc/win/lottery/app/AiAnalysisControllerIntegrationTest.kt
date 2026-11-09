@@ -5,6 +5,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import roc.win.lottery.Platform
 import roc.win.lottery.data.AiAnalysisProvider
+import roc.win.lottery.data.AiApiFormat
 import roc.win.lottery.data.AiProviderConfiguration
 import roc.win.lottery.data.AiProviderPreviewResult
 import roc.win.lottery.data.AiProviderRequestPreview
@@ -22,7 +23,9 @@ import roc.win.lottery.domain.Issue
 import roc.win.lottery.domain.LotteryPrizeCalculator
 import roc.win.lottery.domain.LotteryType
 import roc.win.lottery.domain.TicketValidator
+import roc.win.lottery.persistence.AiConnectionStore
 import roc.win.lottery.persistence.HistoricalDrawStore
+import roc.win.lottery.persistence.SavedAiConnection
 import roc.win.lottery.recognition.ConservativeTicketParser
 import roc.win.lottery.recognition.FakeAppPaths
 import roc.win.lottery.recognition.FakeImageAcquirer
@@ -56,7 +59,7 @@ class AiAnalysisControllerIntegrationTest {
             controller.updateAiAnalysisSettings(
                 screen.workspace.settings.copy(
                     providerName = "测试服务",
-                    endpointUrl = "https://api.example.test/v1/responses",
+                    baseUrl = "https://api.example.test/v1",
                     model = "test-model-v1",
                 ),
             )
@@ -93,6 +96,114 @@ class AiAnalysisControllerIntegrationTest {
             assertEquals(1, historyRepository.queryCount(LotteryType.SUPER_LOTTO))
         }
 
+    /** 连接配置和密钥保存在本机：重启后恢复，修改后写回，切换页面不丢失，界面状态不含密钥。 */
+    @Test
+    fun restoresAndPersistsSavedConnection() =
+        runTest {
+            val store =
+                InMemoryAiConnectionStore(
+                    savesApiKey = true,
+                    saved =
+                        SavedAiConnection(
+                            providerName = "测试服务",
+                            baseUrl = "https://api.example.test/v1",
+                            model = "test-model-v1",
+                            apiKey = TEST_CONTROLLER_AI_SECRET,
+                        ),
+                )
+            val controller =
+                createController(CountingHistoryRepository(), RecordingAiProvider(), aiConnectionStore = store)
+
+            controller.showAiAnalysis()
+
+            var screen = assertIs<AppScreen.AiAnalysis>(controller.uiState.value.screen)
+            assertEquals("测试服务", screen.workspace.settings.providerName)
+            assertEquals("test-model-v1", screen.workspace.settings.model)
+            // 早期保存的配置没有接口格式，按当时唯一支持的 OpenAI Responses 恢复。
+            assertEquals(AiApiFormat.OPENAI_RESPONSES, screen.workspace.settings.apiFormat)
+            assertEquals(TEST_CONTROLLER_AI_SECRET, controller.aiApiKey.value)
+            assertTrue(controller.savesAiApiKeyLocally)
+            assertFalse(
+                controller.uiState.value
+                    .toString()
+                    .contains(TEST_CONTROLLER_AI_SECRET),
+            )
+
+            // 早期保存的配置没有输出上限，使用默认值。
+            assertEquals(AiAnalysisProtocol.DEFAULT_OUTPUT_TOKEN_LIMIT, screen.workspace.settings.maxOutputTokens)
+            controller.updateAiAnalysisSettings(
+                screen.workspace.settings.copy(
+                    model = "test-model-v2",
+                    apiFormat = AiApiFormat.ANTHROPIC_MESSAGES,
+                    maxOutputTokens = 32768,
+                ),
+            )
+            controller.updateAiApiKey("new-secret")
+            controller.saveAiConnection()
+            assertEquals("test-model-v2", store.saved?.model)
+            assertEquals(AiApiFormat.ANTHROPIC_MESSAGES.name, store.saved?.apiFormat)
+            assertEquals(32768, store.saved?.maxOutputTokens)
+            assertEquals("new-secret", store.saved?.apiKey)
+
+            controller.navigateHome()
+            controller.showAiAnalysis()
+            assertEquals("new-secret", controller.aiApiKey.value)
+
+            val restarted =
+                createController(CountingHistoryRepository(), RecordingAiProvider(), aiConnectionStore = store)
+            restarted.showAiAnalysis()
+            screen = assertIs(restarted.uiState.value.screen)
+            assertEquals("test-model-v2", screen.workspace.settings.model)
+            assertEquals(AiApiFormat.ANTHROPIC_MESSAGES, screen.workspace.settings.apiFormat)
+            assertEquals(32768, screen.workspace.settings.maxOutputTokens)
+            assertEquals("new-secret", restarted.aiApiKey.value)
+            assertTrue(restarted.prepareAiAnalysisPreview(restarted.aiApiKey.value))
+        }
+
+    /** 不能加密保存密钥的平台只保存服务商、接口格式、Base URL 和模型，密钥只在本次运行有效。 */
+    @Test
+    fun platformWithoutSecureStorageKeepsKeyInMemoryOnly() =
+        runTest {
+            val store = InMemoryAiConnectionStore(savesApiKey = false)
+            val controller =
+                createController(CountingHistoryRepository(), RecordingAiProvider(), aiConnectionStore = store)
+            controller.showAiAnalysis()
+            val screen = assertIs<AppScreen.AiAnalysis>(controller.uiState.value.screen)
+
+            controller.updateAiAnalysisSettings(screen.workspace.settings.copy(providerName = "测试服务"))
+            controller.updateAiApiKey(TEST_CONTROLLER_AI_SECRET)
+            controller.saveAiConnection()
+
+            assertFalse(controller.savesAiApiKeyLocally)
+            assertEquals("测试服务", store.saved?.providerName)
+            assertEquals("", store.saved?.apiKey)
+            controller.navigateHome()
+            controller.showAiAnalysis()
+            assertEquals(TEST_CONTROLLER_AI_SECRET, controller.aiApiKey.value)
+        }
+
+    /** 清除本机配置会删除保存内容，并清空已填写的连接字段和密钥。 */
+    @Test
+    fun clearingSavedConnectionEmptiesFieldsAndStore() =
+        runTest {
+            val store =
+                InMemoryAiConnectionStore(
+                    savesApiKey = true,
+                    saved = SavedAiConnection(providerName = "测试服务", model = "test-model-v1", apiKey = "secret"),
+                )
+            val controller =
+                createController(CountingHistoryRepository(), RecordingAiProvider(), aiConnectionStore = store)
+            controller.showAiAnalysis()
+
+            controller.clearSavedAiConnection()
+
+            val screen = assertIs<AppScreen.AiAnalysis>(controller.uiState.value.screen)
+            assertEquals("", screen.workspace.settings.providerName)
+            assertEquals("", screen.workspace.settings.model)
+            assertEquals("", controller.aiApiKey.value)
+            assertEquals(null, store.saved)
+        }
+
     /** 离开 AI 页面后 Provider 的迟到成功结果不得写回首页或后续会话。 */
     @Test
     fun discardsLateAiResultAfterLeavingWorkspace() =
@@ -105,7 +216,7 @@ class AiAnalysisControllerIntegrationTest {
             controller.updateAiAnalysisSettings(
                 screen.workspace.settings.copy(
                     providerName = "测试服务",
-                    endpointUrl = "https://api.example.test/v1/responses",
+                    baseUrl = "https://api.example.test/v1",
                     model = "test-model-v1",
                 ),
             )
@@ -175,7 +286,7 @@ class AiAnalysisControllerIntegrationTest {
             controller.updateAiAnalysisSettings(
                 screen.workspace.settings.copy(
                     providerName = "测试服务",
-                    endpointUrl = "https://api.example.test/v1/responses",
+                    baseUrl = "https://api.example.test/v1",
                     model = "test-model-v1",
                 ),
             )
@@ -213,6 +324,7 @@ class AiAnalysisControllerIntegrationTest {
         aiProvider: AiAnalysisProvider,
         historicalDrawStore: HistoricalDrawStore? = null,
         clock: Clock = MutableTestClock(),
+        aiConnectionStore: AiConnectionStore? = null,
     ): LotteryAppController =
         LotteryAppController(
             AppContainer(
@@ -225,6 +337,7 @@ class AiAnalysisControllerIntegrationTest {
                 historicalDrawRepository = historyRepository,
                 historicalDrawStore = historicalDrawStore,
                 aiAnalysisProvider = aiProvider,
+                aiConnectionStore = aiConnectionStore,
                 prizeCalculator = LotteryPrizeCalculator(),
                 appPaths = FakeAppPaths(),
                 ticketValidator = TicketValidator(),
@@ -244,6 +357,23 @@ class AiAnalysisControllerIntegrationTest {
 
         /** 测试不使用相机。 */
         override val supportsCamera: Boolean = false
+    }
+
+    /** 内存中的 AI 连接配置仓库，模拟各平台本机保存。 */
+    private class InMemoryAiConnectionStore(
+        override val savesApiKey: Boolean,
+        /** 当前保存的配置。 */
+        var saved: SavedAiConnection? = null,
+    ) : AiConnectionStore {
+        override suspend fun load(): SavedAiConnection? = saved
+
+        override suspend fun save(connection: SavedAiConnection) {
+            saved = connection.takeUnless { it.isEmpty }
+        }
+
+        override suspend fun clear() {
+            saved = null
+        }
     }
 
     /** 按彩种返回完整 500 期数据并记录实际查询次数。 */
@@ -317,7 +447,9 @@ class AiAnalysisControllerIntegrationTest {
             AiProviderPreviewResult.Success(
                 AiProviderRequestPreview(
                     providerName = configuration.displayName,
+                    apiFormat = configuration.apiFormat,
                     endpointHost = configuration.endpointHost,
+                    usesHttps = configuration.usesHttps,
                     model = configuration.model,
                     snapshotId = request.snapshot.id,
                     sampleCount = request.snapshot.sampleCount,
@@ -327,7 +459,7 @@ class AiAnalysisControllerIntegrationTest {
                     candidateCount = request.candidateCount,
                     sentFields = listOf("彩种", "期号", "开奖日期", "主号码", "次号码", "分析模板", "候选数量"),
                     requestBodyByteCount = request.snapshot.byteCount + 1_024,
-                    maxOutputTokens = AiAnalysisProtocol.MAX_OUTPUT_TOKENS,
+                    maxOutputTokens = AiAnalysisProtocol.DEFAULT_OUTPUT_TOKEN_LIMIT,
                     requestFingerprint = "controller-${configuration.model}-${request.snapshot.id}",
                 ),
             )
@@ -370,5 +502,5 @@ class AiAnalysisControllerIntegrationTest {
     }
 }
 
-/** 控制器集成测试使用的固定会话密钥。 */
+/** 控制器集成测试使用的固定密钥。 */
 private const val TEST_CONTROLLER_AI_SECRET = "test-controller-session-secret"

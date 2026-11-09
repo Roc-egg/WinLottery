@@ -17,10 +17,11 @@ import roc.win.lottery.app.LotteryAppSession
 import roc.win.lottery.app.OcrConfidenceDiagnostics
 import roc.win.lottery.app.withOneShotConflictInjection
 import roc.win.lottery.data.AndroidSuperLottoPdfTextExtractor
+import roc.win.lottery.data.HttpAiAnalysisProvider
 import roc.win.lottery.data.OfficialDrawRepository
-import roc.win.lottery.data.ResponsesAiAnalysisProvider
 import roc.win.lottery.domain.LotteryPrizeCalculator
 import roc.win.lottery.domain.TicketValidator
+import roc.win.lottery.persistence.createAndroidAiConnectionStore
 import roc.win.lottery.persistence.createAndroidLocalStorage
 import roc.win.lottery.recognition.AndroidAppPaths
 import roc.win.lottery.recognition.AndroidLuminanceImageDecoder
@@ -112,7 +113,8 @@ class AndroidLotteryAppViewModel(
                     isDebugEnabled = isDebuggable,
                 ),
             historicalDrawRepository = officialDrawRepository,
-            aiAnalysisProvider = ResponsesAiAnalysisProvider(),
+            aiAnalysisProvider = HttpAiAnalysisProvider(),
+            aiConnectionStore = createAndroidAiConnectionStore(application),
             prizeCalculator = LotteryPrizeCalculator(),
             appPaths = appPaths,
             ticketValidator = TicketValidator(),
