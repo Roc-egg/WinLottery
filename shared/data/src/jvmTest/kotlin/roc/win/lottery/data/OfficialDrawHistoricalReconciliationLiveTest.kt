@@ -128,7 +128,8 @@ class OfficialDrawHistoricalReconciliationLiveTest {
     /** 强制验证 B2 固定台账覆盖规则边界和奖金语义。 */
     private fun assertRequiredCoverage(draws: List<DrawResult>) {
         val byLottery = draws.groupBy { it.lotteryType }
-        for (lotteryType in LotteryType.entries) {
+        // 固定台账只覆盖大乐透和双色球；快乐8 由 Happy8LiveDrawTest 单独核对。
+        for (lotteryType in listOf(LotteryType.SUPER_LOTTO, LotteryType.DOUBLE_COLOR_BALL)) {
             val lotteryDraws = byLottery[lotteryType].orEmpty()
             assertEquals(REQUIRED_ISSUES_PER_LOTTERY, lotteryDraws.size, "$lotteryType 对账期数不足")
             assertTrue(

@@ -1376,6 +1376,7 @@ internal object PpOcrBetRowRefiner {
                     when (lotteryType) {
                         LotteryType.SUPER_LOTTO -> SUPER_LOTTO_PRIMARY_COUNT
                         LotteryType.DOUBLE_COLOR_BALL -> DOUBLE_COLOR_BALL_PRIMARY_COUNT
+                        LotteryType.HAPPY_8 -> throw IllegalStateException("投注行修补只构造大乐透和双色球签名")
                     }
                 return numbers.take(primaryCount).joinToString(separator = " ") { number -> number.paddedNumber } +
                     " + " +

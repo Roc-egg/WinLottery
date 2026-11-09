@@ -13,7 +13,7 @@ import roc.win.lottery.domain.LotteryType
 import kotlin.time.Instant
 
 /**
- * 两个彩种固定的每周开奖日和开奖时刻（北京时间），只用于推算某期“最早可能的开奖时间”。
+ * 三个彩种固定的每周开奖日和开奖时刻（北京时间），只用于推算某期“最早可能的开奖时间”；快乐8 每天开奖。
  *
  * 同一年度内期号连续，目标期正好在已知期之后若干期，且每期占用一个不同的开奖日；休市只会推迟开奖，
  * 因此按开奖日顺数得到的时刻是安全下界。官方调整开奖日时必须同步修改本表和 ADR-027。
@@ -59,7 +59,7 @@ internal object DrawSchedule {
         val prefixLength =
             when (lotteryType) {
                 LotteryType.SUPER_LOTTO -> SUPER_LOTTO_YEAR_LENGTH
-                LotteryType.DOUBLE_COLOR_BALL -> DOUBLE_COLOR_BALL_YEAR_LENGTH
+                LotteryType.DOUBLE_COLOR_BALL, LotteryType.HAPPY_8 -> WELFARE_LOTTERY_YEAR_LENGTH
             }
         val knownParts = known.split(prefixLength) ?: return null
         val targetParts = target.split(prefixLength) ?: return null
@@ -83,6 +83,7 @@ internal object DrawSchedule {
         when (this) {
             LotteryType.SUPER_LOTTO -> setOf(DayOfWeek.MONDAY, DayOfWeek.WEDNESDAY, DayOfWeek.SATURDAY)
             LotteryType.DOUBLE_COLOR_BALL -> setOf(DayOfWeek.TUESDAY, DayOfWeek.THURSDAY, DayOfWeek.SUNDAY)
+            LotteryType.HAPPY_8 -> DayOfWeek.entries.toSet()
         }
 
     /** 开奖日的开奖时刻。 */
@@ -90,13 +91,14 @@ internal object DrawSchedule {
         when (this) {
             LotteryType.SUPER_LOTTO -> LocalTime(21, 25)
             LotteryType.DOUBLE_COLOR_BALL -> LocalTime(21, 15)
+            LotteryType.HAPPY_8 -> LocalTime(21, 30)
         }
 
     /** 大乐透期号中的两位年度。 */
     private const val SUPER_LOTTO_YEAR_LENGTH = 2
 
-    /** 双色球期号中的四位年度。 */
-    private const val DOUBLE_COLOR_BALL_YEAR_LENGTH = 4
+    /** 双色球与快乐8 期号中的四位年度。 */
+    private const val WELFARE_LOTTERY_YEAR_LENGTH = 4
 
     /** 年度内三位序号。 */
     private const val ORDINAL_LENGTH = 3

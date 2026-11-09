@@ -136,10 +136,13 @@ data class TicketLineReviewState(
     fun betCount(lotteryType: LotteryType): Long =
         BetCombinations.betCount(lotteryType, primaryNumbers.value.size, secondaryNumbers.value.size)
 
-    /** 本行是否已选成复式，即任一区号码多于单式数量。 */
+    /** 本行是否已选成复式，即任一区号码多于单式数量；快乐8 只支持单式，恒为 `false`。 */
     fun isCompound(lotteryType: LotteryType): Boolean =
-        primaryNumbers.value.size > BetCombinations.primaryCount(lotteryType) ||
-            secondaryNumbers.value.size > BetCombinations.secondaryCount(lotteryType)
+        lotteryType != LotteryType.HAPPY_8 &&
+            (
+                primaryNumbers.value.size > BetCombinations.primaryCount(lotteryType) ||
+                    secondaryNumbers.value.size > BetCombinations.secondaryCount(lotteryType)
+            )
 }
 
 /**
@@ -241,13 +244,13 @@ data class TicketReviewState(
         if (lotteryType.value == value) return this
         val updatedLines =
             when {
-                value == LotteryType.DOUBLE_COLOR_BALL -> {
+                value != LotteryType.SUPER_LOTTO -> {
                     betLines.map { line ->
                         line.copy(isAdditional = TicketReviewField(false, TicketFieldOrigin.DERIVED))
                     }
                 }
 
-                lotteryType.value == LotteryType.DOUBLE_COLOR_BALL -> {
+                lotteryType.value != LotteryType.SUPER_LOTTO -> {
                     betLines.map { line ->
                         line.copy(isAdditional = TicketReviewField(null, TicketFieldOrigin.DERIVED))
                     }
@@ -255,6 +258,13 @@ data class TicketReviewState(
 
                 else -> {
                     betLines
+                }
+            }.map { line ->
+                // 快乐8 没有第二个号码区，界面也不再显示，切换时清空，避免留下无法修改的号码。
+                if (value == LotteryType.HAPPY_8 && line.secondaryNumbers.value.isNotEmpty()) {
+                    line.copy(secondaryNumbers = TicketReviewField(emptyList(), TicketFieldOrigin.USER))
+                } else {
+                    line
                 }
             }
         return copy(
@@ -297,7 +307,7 @@ data class TicketReviewState(
     private fun addBetLine(): TicketReviewState {
         val additionalField: TicketReviewField<Boolean?> =
             when (lotteryType.value) {
-                LotteryType.DOUBLE_COLOR_BALL -> {
+                LotteryType.DOUBLE_COLOR_BALL, LotteryType.HAPPY_8 -> {
                     TicketReviewField(false, TicketFieldOrigin.DERIVED)
                 }
 
@@ -471,7 +481,7 @@ data class TicketReviewState(
                             secondaryNumbers =
                                 TicketReviewField(line.secondaryNumbers.sorted(), TicketFieldOrigin.OCR),
                             isAdditional =
-                                if (draft.lotteryType == LotteryType.DOUBLE_COLOR_BALL) {
+                                if (draft.lotteryType != LotteryType.SUPER_LOTTO && draft.lotteryType != null) {
                                     TicketReviewField(false, TicketFieldOrigin.DERIVED)
                                 } else {
                                     TicketReviewField(line.isAdditional, TicketFieldOrigin.OCR)
@@ -501,10 +511,10 @@ data class TicketReviewState(
         /** 手动录入的默认投注期数。 */
         private const val V1_PERIOD_COUNT = 1
 
-        /** 两种彩票主号码的全局可编辑范围。 */
-        private val PRIMARY_GLOBAL_RANGE = 1..35
+        /** 三种彩票主号码的全局可编辑范围，快乐8 号码到 80。 */
+        private val PRIMARY_GLOBAL_RANGE = 1..80
 
-        /** 两种彩票次号码的全局可编辑范围。 */
+        /** 两种有次号码区的彩票次号码的全局可编辑范围。 */
         private val SECONDARY_GLOBAL_RANGE = 1..16
     }
 }

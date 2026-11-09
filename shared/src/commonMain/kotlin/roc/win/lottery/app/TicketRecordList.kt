@@ -13,6 +13,9 @@ enum class TicketRecordFilter {
 
     /** 只显示双色球。 */
     DOUBLE_COLOR_BALL,
+
+    /** 只显示快乐8。 */
+    HAPPY_8,
 }
 
 /**
@@ -42,6 +45,10 @@ fun filterTicketRecords(
 
                 TicketRecordFilter.DOUBLE_COLOR_BALL -> {
                     record.ticket.lotteryType.value == LotteryType.DOUBLE_COLOR_BALL
+                }
+
+                TicketRecordFilter.HAPPY_8 -> {
+                    record.ticket.lotteryType.value == LotteryType.HAPPY_8
                 }
             }
         val matchesQuery =

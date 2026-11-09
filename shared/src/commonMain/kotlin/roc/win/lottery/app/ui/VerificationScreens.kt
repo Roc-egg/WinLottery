@@ -5,6 +5,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -397,8 +398,12 @@ private fun PeriodVerificationItem(
             when (result) {
                 is PeriodVerification.Verified -> {
                     Text(
-                        "${result.drawResult.primaryNumbers.toNumberText()} + " +
-                            result.drawResult.secondaryNumbers.toNumberText(),
+                        if (result.drawResult.lotteryType == LotteryType.HAPPY_8) {
+                            result.drawResult.primaryNumbers.toNumberText()
+                        } else {
+                            "${result.drawResult.primaryNumbers.toNumberText()} + " +
+                                result.drawResult.secondaryNumbers.toNumberText()
+                        },
                         style = MaterialTheme.typography.bodyLarge,
                     )
                     Text(
@@ -490,9 +495,32 @@ private fun VerificationSummary(result: PrizeCheckResult) {
     }
 }
 
-/** 展示当期主号码和次号码。 */
+/** 展示当期主号码和次号码；快乐8 的 20 个开奖号码按宽度换行。 */
 @Composable
 private fun DrawNumbers(drawResult: DrawResult) {
+    if (drawResult.lotteryType == LotteryType.HAPPY_8) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("开奖号码", style = MaterialTheme.typography.titleMedium)
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                drawResult.primaryNumbers.forEach { number ->
+                    Surface(
+                        modifier = Modifier.size(36.dp),
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary,
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Text(number.toString().padStart(2, '0'), style = MaterialTheme.typography.labelLarge)
+                        }
+                    }
+                }
+            }
+        }
+        return
+    }
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         NumberRow(
             label = if (drawResult.lotteryType == LotteryType.SUPER_LOTTO) "前区" else "红球",
@@ -578,7 +606,11 @@ private fun BetLineResult(
             }
             line?.let {
                 Text(
-                    "${it.primaryNumbers.value.toNumberText()} + ${it.secondaryNumbers.value.toNumberText()}",
+                    if (drawResult.lotteryType == LotteryType.HAPPY_8) {
+                        it.primaryNumbers.value.toNumberText()
+                    } else {
+                        "${it.primaryNumbers.value.toNumberText()} + ${it.secondaryNumbers.value.toNumberText()}"
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                 )
             }
@@ -785,6 +817,7 @@ private fun BetLinePrizeResult.hitSummary(lotteryType: LotteryType): String =
     when (lotteryType) {
         LotteryType.SUPER_LOTTO -> "前区命中 $primaryHitCount 个，后区命中 $secondaryHitCount 个"
         LotteryType.DOUBLE_COLOR_BALL -> "红球命中 $primaryHitCount 个，蓝球命中 $secondaryHitCount 个"
+        LotteryType.HAPPY_8 -> "命中 $primaryHitCount 个"
     }
 
 /** 返回彩票玩法中文名称。 */
@@ -792,6 +825,7 @@ private fun LotteryType.displayName(): String =
     when (this) {
         LotteryType.SUPER_LOTTO -> "超级大乐透"
         LotteryType.DOUBLE_COLOR_BALL -> "双色球"
+        LotteryType.HAPPY_8 -> "快乐8"
     }
 
 /** 返回开奖状态中文名称。 */
@@ -853,7 +887,7 @@ private fun String.displayPrizeTier(): String =
         PrizeTierCodes.SIXTH -> "六等奖"
         PrizeTierCodes.SEVENTH -> "七等奖"
         PrizeTierCodes.FORTUNE -> "福运奖"
-        else -> this
+        else -> PrizeTierCodes.happy8DisplayName(this) ?: this
     }
 
 /** 把号码列表转换为固定两位的票面文本。 */

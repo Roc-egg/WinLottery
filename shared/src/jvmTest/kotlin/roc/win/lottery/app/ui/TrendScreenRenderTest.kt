@@ -22,6 +22,7 @@ import roc.win.lottery.domain.LotteryTrendArea
 import roc.win.lottery.domain.LotteryTrendCalculationResult
 import roc.win.lottery.domain.LotteryTrendCalculator
 import roc.win.lottery.domain.LotteryType
+import roc.win.lottery.domain.TREND_LOTTERY_TYPES
 import roc.win.lottery.domain.TrendSampleSize
 import java.io.File
 import javax.imageio.ImageIO
@@ -135,7 +136,7 @@ class TrendScreenRenderTest {
             scene.clickText("显示遗漏")
             scene.capture("large-text-settings")
         }
-        for (type in LotteryType.entries) {
+        for (type in TREND_LOTTERY_TYPES) {
             withScene(390, 844, type = type, area = LotteryTrendArea.SECONDARY) { scene ->
                 scene.capture("portrait-${type.name.lowercase()}-secondary")
                 assertTrue(scene.hasDescription("第 ${if (type == LotteryType.SUPER_LOTTO) "26150" else "2026150"} 期"))

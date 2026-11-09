@@ -78,6 +78,7 @@ import roc.win.lottery.app.maxOmissionText
 import roc.win.lottery.app.trendNumberZones
 import roc.win.lottery.domain.LotteryTrendArea
 import roc.win.lottery.domain.LotteryType
+import roc.win.lottery.domain.TREND_LOTTERY_TYPES
 import roc.win.lottery.domain.TrendSampleSize
 import roc.win.lottery.domain.trendAreaSpec
 import kotlin.time.Instant
@@ -346,7 +347,7 @@ private fun TrendToolbar(
             Modifier.weight(1f).horizontalScroll(rememberScrollState()),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            TrendChoiceMenu(chart.lotteryType.trendDisplayName(), "彩种", LotteryType.entries, {
+            TrendChoiceMenu(chart.lotteryType.trendDisplayName(), "彩种", TREND_LOTTERY_TYPES, {
                 it.trendDisplayName()
             }, chart.lotteryType) {
                 onAction(TrendChartAction.ChangeLotteryType(it))
@@ -738,11 +739,11 @@ internal fun LotteryTypeTrendSelector(
     onSelected: (LotteryType) -> Unit,
 ) {
     SingleChoiceSegmentedButtonRow(modifier) {
-        LotteryType.entries.forEachIndexed { index, type ->
+        TREND_LOTTERY_TYPES.forEachIndexed { index, type ->
             SegmentedButton(
                 selected = selected == type,
                 onClick = { onSelected(type) },
-                shape = SegmentedButtonDefaults.itemShape(index, LotteryType.entries.size),
+                shape = SegmentedButtonDefaults.itemShape(index, TREND_LOTTERY_TYPES.size),
                 label = { Text(type.trendDisplayName()) },
             )
         }
@@ -767,13 +768,19 @@ internal fun trendHitContentColor(
 ): Color = Color.White
 
 /** 彩种中文名称。 */
-internal fun LotteryType.trendDisplayName(): String = if (this == LotteryType.SUPER_LOTTO) "大乐透" else "双色球"
+internal fun LotteryType.trendDisplayName(): String =
+    when (this) {
+        LotteryType.SUPER_LOTTO -> "大乐透"
+        LotteryType.DOUBLE_COLOR_BALL -> "双色球"
+        LotteryType.HAPPY_8 -> "快乐8"
+    }
 
 /** 当前彩种号码区域的中文名称。 */
 internal fun LotteryTrendArea.displayName(lotteryType: LotteryType): String =
     when (lotteryType) {
         LotteryType.SUPER_LOTTO -> if (this == LotteryTrendArea.PRIMARY) "前区" else "后区"
         LotteryType.DOUBLE_COLOR_BALL -> if (this == LotteryTrendArea.PRIMARY) "红球" else "蓝球"
+        LotteryType.HAPPY_8 -> if (this == LotteryTrendArea.PRIMARY) "号码" else "无"
     }
 
 /** 号码固定两位，统计值不调用此格式化函数。 */

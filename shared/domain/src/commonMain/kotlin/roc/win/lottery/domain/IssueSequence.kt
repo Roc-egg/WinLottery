@@ -49,7 +49,7 @@ class IssueSequenceResolver {
         val prefixLength =
             when (lotteryType) {
                 LotteryType.SUPER_LOTTO -> SUPER_LOTTO_YEAR_PREFIX_LENGTH
-                LotteryType.DOUBLE_COLOR_BALL -> DOUBLE_COLOR_BALL_YEAR_PREFIX_LENGTH
+                LotteryType.DOUBLE_COLOR_BALL, LotteryType.HAPPY_8 -> WELFARE_LOTTERY_YEAR_PREFIX_LENGTH
             }
         val expectedLength = prefixLength + ISSUE_ORDINAL_LENGTH
         val firstOrdinal =
@@ -95,10 +95,10 @@ class IssueSequenceResolver {
         /** 大乐透两位年份前缀长度。 */
         private const val SUPER_LOTTO_YEAR_PREFIX_LENGTH = 2
 
-        /** 双色球四位年份前缀长度。 */
-        private const val DOUBLE_COLOR_BALL_YEAR_PREFIX_LENGTH = 4
+        /** 双色球与快乐8 四位年份前缀长度。 */
+        private const val WELFARE_LOTTERY_YEAR_PREFIX_LENGTH = 4
 
-        /** 两种彩票均使用三位年度期次序号。 */
+        /** 三种彩票均使用三位年度期次序号。 */
         private const val ISSUE_ORDINAL_LENGTH = 3
 
         /** 合法年度期次的最小序号。 */

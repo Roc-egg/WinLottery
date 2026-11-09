@@ -18,6 +18,7 @@ import roc.win.lottery.domain.DrawResult
 import roc.win.lottery.domain.DrawStatus
 import roc.win.lottery.domain.Issue
 import roc.win.lottery.domain.LotteryPrizeCalculator
+import roc.win.lottery.domain.LotteryPrizeRules
 import roc.win.lottery.domain.LotteryType
 import roc.win.lottery.domain.PrizeTier
 import roc.win.lottery.domain.PrizeTierCodes
@@ -32,6 +33,67 @@ import kotlin.test.assertTrue
 /** 验证开奖结果页展示本机来源，并区分只补查未完成期次和全部重新联网核对。 */
 @OptIn(ExperimentalComposeUiApi::class)
 class VerificationScreenRenderTest {
+    /** 快乐8 结果页列出 20 个开奖号码，逐注显示“选N中K”和命中个数，号码不带加号。 */
+    @Test
+    fun happy8ResultShowsDrawNumbersAndPlayTiers() {
+        val ticket =
+            ConfirmedTicket(
+                lotteryType = ConfirmedValue(LotteryType.HAPPY_8, TicketFieldOrigin.USER),
+                issue = ConfirmedValue(Issue("2026294"), TicketFieldOrigin.USER),
+                betLines =
+                    listOf(listOf(3, 5, 7, 41, 60), listOf(1, 2, 41, 60, 77)).map { numbers ->
+                        BetLine(
+                            primaryNumbers = ConfirmedValue(numbers, TicketFieldOrigin.USER),
+                            secondaryNumbers = ConfirmedValue(emptyList(), TicketFieldOrigin.USER),
+                            isAdditional = ConfirmedValue(false, TicketFieldOrigin.USER),
+                            originalText = "",
+                        )
+                    },
+                multiplier = ConfirmedValue(1, TicketFieldOrigin.USER),
+                periodCount = ConfirmedValue(1, TicketFieldOrigin.USER),
+                paidAmountFen = ConfirmedValue(400L, TicketFieldOrigin.USER),
+            )
+        val draw =
+            DrawResult(
+                lotteryType = LotteryType.HAPPY_8,
+                issue = Issue("2026294"),
+                drawDate = "2026-11-04",
+                primaryNumbers = (1..20).toList(),
+                secondaryNumbers = emptyList(),
+                status = DrawStatus.FINAL_PAYOUT,
+                revision = 1,
+                ruleVersion = RuleVersion.KL8_2024_01.code,
+                policy = DrawPolicy.STANDARD,
+                prizeTiers =
+                    LotteryPrizeRules.HAPPY_8_PRIZE_TIER_CODES.map { code ->
+                        PrizeTier(code, checkNotNull(PrizeTierCodes.happy8DisplayName(code)), 300L, null)
+                    },
+                evidence = SourceEvidence("测试主源", "https://example.invalid/main", 1L, "a".repeat(64)),
+                supportingEvidence = emptyList(),
+            )
+        ImageComposeScene(390, 2400).use { scene ->
+            scene.setContent {
+                LotteryTheme {
+                    VerificationResultScreen(
+                        ticket = ticket,
+                        drawResult = draw,
+                        prizeCheckResult = LotteryPrizeCalculator().calculate(ticket, draw),
+                        isFromLocalStore = false,
+                        onRetry = {},
+                        onBack = {},
+                        onDone = {},
+                    )
+                }
+            }
+            scene.settle()
+            assertTrue(scene.hasText("开奖号码"))
+            assertTrue(scene.hasText("03 05 07 41 60"))
+            assertTrue(scene.hasText("命中 3 个"))
+            assertTrue(scene.hasTextStartingWith("选五中三"))
+            assertFalse(scene.nodes().any { node -> node.texts().any { "+" in it && it.any(Char::isDigit) } })
+        }
+    }
+
     /** 单期结果来自本机时标注核对时间，按钮为重新联网核对。 */
     @Test
     fun singleResultFromLocalStoreShowsSourceAndForceRefresh() {

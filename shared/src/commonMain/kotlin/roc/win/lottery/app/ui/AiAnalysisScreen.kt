@@ -1073,6 +1073,7 @@ private fun LotteryType.aiDisplayName(): String =
     when (this) {
         LotteryType.SUPER_LOTTO -> "大乐透"
         LotteryType.DOUBLE_COLOR_BALL -> "双色球"
+        LotteryType.HAPPY_8 -> "快乐8"
     }
 
 /** 返回当前彩种主号码区域名称。 */
@@ -1080,6 +1081,7 @@ private fun LotteryType.primaryAreaName(): String =
     when (this) {
         LotteryType.SUPER_LOTTO -> "前区"
         LotteryType.DOUBLE_COLOR_BALL -> "红球"
+        LotteryType.HAPPY_8 -> "号码"
     }
 
 /** 返回当前彩种次号码区域名称。 */
@@ -1087,6 +1089,7 @@ private fun LotteryType.secondaryAreaName(): String =
     when (this) {
         LotteryType.SUPER_LOTTO -> "后区"
         LotteryType.DOUBLE_COLOR_BALL -> "蓝球"
+        LotteryType.HAPPY_8 -> "无"
     }
 
 /** 按中国时区展示历史加载和结果生成时间。 */

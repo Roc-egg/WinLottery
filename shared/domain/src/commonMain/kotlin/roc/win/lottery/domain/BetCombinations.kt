@@ -5,21 +5,28 @@ package roc.win.lottery.domain
  *
  * 一组号码的主区、次区数量都不少于单式要求时有效；任一区多于单式要求即为复式，等价于从两区分别取出
  * 单式数量号码的全部组合，每个组合是一注独立计奖的单式投注。
+ *
+ * 快乐8 只有一个号码区，选一至选十的玩法由一行号码个数决定，当前只支持单式，每行恒为一注。
  */
 object BetCombinations {
-    /** 返回指定彩种单式投注的主号码数量。 */
+    /** 返回指定彩种单式投注的主号码数量；快乐8 为最少可选的一个号码。 */
     fun primaryCount(lotteryType: LotteryType): Int =
         when (lotteryType) {
             LotteryType.SUPER_LOTTO -> SUPER_LOTTO_PRIMARY_COUNT
             LotteryType.DOUBLE_COLOR_BALL -> DOUBLE_COLOR_BALL_PRIMARY_COUNT
+            LotteryType.HAPPY_8 -> HAPPY_8_PICK_COUNTS.first
         }
 
-    /** 返回指定彩种单式投注的次号码数量。 */
+    /** 返回指定彩种单式投注的次号码数量；快乐8 没有次号码区。 */
     fun secondaryCount(lotteryType: LotteryType): Int =
         when (lotteryType) {
             LotteryType.SUPER_LOTTO -> SUPER_LOTTO_SECONDARY_COUNT
             LotteryType.DOUBLE_COLOR_BALL -> DOUBLE_COLOR_BALL_SECONDARY_COUNT
+            LotteryType.HAPPY_8 -> 0
         }
+
+    /** 快乐8 可选的玩法：选一至选十。 */
+    val HAPPY_8_PICK_COUNTS = 1..10
 
     /**
      * 返回一组号码展开后的单式注数。
@@ -27,15 +34,19 @@ object BetCombinations {
      * @param lotteryType 彩票玩法。
      * @param primaryNumberCount 前区或红球号码个数。
      * @param secondaryNumberCount 后区或蓝球号码个数。
-     * @return 单式注数；任一区号码少于单式要求时为 `0`。
+     * @return 单式注数；任一区号码少于单式要求时为 `0`。快乐8 单式一行为一注，号码个数不在选一至选十或带次号码时为 `0`。
      */
     fun betCount(
         lotteryType: LotteryType,
         primaryNumberCount: Int,
         secondaryNumberCount: Int,
     ): Long =
-        combinations(primaryNumberCount, primaryCount(lotteryType)) *
-            combinations(secondaryNumberCount, secondaryCount(lotteryType))
+        if (lotteryType == LotteryType.HAPPY_8) {
+            if (primaryNumberCount in HAPPY_8_PICK_COUNTS && secondaryNumberCount == 0) 1L else 0L
+        } else {
+            combinations(primaryNumberCount, primaryCount(lotteryType)) *
+                combinations(secondaryNumberCount, secondaryCount(lotteryType))
+        }
 
     /**
      * 返回组合数 `C(n, k)`。
@@ -73,7 +84,10 @@ object BetCombinations {
 fun BetLine.betCount(lotteryType: LotteryType): Long =
     BetCombinations.betCount(lotteryType, primaryNumbers.value.size, secondaryNumbers.value.size)
 
-/** 返回本行是否为复式投注，即任一区号码多于单式要求。 */
+/** 返回本行是否为复式投注，即任一区号码多于单式要求；快乐8 只支持单式，恒为 `false`。 */
 fun BetLine.isCompound(lotteryType: LotteryType): Boolean =
-    primaryNumbers.value.size > BetCombinations.primaryCount(lotteryType) ||
-        secondaryNumbers.value.size > BetCombinations.secondaryCount(lotteryType)
+    lotteryType != LotteryType.HAPPY_8 &&
+        (
+            primaryNumbers.value.size > BetCombinations.primaryCount(lotteryType) ||
+                secondaryNumbers.value.size > BetCombinations.secondaryCount(lotteryType)
+        )

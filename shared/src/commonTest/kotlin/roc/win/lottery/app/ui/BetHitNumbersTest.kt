@@ -10,6 +10,16 @@ class BetHitNumbersTest {
     @Test
     fun describesHitsPerArea() {
         assertEquals(
+            "号码 03 11 25 40 77，命中 11 77",
+            betHitDescription(
+                lotteryType = LotteryType.HAPPY_8,
+                primaryNumbers = listOf(77, 3, 11, 25, 40),
+                secondaryNumbers = emptyList(),
+                drawPrimaryNumbers = listOf(1, 2, 11, 30, 77),
+                drawSecondaryNumbers = emptyList(),
+            ),
+        )
+        assertEquals(
             "红球 04 08 11 13 16 24 25 33，命中 13 25；蓝球 04 13，未命中",
             betHitDescription(
                 lotteryType = LotteryType.DOUBLE_COLOR_BALL,

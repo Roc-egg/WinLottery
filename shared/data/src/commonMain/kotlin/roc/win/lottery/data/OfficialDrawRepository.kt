@@ -205,6 +205,14 @@ class OfficialDrawRepository(
                         referer = CHINA_WELFARE_LOTTERY_REFERER,
                     )
                 }
+
+                LotteryType.HAPPY_8 -> {
+                    fetch(
+                        HistoricalDrawEndpoints.happy8Range(startIssue, endIssue, expected.size),
+                        "期次列表",
+                        referer = CHINA_WELFARE_LOTTERY_REFERER,
+                    )
+                }
             }
         val rawJson = (fetched as? FetchResult.Success)?.body ?: return null
         val parsed =
@@ -215,6 +223,10 @@ class OfficialDrawRepository(
 
                 LotteryType.DOUBLE_COLOR_BALL -> {
                     HistoricalDrawSourceAdapter.parseDoubleColorBallPage(rawJson, expectedPageNo = 1)
+                }
+
+                LotteryType.HAPPY_8 -> {
+                    HistoricalDrawSourceAdapter.parseHappy8Page(rawJson, expectedPageNo = 1)
                 }
             }
         val issues =
@@ -244,8 +256,20 @@ class OfficialDrawRepository(
         }
         val drawsNewestFirst =
             when (lotteryType) {
-                LotteryType.SUPER_LOTTO -> loadSuperLottoHistory(count)
-                LotteryType.DOUBLE_COLOR_BALL -> loadDoubleColorBallHistory(count)
+                LotteryType.SUPER_LOTTO -> {
+                    loadSuperLottoHistory(count)
+                }
+
+                LotteryType.DOUBLE_COLOR_BALL -> {
+                    loadDoubleColorBallHistory(count)
+                }
+
+                LotteryType.HAPPY_8 -> {
+                    return historicalUnavailable(
+                        HistoricalDrawFailureReason.SOURCE_UNAVAILABLE,
+                        "快乐8 只支持票据开奖核对，不提供历史开奖走势",
+                    )
+                }
             }
         val loaded =
             when (drawsNewestFirst) {
@@ -372,6 +396,7 @@ class OfficialDrawRepository(
         when (lotteryType) {
             LotteryType.SUPER_LOTTO -> SuperLottoSourceAdapter.parseMain(rawJson, targetIssue, sourceUrl)
             LotteryType.DOUBLE_COLOR_BALL -> DoubleColorBallSourceAdapter.parseMain(rawJson, targetIssue, sourceUrl)
+            LotteryType.HAPPY_8 -> Happy8SourceAdapter.parseMain(rawJson, targetIssue, sourceUrl)
         }
 
     /** 使用指定彩票适配器解析辅助响应。 */
@@ -388,6 +413,10 @@ class OfficialDrawRepository(
 
             LotteryType.DOUBLE_COLOR_BALL -> {
                 DoubleColorBallSourceAdapter.parseSupporting(rawJson, targetIssue, sourceUrl)
+            }
+
+            LotteryType.HAPPY_8 -> {
+                Happy8SourceAdapter.parseSupporting(rawJson, targetIssue, sourceUrl)
             }
         }
 
@@ -562,7 +591,7 @@ class OfficialDrawRepository(
         val expectedLength =
             when (lotteryType) {
                 LotteryType.SUPER_LOTTO -> SUPER_LOTTO_ISSUE_LENGTH
-                LotteryType.DOUBLE_COLOR_BALL -> DOUBLE_COLOR_BALL_ISSUE_LENGTH
+                LotteryType.DOUBLE_COLOR_BALL, LotteryType.HAPPY_8 -> DOUBLE_COLOR_BALL_ISSUE_LENGTH
             }
         return issue.length == expectedLength && issue.all(Char::isDigit)
     }
@@ -718,6 +747,26 @@ class OfficialDrawRepository(
                                 },
                         )
                     }
+
+                    // 快乐8 与双色球共用福彩网开奖公告列表和单期详情接口，只是玩法名不同。
+                    LotteryType.HAPPY_8 -> {
+                        DrawEndpoints(
+                            mainUrl =
+                                buildUrl(DOUBLE_COLOR_BALL_MAIN_URL) {
+                                    append("name", HAPPY_8_SOURCE_NAME)
+                                    append("issueStart", issue)
+                                    append("issueEnd", issue)
+                                    append("pageNo", "1")
+                                    append("pageSize", "1")
+                                    append("systemType", "PC")
+                                },
+                            supportingUrl =
+                                buildUrl(DOUBLE_COLOR_BALL_SUPPORTING_URL) {
+                                    append("name", HAPPY_8_SOURCE_NAME)
+                                    append("code", issue)
+                                },
+                        )
+                    }
                 }
 
             /** 使用 Ktor URL 构建器追加查询参数。 */
@@ -771,6 +820,21 @@ class OfficialDrawRepository(
                 append("systemType", "PC")
             }
 
+        /** 构建中国福彩网快乐8 闭区间期号列表地址。 */
+        fun happy8Range(
+            startIssue: String,
+            endIssue: String,
+            pageSize: Int,
+        ): String =
+            buildUrl(DOUBLE_COLOR_BALL_MAIN_URL) {
+                append("name", HAPPY_8_SOURCE_NAME)
+                append("issueStart", startIssue)
+                append("issueEnd", endIssue)
+                append("pageNo", "1")
+                append("pageSize", pageSize.toString())
+                append("systemType", "PC")
+            }
+
         /** 构建中国福彩网双色球历史开奖地址。 */
         fun doubleColorBall(pageSize: Int): String =
             buildUrl(DOUBLE_COLOR_BALL_MAIN_URL) {
@@ -807,6 +871,9 @@ class OfficialDrawRepository(
 
         /** 中国福彩网接口需要的官方站点来源页。 */
         const val CHINA_WELFARE_LOTTERY_REFERER = "https://www.cwl.gov.cn/"
+
+        /** 福彩接口中的快乐8 玩法名。 */
+        const val HAPPY_8_SOURCE_NAME = "kl8"
 
         /** 中国体彩网历史接口实际允许的最大页大小。 */
         const val SUPER_LOTTO_HISTORY_PAGE_SIZE = 100
@@ -848,5 +915,5 @@ private val CHINA_TIME_ZONE = TimeZone.of("Asia/Shanghai")
 private fun LotteryType.historicalSourceName(): String =
     when (this) {
         LotteryType.SUPER_LOTTO -> "中国体彩网历史开奖"
-        LotteryType.DOUBLE_COLOR_BALL -> "中国福彩网开奖公告"
+        LotteryType.DOUBLE_COLOR_BALL, LotteryType.HAPPY_8 -> "中国福彩网开奖公告"
     }

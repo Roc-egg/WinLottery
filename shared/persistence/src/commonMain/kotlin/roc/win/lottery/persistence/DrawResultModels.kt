@@ -87,7 +87,7 @@ fun DrawResult.storageProblem(): DrawResultProblem? {
     val issueLength =
         when (lotteryType) {
             LotteryType.SUPER_LOTTO -> SUPER_LOTTO_ISSUE_LENGTH
-            LotteryType.DOUBLE_COLOR_BALL -> DOUBLE_COLOR_BALL_ISSUE_LENGTH
+            LotteryType.DOUBLE_COLOR_BALL, LotteryType.HAPPY_8 -> WELFARE_LOTTERY_ISSUE_LENGTH
         }
     if (issue.value.length != issueLength || !issue.value.all(Char::isDigit)) return DrawResultProblem.INVALID_ISSUE
     if (!DRAW_DATE_PATTERN.matches(drawDate)) return DrawResultProblem.INVALID_DATE
@@ -137,8 +137,8 @@ private fun SourceEvidence.isValid(): Boolean =
 /** 大乐透五位期号。 */
 private const val SUPER_LOTTO_ISSUE_LENGTH = 5
 
-/** 双色球七位期号。 */
-private const val DOUBLE_COLOR_BALL_ISSUE_LENGTH = 7
+/** 双色球与快乐8 七位期号。 */
+private const val WELFARE_LOTTERY_ISSUE_LENGTH = 7
 
 /** `YYYY-MM-DD` 日期文本。 */
 private val DRAW_DATE_PATTERN = Regex("""\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])""")

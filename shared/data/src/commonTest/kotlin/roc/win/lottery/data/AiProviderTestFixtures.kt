@@ -197,6 +197,16 @@ private fun testHistoricalDraws(
                     secondaryNumbers = listOf(1),
                 )
             }
+
+            LotteryType.HAPPY_8 -> {
+                HistoricalDraw(
+                    lotteryType = lotteryType,
+                    issue = Issue("20$year${ordinal.toString().padStart(3, '0')}"),
+                    drawDate = "20$year-08-10",
+                    primaryNumbers = (1..20).toList(),
+                    secondaryNumbers = emptyList(),
+                )
+            }
         }
     }
 
@@ -239,5 +249,9 @@ private fun validCandidateJson(
                 put("secondaryNumbers", buildJsonArray { add(JsonPrimitive(1 + index)) })
                 put("reason", "双色球候选 ${index + 1} 的历史样本说明")
             }
+        }
+
+        LotteryType.HAPPY_8 -> {
+            error("AI 分析不支持快乐8")
         }
     }

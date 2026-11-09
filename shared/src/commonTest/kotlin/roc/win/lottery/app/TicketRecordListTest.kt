@@ -74,6 +74,7 @@ class TicketRecordListTest {
             when (lotteryType) {
                 LotteryType.SUPER_LOTTO -> betLine(listOf(2, 7, 14, 21, 33), listOf(4, 9))
                 LotteryType.DOUBLE_COLOR_BALL -> betLine(listOf(1, 7, 14, 21, 28, 33), listOf(9))
+                LotteryType.HAPPY_8 -> betLine(listOf(3, 11, 25, 40, 77), emptyList())
             }
         return ConfirmedTicket(
             lotteryType = confirmed(lotteryType),

@@ -56,6 +56,15 @@ class TicketValidator(
         ticket.betLines.forEachIndexed { index, line ->
             validateLine(ticket.lotteryType.value, index, line, ::addProblem)
         }
+        if (
+            ticket.lotteryType.value == LotteryType.HAPPY_8 &&
+            ticket.betLines
+                .map { it.primaryNumbers.value.size }
+                .distinct()
+                .size > 1
+        ) {
+            addProblem(TicketValidationStatus.INVALID, "betLines", "快乐8 同一张票只有一种玩法，每注号码个数必须相同")
+        }
         validateAmount(ticket, ::addProblem)
 
         return TicketValidationResult(status, problems.toList())
@@ -69,7 +78,7 @@ class TicketValidator(
         val expectedLength =
             when (ticket.lotteryType.value) {
                 LotteryType.SUPER_LOTTO -> SUPER_LOTTO_ISSUE_LENGTH
-                LotteryType.DOUBLE_COLOR_BALL -> DOUBLE_COLOR_BALL_ISSUE_LENGTH
+                LotteryType.DOUBLE_COLOR_BALL, LotteryType.HAPPY_8 -> WELFARE_LOTTERY_ISSUE_LENGTH
             }
         val value = ticket.issue.value.value
         if (value.length != expectedLength || value.any { !it.isDigit() }) {
@@ -101,8 +110,20 @@ class TicketValidator(
             spec.secondaryRange,
             addProblem,
         )
-        if (lotteryType == LotteryType.DOUBLE_COLOR_BALL && line.isAdditional.value) {
-            addProblem(TicketValidationStatus.INVALID, "betLines[$index].isAdditional", "双色球不存在追加投注")
+        if (lotteryType != LotteryType.SUPER_LOTTO && line.isAdditional.value) {
+            addProblem(TicketValidationStatus.INVALID, "betLines[$index].isAdditional", "只有大乐透存在追加投注")
+        }
+        if (lotteryType == LotteryType.HAPPY_8) {
+            if (line.primaryNumbers.value.size > BetCombinations.HAPPY_8_PICK_COUNTS.last) {
+                addProblem(
+                    TicketValidationStatus.UNSUPPORTED,
+                    "betLines[$index].primaryNumbers",
+                    "快乐8 当前只支持选一至选十单式，每注最多 ${BetCombinations.HAPPY_8_PICK_COUNTS.last} 个号码",
+                )
+            }
+            if (line.secondaryNumbers.value.isNotEmpty()) {
+                addProblem(TicketValidationStatus.INVALID, "betLines[$index].secondaryNumbers", "快乐8 没有第二个号码区")
+            }
         }
     }
 
@@ -177,7 +198,7 @@ class TicketValidator(
             if (lotteryType == LotteryType.SUPER_LOTTO) {
                 SUPER_LOTTO_MAX_TOTAL_FEN
             } else {
-                DOUBLE_COLOR_BALL_MAX_TOTAL_FEN
+                WELFARE_LOTTERY_MAX_TOTAL_FEN
             }
         if (baseAmountFen > MAX_BASE_AMOUNT_FEN || expectedAmountFen > maxAmountFen) {
             addProblem(TicketValidationStatus.INVALID, "paidAmountFen", "投注金额超过单张彩票上限")
@@ -207,8 +228,22 @@ class TicketValidator(
             /** 返回指定彩种当前号码规则。 */
             fun forLottery(lotteryType: LotteryType): NumberSpec =
                 when (lotteryType) {
-                    LotteryType.SUPER_LOTTO -> NumberSpec(5, 1..35, 2, 1..12)
-                    LotteryType.DOUBLE_COLOR_BALL -> NumberSpec(6, 1..33, 1, 1..16)
+                    LotteryType.SUPER_LOTTO -> {
+                        NumberSpec(5, 1..35, 2, 1..12)
+                    }
+
+                    LotteryType.DOUBLE_COLOR_BALL -> {
+                        NumberSpec(6, 1..33, 1, 1..16)
+                    }
+
+                    LotteryType.HAPPY_8 -> {
+                        NumberSpec(
+                            BetCombinations.HAPPY_8_PICK_COUNTS.first,
+                            1..80,
+                            0,
+                            IntRange.EMPTY,
+                        )
+                    }
                 }
         }
     }
@@ -224,8 +259,8 @@ class TicketValidator(
         /** 大乐透期号长度。 */
         const val SUPER_LOTTO_ISSUE_LENGTH = 5
 
-        /** 双色球期号长度。 */
-        const val DOUBLE_COLOR_BALL_ISSUE_LENGTH = 7
+        /** 双色球与快乐8 期号长度。 */
+        const val WELFARE_LOTTERY_ISSUE_LENGTH = 7
 
         /** 单张彩票基本投注金额上限，单位为分。 */
         const val MAX_BASE_AMOUNT_FEN = 2_000_000L
@@ -233,8 +268,8 @@ class TicketValidator(
         /** 大乐透含追加投注的总金额上限，单位为分。 */
         const val SUPER_LOTTO_MAX_TOTAL_FEN = 3_000_000L
 
-        /** 双色球总金额上限，单位为分。 */
-        const val DOUBLE_COLOR_BALL_MAX_TOTAL_FEN = 2_000_000L
+        /** 双色球与快乐8 总金额上限，单位为分。 */
+        const val WELFARE_LOTTERY_MAX_TOTAL_FEN = 2_000_000L
 
         /** 返回校验状态的严重级别。 */
         val TicketValidationStatus.priority: Int

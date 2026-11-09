@@ -182,6 +182,10 @@ class LotteryRandomNumberGenerator(
     /** 返回首个输入问题；请求完全合法时返回 `null`。 */
     private fun validate(request: RandomNumberGenerationRequest): String? =
         when {
+            request.lotteryType == LotteryType.HAPPY_8 -> {
+                "随机选号只支持大乐透和双色球"
+            }
+
             request.periodCount !in
                 RandomNumberGenerationLimits.MIN_PERIOD_COUNT..RandomNumberGenerationLimits.MAX_PERIOD_COUNT -> {
                 "期数必须在 1 至 ${RandomNumberGenerationLimits.MAX_PERIOD_COUNT} 之间"
@@ -255,7 +259,11 @@ class LotteryRandomNumberGenerator(
             fun forLottery(lotteryType: LotteryType): RandomNumberSpec =
                 when (lotteryType) {
                     LotteryType.SUPER_LOTTO -> RandomNumberSpec(5, 1..35, 2, 1..12)
+
                     LotteryType.DOUBLE_COLOR_BALL -> RandomNumberSpec(6, 1..33, 1, 1..16)
+
+                    // 请求校验已拦截快乐8。
+                    LotteryType.HAPPY_8 -> throw IllegalArgumentException("随机选号不支持快乐8")
                 }
         }
     }

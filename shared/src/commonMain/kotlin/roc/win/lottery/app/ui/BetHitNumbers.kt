@@ -47,7 +47,7 @@ import roc.win.lottery.domain.LotteryType
 /**
  * 返回一注号码与开奖号码逐个比对的说明，供读屏使用。
  *
- * 例如“前区 03 09 14 18 22，命中 09 14；后区 02 06，未命中”。
+ * 例如“前区 03 09 14 18 22，命中 09 14；后区 02 06，未命中”；快乐8 只有一个号码区，如“号码 04 14 30，命中 14”。
  */
 internal fun betHitDescription(
     lotteryType: LotteryType,
@@ -70,6 +70,7 @@ internal fun betHitDescription(
         when (lotteryType) {
             LotteryType.SUPER_LOTTO -> "前区" to "后区"
             LotteryType.DOUBLE_COLOR_BALL -> "红球" to "蓝球"
+            LotteryType.HAPPY_8 -> return area("号码", primaryNumbers, drawPrimaryNumbers)
         }
     return area(primaryName, primaryNumbers, drawPrimaryNumbers) + "；" +
         area(secondaryName, secondaryNumbers, drawSecondaryNumbers)
@@ -79,7 +80,7 @@ internal fun betHitDescription(
  * 用号码球展示一注号码：与开奖号码相同的号码实心高亮，其余空心。
  *
  * 单式按可用宽度缩小球径排在一行；复式号码较多、最小球径也排不下一行时，前区或红球自动换行，
- * 后区或蓝球以加号开头另起一行，两区分界保持清楚。
+ * 后区或蓝球以加号开头另起一行，两区分界保持清楚。快乐8 没有次号码区，不显示加号。
  *
  * @param lotteryType 彩票玩法。
  * @param primaryNumbers 本注前区或红球号码。
@@ -102,8 +103,9 @@ internal fun BetHitNumbers(
             drawResult.secondaryNumbers,
         )
     BoxWithConstraints(modifier = Modifier.fillMaxWidth().clearAndSetSemantics { contentDescription = description }) {
+        val hasSecondaryArea = lotteryType != LotteryType.HAPPY_8
         // 加号占一个号码位。
-        val slotCount = primaryNumbers.size + secondaryNumbers.size + 1
+        val slotCount = primaryNumbers.size + if (hasSecondaryArea) secondaryNumbers.size + 1 else 0
         val fittedSize = (maxWidth - HIT_BALL_SPACING * (slotCount - 1)) / slotCount
         val primaryBalls: @Composable (Dp) -> Unit = { size ->
             primaryNumbers.sorted().forEach { number ->
@@ -116,7 +118,8 @@ internal fun BetHitNumbers(
                 )
             }
         }
-        val secondaryBalls: @Composable (Dp) -> Unit = { size ->
+        val secondaryBalls: @Composable (Dp) -> Unit = secondary@{ size ->
+            if (!hasSecondaryArea) return@secondary
             Box(modifier = Modifier.size(size), contentAlignment = Alignment.Center) {
                 Text(
                     "+",
@@ -148,11 +151,13 @@ internal fun BetHitNumbers(
                 ) {
                     primaryBalls(HIT_BALL_MAX_SIZE)
                 }
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(HIT_BALL_SPACING),
-                    verticalArrangement = Arrangement.spacedBy(HIT_BALL_SPACING),
-                ) {
-                    secondaryBalls(HIT_BALL_MAX_SIZE)
+                if (hasSecondaryArea) {
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(HIT_BALL_SPACING),
+                        verticalArrangement = Arrangement.spacedBy(HIT_BALL_SPACING),
+                    ) {
+                        secondaryBalls(HIT_BALL_MAX_SIZE)
+                    }
                 }
             }
         }

@@ -648,6 +648,7 @@ private fun TicketRecordFilter.displayName(): String =
         TicketRecordFilter.ALL -> "全部"
         TicketRecordFilter.SUPER_LOTTO -> "大乐透"
         TicketRecordFilter.DOUBLE_COLOR_BALL -> "双色球"
+        TicketRecordFilter.HAPPY_8 -> "快乐8"
     }
 
 /** 返回彩种的简体中文名称。 */
@@ -655,6 +656,7 @@ private fun LotteryType.displayName(): String =
     when (this) {
         LotteryType.SUPER_LOTTO -> "超级大乐透"
         LotteryType.DOUBLE_COLOR_BALL -> "双色球"
+        LotteryType.HAPPY_8 -> "快乐8"
     }
 
 /** 返回票据首次采集方式的简体中文名称。 */

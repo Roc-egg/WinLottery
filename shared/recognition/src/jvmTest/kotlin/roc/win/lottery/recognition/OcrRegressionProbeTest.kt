@@ -20,6 +20,7 @@ import kotlin.time.TimeSource
  * - `WINLOTTERY_OCR_PROBE_MODELS`：替换模型的目录，按 [PpOcrModel.fileName] 和字典文件名覆盖，缺少的沿用打包版本。
  * - `WINLOTTERY_OCR_PROBE_DETECTION`：`像素阈值,框阈值,扩张比例,最长边[,up]`，覆盖检测参数；`up` 表示小图放大到最长边。
  * - `WINLOTTERY_OCR_PROBE_SESSION`：额外会话配置，目前支持 `coreml`。
+ * - `WINLOTTERY_OCR_PROBE_LINES`：设为 `1` 时额外写出每条 OCR 原始文字及其上下边界，用于分析新票型。
  */
 class OcrRegressionProbeTest {
     /** 逐张识别并写出结果。 */
@@ -142,6 +143,20 @@ class OcrRegressionProbeTest {
                 },
             )
             put("pageQuarterTurns", (result as? RecognitionResult.Success)?.document?.pageQuarterTurns)
+            if (System.getenv("WINLOTTERY_OCR_PROBE_LINES") == "1") {
+                put(
+                    "lines",
+                    JsonArray(
+                        (result as? RecognitionResult.Success)?.document?.lines.orEmpty().map { line ->
+                            val bounds = line.bounds
+                            JsonPrimitive(
+                                "${"%.3f".format(bounds.top)}-${"%.3f".format(bounds.bottom)} " +
+                                    "x${"%.3f".format(bounds.left)} ${line.text}",
+                            )
+                        },
+                    ),
+                )
+            }
             put("ocrMs", ocrMicroseconds / MICROSECONDS_PER_MILLISECOND)
             PpOcrModel.entries.forEach { model ->
                 put("${model.name.lowercase()}Runs", stats.count(model))

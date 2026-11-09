@@ -497,6 +497,7 @@ private fun LotteryType.shortDisplayName(): String =
     when (this) {
         LotteryType.SUPER_LOTTO -> "大乐透"
         LotteryType.DOUBLE_COLOR_BALL -> "双色球"
+        LotteryType.HAPPY_8 -> "快乐8"
     }
 
 /** 返回跨期模式在配置控件中的名称。 */

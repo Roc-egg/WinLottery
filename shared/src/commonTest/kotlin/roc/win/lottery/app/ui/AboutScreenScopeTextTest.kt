@@ -21,7 +21,8 @@ class AboutScreenScopeTextTest {
     @Test
     fun compoundIsSupportedWhileBankerIsNot() {
         assertContains(V1_SUPPORTED_TICKET_SCOPE_TEXT, "复式")
-        assertFalse(V1_UNSUPPORTED_TICKET_SCOPE_TEXT.contains("复式"))
+        assertFalse(V1_UNSUPPORTED_TICKET_SCOPE_TEXT.contains("不支持复式"))
+        assertContains(V1_UNSUPPORTED_TICKET_SCOPE_TEXT, "快乐8 复式")
         assertContains(V1_UNSUPPORTED_TICKET_SCOPE_TEXT, "胆拖")
     }
 }

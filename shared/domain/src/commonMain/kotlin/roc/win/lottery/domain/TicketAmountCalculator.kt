@@ -24,7 +24,7 @@ object TicketAmountCalculator {
             additionalBetCount !in 0L..betCount ||
             multiplier <= 0 ||
             periodCount <= 0 ||
-            (lotteryType == LotteryType.DOUBLE_COLOR_BALL && additionalBetCount != 0L)
+            (lotteryType != LotteryType.SUPER_LOTTO && additionalBetCount != 0L)
         ) {
             return null
         }

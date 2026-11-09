@@ -283,6 +283,36 @@ class TicketReviewStateTest {
         assertEquals(200L, ticket.paidAmountFen.value)
     }
 
+    /** 改成快乐8 后清空后区号码和追加属性，按单号码区选满一注即可确认。 */
+    @Test
+    fun switchingToHappy8ClearsSecondaryArea() {
+        var state =
+            TicketReviewState
+                .fromDraft(superLottoDraft())
+                .applyAction(TicketReviewAction.ChangeLotteryType(LotteryType.HAPPY_8))
+                .applyAction(TicketReviewAction.ChangeIssue("2026294"))
+        val line = state.betLines.single()
+        assertTrue(line.secondaryNumbers.value.isEmpty())
+        assertEquals(false, line.isAdditional.value)
+        assertFalse(line.isCompound(LotteryType.HAPPY_8))
+
+        state =
+            state
+                .applyAction(TicketReviewAction.ToggleNumber(0, TicketNumberArea.PRIMARY, 80))
+                .applyAction(TicketReviewAction.UseCalculatedAmount)
+        val evaluation = state.evaluate(validator)
+
+        assertTrue(evaluation.canConfirm, evaluation.problems.toString())
+        val ticket = assertNotNull(evaluation.ticket)
+        assertEquals(
+            listOf(2, 7, 14, 21, 33, 80),
+            ticket.betLines
+                .single()
+                .primaryNumbers.value,
+        )
+        assertEquals(200L, ticket.paidAmountFen.value)
+    }
+
     /** 创建一张合法的大乐透追加草稿。 */
     private fun superLottoDraft(): TicketDraft =
         TicketDraft(

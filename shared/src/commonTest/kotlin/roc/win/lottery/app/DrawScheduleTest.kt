@@ -43,6 +43,15 @@ class DrawScheduleTest {
         )
     }
 
+    /** 快乐8 每天 21:30 开奖，按天顺数。 */
+    @Test
+    fun happy8CountsEveryDay() {
+        assertEquals(
+            beijing(2026, 11, 6, 21, 30),
+            earliest(LotteryType.HAPPY_8, "2026294", "2026-11-04", "2026296"),
+        )
+    }
+
     /** 已知期属于上一年度时，目标期至少排在本年度序号对应的开奖日之后。 */
     @Test
     fun earlierYearUsesTargetOrdinalAsMinimumDrawCount() {

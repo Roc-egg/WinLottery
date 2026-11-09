@@ -289,6 +289,7 @@ internal class RoomTicketRecordStore(
             when (lotteryType.value) {
                 LotteryType.SUPER_LOTTO -> "大乐透"
                 LotteryType.DOUBLE_COLOR_BALL -> "双色球"
+                LotteryType.HAPPY_8 -> "快乐8"
             }
         return "$lotteryName ${issue.value.value}"
     }

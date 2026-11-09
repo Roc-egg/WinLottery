@@ -12,6 +12,9 @@ enum class RuleVersion(
 
     /** 双色球自 2026014 期起生效的规则。 */
     SSQ_2026_01("SSQ_2026_01", LotteryType.DOUBLE_COLOR_BALL),
+
+    /** 快乐8 选一至选十的中奖矩阵，已核对 2024001 期起官网奖级结构一致；奖金按每期官网公布金额。 */
+    KL8_2024_01("KL8_2024_01", LotteryType.HAPPY_8),
 }
 
 /** 领域层使用的稳定奖级编码。 */
@@ -39,6 +42,44 @@ object PrizeTierCodes {
 
     /** 双色球特别规定期间的福运奖。 */
     const val FORTUNE = "FORTUNE"
+
+    /**
+     * 返回快乐8“选 N 中 K”的奖级编码，例如选五中三为 `X5Z3`，与官网奖级类型 `x5z3` 对应。
+     *
+     * @param pickCount 玩法选号个数。
+     * @param hitCount 命中开奖号码的个数。
+     */
+    fun happy8(
+        pickCount: Int,
+        hitCount: Int,
+    ): String = "X${pickCount}Z$hitCount"
+
+    /**
+     * 返回快乐8 奖级编码的中文名称，例如 `X5Z3` 为“选五中三”；不是快乐8 编码时为 `null`。
+     *
+     * @param code 稳定奖级编码。
+     */
+    fun happy8DisplayName(code: String): String? {
+        val match = HAPPY_8_CODE_REGEX.matchEntire(code) ?: return null
+        val pickCount = match.groupValues[1].toInt()
+        val hitCount = match.groupValues[2].toInt()
+        if (hitCount !in 0..pickCount) return null
+        return happy8PlayName(pickCount)?.let { play -> "${play}中${CHINESE_NUMERALS[hitCount]}" }
+    }
+
+    /**
+     * 返回快乐8 玩法名称，如 5 为“选五”；不在选一至选十时为 `null`。
+     *
+     * @param pickCount 玩法选号个数。
+     */
+    fun happy8PlayName(pickCount: Int): String? =
+        if (pickCount in BetCombinations.HAPPY_8_PICK_COUNTS) "选${CHINESE_NUMERALS[pickCount]}" else null
+
+    /** 快乐8 奖级编码格式。 */
+    private val HAPPY_8_CODE_REGEX = Regex("X(\\d{1,2})Z(\\d{1,2})")
+
+    /** 零至十的中文数字。 */
+    private val CHINESE_NUMERALS = listOf("零", "一", "二", "三", "四", "五", "六", "七", "八", "九", "十")
 }
 
 /** 根据彩种和期号选择规则版本，不使用当前日期推断规则。 */
@@ -72,6 +113,14 @@ class RuleVersionSelector {
                     null
                 }
             }
+
+            LotteryType.HAPPY_8 -> {
+                if (value.length == KL8_ISSUE_LENGTH && value >= KL8_FIRST_SUPPORTED_ISSUE) {
+                    RuleVersion.KL8_2024_01
+                } else {
+                    null
+                }
+            }
         }
     }
 
@@ -88,13 +137,21 @@ class RuleVersionSelector {
 
         /** 双色球首个受支持期号。 */
         const val SSQ_FIRST_SUPPORTED_ISSUE = "2026014"
+
+        /** 快乐8 期号长度。 */
+        const val KL8_ISSUE_LENGTH = 7
+
+        /** 快乐8 首个受支持期号。 */
+        const val KL8_FIRST_SUPPORTED_ISSUE = "2024001"
     }
 }
 
-/** 两种彩票当前规则的纯命中矩阵。 */
+/** 三种彩票当前规则的纯命中矩阵。 */
 object LotteryPrizeRules {
     /**
      * 根据命中数返回唯一的最高奖级。
+     *
+     * 快乐8 的奖级取决于选号个数，须使用 [findHappy8PrizeTierCode]。
      *
      * @param lotteryType 彩票玩法。
      * @param policy 当期已确认政策。
@@ -116,7 +173,51 @@ object LotteryPrizeRules {
             LotteryType.DOUBLE_COLOR_BALL -> {
                 findDoubleColorBallPrize(policy, primaryHitCount, secondaryHitCount)
             }
+
+            LotteryType.HAPPY_8 -> {
+                throw IllegalArgumentException("快乐8 奖级取决于选号个数，请使用 findHappy8PrizeTierCode")
+            }
         }
+
+    /**
+     * 返回快乐8“选 N 中 K”的奖级；该玩法该命中数不中奖时为 `null`。
+     *
+     * 选十、选九、选八、选七还设有“中零”奖。
+     *
+     * @param pickCount 玩法选号个数，选一至选十。
+     * @param hitCount 所选号码命中 20 个开奖号码的个数。
+     */
+    fun findHappy8PrizeTierCode(
+        pickCount: Int,
+        hitCount: Int,
+    ): String? =
+        HAPPY_8_WINNING_HIT_COUNTS[pickCount]
+            ?.takeIf { hitCount in it }
+            ?.let { PrizeTierCodes.happy8(pickCount, hitCount) }
+
+    /** 快乐8 全部奖级编码，按选十至选一、命中数从高到低排列，与官网奖级列表一一对应。 */
+    val HAPPY_8_PRIZE_TIER_CODES: List<String>
+        get() =
+            HAPPY_8_WINNING_HIT_COUNTS.keys.sortedDescending().flatMap { pickCount ->
+                HAPPY_8_WINNING_HIT_COUNTS.getValue(pickCount).sortedDescending().map { hitCount ->
+                    PrizeTierCodes.happy8(pickCount, hitCount)
+                }
+            }
+
+    /** 快乐8 各玩法会中奖的命中数，来自福彩快乐8 游戏规则并与官网每期奖级列表核对。 */
+    private val HAPPY_8_WINNING_HIT_COUNTS: Map<Int, Set<Int>> =
+        mapOf(
+            10 to setOf(10, 9, 8, 7, 6, 5, 0),
+            9 to setOf(9, 8, 7, 6, 5, 4, 0),
+            8 to setOf(8, 7, 6, 5, 4, 0),
+            7 to setOf(7, 6, 5, 4, 0),
+            6 to setOf(6, 5, 4, 3),
+            5 to setOf(5, 4, 3),
+            4 to setOf(4, 3, 2),
+            3 to setOf(3, 2),
+            2 to setOf(2),
+            1 to setOf(1),
+        )
 
     /** 返回大乐透七奖级矩阵中的最高奖级。 */
     private fun findSuperLottoPrize(
@@ -497,6 +598,13 @@ class LotteryPrizeCalculator(
         primaryHitCount: Int,
         secondaryHitCount: Int,
     ): List<Pair<String, Long>> {
+        if (lotteryType == LotteryType.HAPPY_8) {
+            // 快乐8 只支持单式，一行恰好一注，奖级由选号个数和命中数决定。
+            val tierCode =
+                LotteryPrizeRules.findHappy8PrizeTierCode(line.primaryNumbers.value.size, primaryHitCount)
+                    ?: return emptyList()
+            return listOf(tierCode to 1L)
+        }
         val primaryCount = BetCombinations.primaryCount(lotteryType)
         val secondaryCount = BetCombinations.secondaryCount(lotteryType)
         val primaryMissCount = line.primaryNumbers.value.size - primaryHitCount
@@ -591,14 +699,18 @@ class LotteryPrizeCalculator(
 
     /** 号码区域的严格格式。 */
     private data class DrawNumberSpec(
-        /** 主号码数量。 */
+        /** 开奖主号码数量。 */
         val primaryCount: Int,
         /** 主号码范围。 */
         val primaryRange: IntRange,
-        /** 次号码数量。 */
+        /** 开奖次号码数量。 */
         val secondaryCount: Int,
         /** 次号码范围。 */
         val secondaryRange: IntRange,
+        /** 一注投注允许的主号码个数。 */
+        val betPrimaryCounts: IntRange,
+        /** 一注投注允许的次号码个数。 */
+        val betSecondaryCounts: IntRange,
     ) {
         /** 判断一组开奖号码是否满足数量、范围和唯一性。 */
         fun matches(
@@ -612,15 +724,15 @@ class LotteryPrizeCalculator(
                 secondaryNumbers.distinct().size == secondaryCount &&
                 secondaryNumbers.all { it in secondaryRange }
 
-        /** 判断一组投注号码是否满足单式或复式投注的最少数量、范围和唯一性。 */
+        /** 判断一组投注号码是否满足单式或复式投注的号码个数、范围和唯一性。 */
         fun acceptsBet(
             primaryNumbers: List<Int>,
             secondaryNumbers: List<Int>,
         ): Boolean =
-            primaryNumbers.size >= primaryCount &&
+            primaryNumbers.size in betPrimaryCounts &&
                 primaryNumbers.distinct().size == primaryNumbers.size &&
                 primaryNumbers.all { it in primaryRange } &&
-                secondaryNumbers.size >= secondaryCount &&
+                secondaryNumbers.size in betSecondaryCounts &&
                 secondaryNumbers.distinct().size == secondaryNumbers.size &&
                 secondaryNumbers.all { it in secondaryRange }
 
@@ -629,8 +741,24 @@ class LotteryPrizeCalculator(
             /** 返回指定彩种的号码格式。 */
             fun forLottery(lotteryType: LotteryType): DrawNumberSpec =
                 when (lotteryType) {
-                    LotteryType.SUPER_LOTTO -> DrawNumberSpec(5, 1..35, 2, 1..12)
-                    LotteryType.DOUBLE_COLOR_BALL -> DrawNumberSpec(6, 1..33, 1, 1..16)
+                    LotteryType.SUPER_LOTTO -> {
+                        DrawNumberSpec(5, 1..35, 2, 1..12, betPrimaryCounts = 5..35, betSecondaryCounts = 2..12)
+                    }
+
+                    LotteryType.DOUBLE_COLOR_BALL -> {
+                        DrawNumberSpec(6, 1..33, 1, 1..16, betPrimaryCounts = 6..33, betSecondaryCounts = 1..16)
+                    }
+
+                    LotteryType.HAPPY_8 -> {
+                        DrawNumberSpec(
+                            primaryCount = 20,
+                            primaryRange = 1..80,
+                            secondaryCount = 0,
+                            secondaryRange = IntRange.EMPTY,
+                            betPrimaryCounts = BetCombinations.HAPPY_8_PICK_COUNTS,
+                            betSecondaryCounts = 0..0,
+                        )
+                    }
                 }
         }
     }

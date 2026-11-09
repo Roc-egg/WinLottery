@@ -2844,6 +2844,16 @@ class LotteryAppControllerTest {
                             secondaryNumbers = listOf(1),
                         )
                     }
+
+                    LotteryType.HAPPY_8 -> {
+                        HistoricalDraw(
+                            lotteryType = lotteryType,
+                            issue = Issue("2026${ordinal.toString().padStart(3, '0')}"),
+                            drawDate = "2026-01-01",
+                            primaryNumbers = (1..20).toList(),
+                            secondaryNumbers = emptyList(),
+                        )
+                    }
                 }
             }
     }

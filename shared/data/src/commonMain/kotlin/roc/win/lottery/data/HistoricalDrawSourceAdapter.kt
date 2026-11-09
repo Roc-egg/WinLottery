@@ -58,37 +58,56 @@ internal object HistoricalDrawSourceAdapter {
     fun parseDoubleColorBallPage(
         rawJson: String,
         expectedPageNo: Int,
+    ): HistoricalPageParseResult = parseWelfareLotteryPage(rawJson, expectedPageNo, "双色球", ::parseDoubleColorBallRecord)
+
+    /**
+     * 解析福彩快乐8 期号区间列表，只用于确认多期票的实际开奖期号。
+     *
+     * @param rawJson 官网原始 JSON。
+     * @param expectedPageNo 本次请求的页码。
+     * @return 按官网最新期在前顺序排列的规范化页面或结构错误。
+     */
+    fun parseHappy8Page(
+        rawJson: String,
+        expectedPageNo: Int,
+    ): HistoricalPageParseResult = parseWelfareLotteryPage(rawJson, expectedPageNo, "快乐8", ::parseHappy8Record)
+
+    /** 按福彩开奖公告列表的公共分页结构解析一页，逐条记录交给对应彩种的解析函数。 */
+    private fun parseWelfareLotteryPage(
+        rawJson: String,
+        expectedPageNo: Int,
+        lotteryName: String,
+        parseRecord: (JsonObject) -> HistoricalDraw?,
     ): HistoricalPageParseResult =
-        parseSafely("双色球") {
+        parseSafely(lotteryName) {
             val root =
                 DrawJson.parseToJsonElement(rawJson).objectOrNull()
-                    ?: return@parseSafely failure("双色球历史响应不是 JSON 对象")
+                    ?: return@parseSafely failure("${lotteryName}历史响应不是 JSON 对象")
             val isEmptyRange = root.text("message").orEmpty().contains(NO_DATA_MESSAGE)
             // 期号区间内尚无开奖时福彩返回业务失败和“没有查到数据”，按空页处理。
             if (root.int("state") != SUCCESS_STATE && !isEmptyRange) {
-                return@parseSafely failure("双色球历史接口返回业务失败")
+                return@parseSafely failure("${lotteryName}历史接口返回业务失败")
             }
             val metadata =
                 parsePageMetadata(root, expectedPageNo)
-                    ?: return@parseSafely failure("双色球历史响应分页字段不合法")
+                    ?: return@parseSafely failure("${lotteryName}历史响应分页字段不合法")
             if (root.int("state") != SUCCESS_STATE) {
-                return@parseSafely validatePage(metadata.copy(total = 0), emptyList(), "双色球")
+                return@parseSafely validatePage(metadata.copy(total = 0), emptyList(), lotteryName)
             }
             val recordElements =
                 root["result"].arrayOrNull()
-                    ?: return@parseSafely failure("双色球历史响应缺少开奖记录数组")
+                    ?: return@parseSafely failure("${lotteryName}历史响应缺少开奖记录数组")
             if (recordElements.any { it.objectOrNull() == null }) {
-                return@parseSafely failure("双色球历史开奖记录类型发生变化")
+                return@parseSafely failure("${lotteryName}历史开奖记录类型发生变化")
             }
             val draws = mutableListOf<HistoricalDraw>()
             for (element in recordElements) {
-                val record = requireNotNull(element.objectOrNull())
                 val draw =
-                    parseDoubleColorBallRecord(record)
-                        ?: return@parseSafely failure("双色球历史开奖记录字段不合法")
+                    parseRecord(requireNotNull(element.objectOrNull()))
+                        ?: return@parseSafely failure("${lotteryName}历史开奖记录字段不合法")
                 draws += draw
             }
-            validatePage(metadata, draws, "双色球")
+            validatePage(metadata, draws, lotteryName)
         }
 
     /** 解析并校验通用分页字段。 */
@@ -169,6 +188,25 @@ internal object HistoricalDrawSourceAdapter {
             drawDate = drawDate,
             primaryNumbers = primary,
             secondaryNumbers = secondary,
+        )
+    }
+
+    /** 解析一条带正式详情公告的快乐8 开奖。 */
+    private fun parseHappy8Record(record: JsonObject): HistoricalDraw? {
+        if (record.text("name")?.lowercase() !in HAPPY_8_NAMES) return null
+        val issue = record.text("code")?.takeIf(::isValidDoubleColorBallIssue) ?: return null
+        val drawDate = normalizeDrawDate(record.text("date")) ?: return null
+        if (drawDate.take(4) != issue.take(4)) return null
+        val detailsLink = record.text("detailsLink") ?: return null
+        if (!detailsLink.startsWith(OFFICIAL_DETAIL_PATH_PREFIX)) return null
+        val primary = parseNumberArea(record.text("red"), expectedCount = 20, allowedRange = 1..80) ?: return null
+        if (!record.text("blue").isNullOrEmpty()) return null
+        return HistoricalDraw(
+            lotteryType = LotteryType.HAPPY_8,
+            issue = Issue(issue),
+            drawDate = drawDate,
+            primaryNumbers = primary.sorted(),
+            secondaryNumbers = emptyList(),
         )
     }
 
@@ -288,6 +326,9 @@ internal object HistoricalDrawSourceAdapter {
 
     /** 双色球主响应允许的玩法名称。 */
     private val DOUBLE_COLOR_BALL_NAMES = setOf("双色球", "ssq")
+
+    /** 快乐8 主响应允许的玩法名称。 */
+    private val HAPPY_8_NAMES = setOf("快乐8", "kl8")
 
     /** 大乐透号码分隔符。 */
     private val NUMBER_SEPARATOR = Regex("[,\\s]+")

@@ -526,6 +526,7 @@ private fun LotteryType.researchDisplayName(): String =
     when (this) {
         LotteryType.SUPER_LOTTO -> "大乐透"
         LotteryType.DOUBLE_COLOR_BALL -> "双色球"
+        LotteryType.HAPPY_8 -> "快乐8"
     }
 
 /** 将回测指标格式化为三位小数，避免依赖平台专属格式化器。 */

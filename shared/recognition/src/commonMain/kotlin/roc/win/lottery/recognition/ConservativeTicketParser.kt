@@ -44,6 +44,9 @@ class ConservativeTicketParser : TicketParser {
                 is LotteryTypeDetection.Failed -> return TicketParseResult.NeedsCorrection(result.message)
             }
         val lotteryType = lotteryTypeDetection.lotteryType
+        if (lotteryType == LotteryType.HAPPY_8) {
+            return parseHappy8Ticket(rows, lotteryTypeDetection.fieldRegion)
+        }
 
         detectUnsupportedTicket(rows)?.let { message ->
             return TicketParseResult.Unsupported(message)
@@ -118,7 +121,7 @@ class ConservativeTicketParser : TicketParser {
         val additionalExtraction =
             when (lotteryType) {
                 LotteryType.SUPER_LOTTO -> extractSuperLottoAdditional(rows)
-                LotteryType.DOUBLE_COLOR_BALL -> FieldExtraction(value = false, bounds = null)
+                LotteryType.DOUBLE_COLOR_BALL, LotteryType.HAPPY_8 -> FieldExtraction(value = false, bounds = null)
             }
         val isAdditional = additionalExtraction.value
         val hasConflictingMultiplierEvidence =
@@ -288,6 +291,19 @@ class ConservativeTicketParser : TicketParser {
     private fun detectLotteryType(rows: List<VisualRow>): LotteryTypeDetection {
         val superLottoTitleEvidence = extractKeywordEvidence(rows, SUPER_LOTTO_KEYWORD)
         val doubleColorBallTitleEvidence = extractKeywordEvidence(rows, DOUBLE_COLOR_BALL_KEYWORD)
+        val happy8TitleEvidence = extractHappy8TitleEvidence(rows)
+        if (happy8TitleEvidence.isNotEmpty()) {
+            if (superLottoTitleEvidence.isNotEmpty() || doubleColorBallTitleEvidence.isNotEmpty()) {
+                return LotteryTypeDetection.Failed("同时识别到快乐8和其他彩种标题")
+            }
+            return LotteryTypeDetection.Known(
+                lotteryType = LotteryType.HAPPY_8,
+                fieldRegion =
+                    checkNotNull(
+                        buildTightestLocatedFieldRegion(TicketFieldReference.LotteryType, happy8TitleEvidence),
+                    ),
+            )
+        }
         when {
             superLottoTitleEvidence.isNotEmpty() && doubleColorBallTitleEvidence.isNotEmpty() -> {
                 LotteryTypeDetection.Failed("同时识别到大乐透和双色球标题")
@@ -374,7 +390,7 @@ class ConservativeTicketParser : TicketParser {
         rows.forEach { row ->
             val normalized = row.text.normalizedForParsing()
             val matchingTypes =
-                LotteryType.entries.filter { lotteryType ->
+                STRUCTURE_LOTTERY_TYPES.filter { lotteryType ->
                     val spec = BetNumberSpec.forLottery(lotteryType)
                     val split = extractBetNumberSplit(row, spec) ?: return@filter false
                     numbersAreValid(split.primaryNumbers, spec.primaryRange) &&
@@ -418,6 +434,207 @@ class ConservativeTicketParser : TicketParser {
                 )
             }
         }
+
+    /** 提取“快乐8-选…”玩法标题；“快乐8选二选三…”这类广告行不作为彩种证据。 */
+    private fun extractHappy8TitleEvidence(rows: List<VisualRow>): List<LocatedValue<Unit>> =
+        rows.mapNotNull { row ->
+            if (!HAPPY_8_TITLE_REGEX.containsMatchIn(row.text.compactForKeywords())) return@mapNotNull null
+            val fragments = row.fragments.filter { HAPPY_8_TITLE_REGEX.containsMatchIn(it.text.compactForKeywords()) }
+            if (fragments.isEmpty()) {
+                LocatedValue(Unit, row.bounds, row.rawConfidence)
+            } else {
+                LocatedValue(
+                    value = Unit,
+                    bounds = checkNotNull(fragments.map { it.bounds }.coveringBoundsOrNull()),
+                    rawConfidence = fragments.map { it.confidence }.minimumCompleteConfidence(),
+                )
+            }
+        }
+
+    /**
+     * 解析快乐8 单式票。
+     *
+     * 玩法标题“选一”至“选十”给出每注号码个数；“A.”至“E.”开头的文字各为一注，号码按升序保存；行尾括号内为倍数，
+     * 括号常被识别成其他字符，读不到时由合计金额反推倍数，金额不整除时留给人工确认。复式和胆拖需要另存选几，
+     * 当前版本直接阻断。
+     */
+    private fun parseHappy8Ticket(
+        rows: List<VisualRow>,
+        lotteryTypeRegion: TicketFieldRegion,
+    ): TicketParseResult {
+        val titles = rows.map { it.text.compactForKeywords() }.filter(HAPPY_8_TITLE_REGEX::containsMatchIn)
+        if (
+            titles.any { it.contains(COMPOUND_PLAY_KEYWORD) || it.contains(BANKER_PLAY_KEYWORD) } ||
+            rows.any { BANKER_AREA_LABEL_REGEX.containsMatchIn(it.text.compactForKeywords()) }
+        ) {
+            return TicketParseResult.Unsupported("识别到快乐8复式或胆拖票，当前版本只支持快乐8单式")
+        }
+        val pickCounts =
+            titles
+                .mapNotNull { title ->
+                    HAPPY_8_TITLE_REGEX
+                        .find(
+                            title,
+                        )?.groupValues
+                        ?.get(1)
+                        ?.let(CHINESE_PICK_COUNTS::indexOf)
+                        ?.takeIf { it > 0 }
+                }.toSet()
+        val pickCount = pickCounts.singleOrNull()
+
+        val issueCandidates = extractIssueCandidates(rows, LotteryType.HAPPY_8)
+        val paidAmountCandidates = extractPaidAmountCandidates(rows)
+        val distinctIssues = issueCandidates.distinctBy { it.value }
+        val distinctAmounts = paidAmountCandidates.distinctBy { it.value }
+        val candidateRegions =
+            listOf(lotteryTypeRegion) + buildCandidateFieldRegions(issueCandidates, paidAmountCandidates)
+        if (distinctIssues.size > 1 || distinctAmounts.size > 1) {
+            return TicketParseResult.NeedsCorrection(
+                message =
+                    listOfNotNull(
+                        "识别到多个开奖期号，请对照原图明确选择".takeIf { distinctIssues.size > 1 },
+                        "识别到多个票面合计金额，请对照原图明确选择".takeIf { distinctAmounts.size > 1 },
+                    ).joinToString(separator = "；"),
+                fieldRegions = candidateRegions,
+                fieldCandidates =
+                    distinctIssues.takeIf { it.size > 1 }.orEmpty().map { TicketFieldCandidate.Issue(it.value) } +
+                        distinctAmounts.takeIf { it.size > 1 }.orEmpty().map {
+                            TicketFieldCandidate.PaidAmount(
+                                it.value,
+                            )
+                        },
+            )
+        }
+        val issue = distinctIssues.singleOrNull()?.value.orEmpty()
+        val paidAmountFen = distinctAmounts.singleOrNull()?.value
+        val periodCounts = extractExplicitPeriodCounts(rows)
+        val periodCount = periodCounts.map { it.value }.toSet().singleOrNull() ?: V1_PERIOD_COUNT
+        val periodCountConflict = periodCounts.map { it.value }.toSet().size > 1
+
+        val bets = extractHappy8BetRows(rows)
+        val markedMultipliers = bets.multipliers.map { it.value }.toSet()
+        val multiplierRegion = buildLocatedFieldRegion(TicketFieldReference.Multiplier, bets.multipliers)
+        val multiplier =
+            when {
+                markedMultipliers.size == 1 -> markedMultipliers.single()
+                markedMultipliers.isNotEmpty() -> null
+                else -> deriveHappy8Multiplier(bets.lines.size, periodCount, paidAmountFen)
+            }
+        val expectedAmountFen =
+            multiplier?.let {
+                TicketAmountCalculator.calculate(LotteryType.HAPPY_8, bets.lines.size.toLong(), 0L, it, periodCount)
+            }
+        val draft =
+            TicketDraft(
+                lotteryType = LotteryType.HAPPY_8,
+                issue = issue,
+                betLines =
+                    bets.lines.map { line ->
+                        BetLineDraft(
+                            primaryNumbers = line.numbers,
+                            secondaryNumbers = emptyList(),
+                            isAdditional = false,
+                            originalText = line.originalText,
+                        )
+                    },
+                multiplier = multiplier,
+                periodCount = periodCount,
+                paidAmountFen = paidAmountFen,
+            )
+        val fieldRegions =
+            buildList {
+                add(lotteryTypeRegion)
+                candidateRegions.firstOrNull { it.field == TicketFieldReference.Issue }?.let(::add)
+                bets.lines.forEachIndexed { index, line ->
+                    add(TicketFieldRegion(TicketFieldReference.BetLine(index), line.bounds, line.rawConfidence))
+                }
+                multiplierRegion?.let(::add)
+                buildLocatedFieldRegion(TicketFieldReference.PeriodCount, periodCounts)?.let(::add)
+                candidateRegions.firstOrNull { it.field == TicketFieldReference.PaidAmount }?.let(::add)
+            }
+        val expectedCount =
+            pickCount ?: bets.lines
+                .map { it.numbers.size }
+                .distinct()
+                .singleOrNull()
+        val correctionMessages =
+            buildList {
+                if (bets.lines.isEmpty()) add("未识别到快乐8投注号码，请在票面校正页补充")
+                bets.lines.forEachIndexed { index, line ->
+                    val valid =
+                        line.numbers.size in HAPPY_8_PICK_COUNTS &&
+                            line.numbers.all { it in HAPPY_8_NUMBER_RANGE } &&
+                            line.numbers.distinct().size == line.numbers.size
+                    if (!valid || (expectedCount != null && line.numbers.size != expectedCount)) {
+                        add("第 ${index + 1} 注号码不完整或与玩法不符，请对照原图核对")
+                    }
+                }
+                if (bets.lines.isNotEmpty() && expectedCount == null) add("未识别到快乐8玩法，各注号码个数也不一致，请人工核对")
+                if (issue.isEmpty()) add("期号缺失或格式错误，请在票面校正页补充")
+                if (periodCountConflict) add("识别到互相冲突的投注期数，请人工核对")
+                if (multiplier == null) add("投注倍数缺失、存在字符混淆或多个候选值，请明确选择")
+                if (paidAmountFen == null) {
+                    add("票面合计金额缺失或格式错误，请在票面校正页补充")
+                } else if (expectedAmountFen != null && expectedAmountFen != paidAmountFen) {
+                    add("票面金额与投注注数、倍数或期数不一致")
+                }
+            }
+        return if (correctionMessages.isEmpty()) {
+            TicketParseResult.ReadyForReview(draft, fieldRegions)
+        } else {
+            TicketParseResult.NeedsCorrection(
+                message = correctionMessages.distinct().joinToString(separator = "；"),
+                draft = draft,
+                fieldRegions = fieldRegions,
+            )
+        }
+    }
+
+    /**
+     * 提取“A.”至“E.”开头的快乐8 投注号码和行尾括号倍数，也收集单独成框的“(N)”倍数标记。
+     *
+     * 号码在注序字母后连续出现，遇到非两位数字即结束；同一视觉行可能并入相邻的流水号或倍数片段。
+     */
+    private fun extractHappy8BetRows(rows: List<VisualRow>): Happy8BetRows {
+        val lines = mutableListOf<Happy8BetLine>()
+        val multipliers = mutableListOf<LocatedValue<Int>>()
+        rows.forEach { row ->
+            val text = row.text.normalizedForParsing()
+            HAPPY_8_BET_ROW_REGEX.findAll(text).forEach { match ->
+                lines +=
+                    Happy8BetLine(
+                        numbers =
+                            match.groupValues[1]
+                                .split(WHITESPACE_REGEX)
+                                .map(String::toInt)
+                                .sorted(),
+                        originalText = row.text.trim(),
+                        bounds = row.bounds,
+                        rawConfidence = row.rawConfidence,
+                    )
+            }
+            row.fragments.forEach { fragment ->
+                HAPPY_8_MULTIPLIER_MARK_REGEX.findAll(fragment.text.normalizedForParsing()).forEach { mark ->
+                    multipliers +=
+                        LocatedValue(mark.groupValues[1].toInt(), fragment.bounds, fragment.confidence)
+                }
+            }
+        }
+        return Happy8BetRows(lines, multipliers)
+    }
+
+    /** 读不到括号倍数时，由合计金额按每注 2 元反推倍数；不能整除或超出 1 至 99 倍时为 `null`。 */
+    private fun deriveHappy8Multiplier(
+        betCount: Int,
+        periodCount: Int,
+        paidAmountFen: Long?,
+    ): Int? {
+        if (paidAmountFen == null || betCount <= 0 || periodCount <= 0) return null
+        val unitFen =
+            TicketAmountCalculator.calculate(LotteryType.HAPPY_8, betCount.toLong(), 0L, 1, periodCount) ?: return null
+        if (unitFen <= 0L || paidAmountFen % unitFen != 0L) return null
+        return (paidAmountFen / unitFen).takeIf { it in 1L..MAXIMUM_HAPPY_8_MULTIPLIER }?.toInt()
+    }
 
     /** 识别无需继续解析即可确定的不支持票型：胆拖票的玩法标题，或胆码、拖码号码区。 */
     private fun detectUnsupportedTicket(rows: List<VisualRow>): String? {
@@ -471,7 +688,7 @@ class ConservativeTicketParser : TicketParser {
         val regex =
             when (lotteryType) {
                 LotteryType.SUPER_LOTTO -> SUPER_LOTTO_ISSUE_REGEX
-                LotteryType.DOUBLE_COLOR_BALL -> DOUBLE_COLOR_BALL_ISSUE_REGEX
+                LotteryType.DOUBLE_COLOR_BALL, LotteryType.HAPPY_8 -> DOUBLE_COLOR_BALL_ISSUE_REGEX
             }
         val candidates =
             rows
@@ -647,7 +864,11 @@ class ConservativeTicketParser : TicketParser {
         val labelRegex =
             when (lotteryType) {
                 LotteryType.SUPER_LOTTO -> SUPER_LOTTO_AREA_ROW_REGEX
+
                 LotteryType.DOUBLE_COLOR_BALL -> DOUBLE_COLOR_BALL_AREA_ROW_REGEX
+
+                // 快乐8 在 parseHappy8Ticket 中解析，没有号码区标签行。
+                LotteryType.HAPPY_8 -> return emptyList()
             }
         val areaRows = mutableListOf<NumberAreaRow>()
         var index = 0
@@ -1691,6 +1912,32 @@ class ConservativeTicketParser : TicketParser {
         val range: IntRange,
     )
 
+    /**
+     * 一注快乐8 投注号码。
+     *
+     * @property numbers 升序号码。
+     * @property originalText 所在视觉行的 OCR 原文。
+     * @property bounds 所在视觉行在原图中的区域。
+     * @property rawConfidence 所在视觉行的最低原始置信度。
+     */
+    private data class Happy8BetLine(
+        val numbers: List<Int>,
+        val originalText: String,
+        val bounds: NormalizedBounds,
+        val rawConfidence: Float?,
+    )
+
+    /**
+     * 快乐8 票面上的全部投注行与倍数标记。
+     *
+     * @property lines 按票面纵向顺序排列的投注行。
+     * @property multipliers 行尾或单独成框的“(N)”倍数标记。
+     */
+    private data class Happy8BetRows(
+        val lines: List<Happy8BetLine>,
+        val multipliers: List<LocatedValue<Int>>,
+    )
+
     /** 彩票单式号码规格。 */
     private data class BetNumberSpec(
         /** 主号码数量。 */
@@ -1709,6 +1956,7 @@ class ConservativeTicketParser : TicketParser {
                 when (lotteryType) {
                     LotteryType.SUPER_LOTTO -> BetNumberSpec(5, 1..35, 2, 1..12)
                     LotteryType.DOUBLE_COLOR_BALL -> BetNumberSpec(6, 1..33, 1, 1..16)
+                    LotteryType.HAPPY_8 -> throw IllegalArgumentException("快乐8 使用独立解析路径，没有前后区号码规格")
                 }
         }
     }
@@ -1726,6 +1974,34 @@ class ConservativeTicketParser : TicketParser {
 
         /** 大乐透标题关键词。 */
         const val SUPER_LOTTO_KEYWORD = "大乐透"
+
+        /** 可由前后区号码结构推断彩种的彩种；快乐8 只按玩法标题识别。 */
+        val STRUCTURE_LOTTERY_TYPES = listOf(LotteryType.SUPER_LOTTO, LotteryType.DOUBLE_COLOR_BALL)
+
+        /**
+         * 快乐8 玩法标题中的选号个数，如“中彩快乐8-选五单式”，按紧凑文本匹配。
+         *
+         * 必须带连字符或“玩法:”前缀；福彩票底部常见“快乐8选二选三选五…赠票”广告，不能当作标题。
+         */
+        val HAPPY_8_TITLE_REGEX = Regex("(?:快乐8[-－—–]|法[:：]?(?:中彩)?快乐8)选([一二三四五六七八九十])")
+
+        /** 以下标即数值的中文数字，用于把“选五”换算为 5。 */
+        val CHINESE_PICK_COUNTS = listOf("零", "一", "二", "三", "四", "五", "六", "七", "八", "九", "十")
+
+        /** 快乐8 投注行：注序字母、分隔点和连续的两位号码，前面不能紧贴字母或数字，避免误取流水号片段。 */
+        val HAPPY_8_BET_ROW_REGEX = Regex("(?<![A-Za-z0-9])[A-E]\\s*[.,，、．·]\\s*(\\d{2}(?:\\s+\\d{2})*)(?!\\d)")
+
+        /** 快乐8 行尾或单独成框的倍数标记，如“(1)”。 */
+        val HAPPY_8_MULTIPLIER_MARK_REGEX = Regex("[(（]\\s*(\\d{1,2})\\s*[)）]")
+
+        /** 快乐8 选一至选十。 */
+        val HAPPY_8_PICK_COUNTS = 1..10
+
+        /** 快乐8 号码范围。 */
+        val HAPPY_8_NUMBER_RANGE = 1..80
+
+        /** 由金额反推倍数时允许的最大倍数。 */
+        const val MAXIMUM_HAPPY_8_MULTIPLIER = 99L
 
         /** 双色球标题关键词。 */
         const val DOUBLE_COLOR_BALL_KEYWORD = "双色球"

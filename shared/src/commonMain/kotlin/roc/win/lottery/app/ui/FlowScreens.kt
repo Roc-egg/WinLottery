@@ -55,9 +55,11 @@ import roc.win.lottery.app.TicketLineReviewState
 import roc.win.lottery.app.TicketNumberArea
 import roc.win.lottery.app.TicketReviewEvaluation
 import roc.win.lottery.app.TicketReviewState
+import roc.win.lottery.domain.BetCombinations
 import roc.win.lottery.domain.DrawResult
 import roc.win.lottery.domain.IssueSequenceResolver
 import roc.win.lottery.domain.LotteryType
+import roc.win.lottery.domain.PrizeTierCodes
 import roc.win.lottery.domain.TicketFieldOrigin
 import roc.win.lottery.domain.TicketValidationProblem
 import roc.win.lottery.recognition.ImageRef
@@ -261,7 +263,11 @@ fun ReviewScreen(
             if (isManualEntry) {
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    "一组号码可以多选，多于单式数量时按复式展开计算注数和金额。",
+                    if (selectedLotteryType == LotteryType.HAPPY_8) {
+                        "快乐8 每注选 1 至 10 个号码，个数即玩法（选一至选十），同一张票各注个数相同；暂不支持复式和胆拖。"
+                    } else {
+                        "一组号码可以多选，多于单式数量时按复式展开计算注数和金额。"
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -523,6 +529,7 @@ private fun TicketLineEditor(
                 title = spec.primaryName,
                 selectedNumbers = line.primaryNumbers.value,
                 expectedCount = spec.primaryCount,
+                maxCount = spec.primaryMaxCount,
                 range = spec.primaryRange,
                 selectedColor = MaterialTheme.colorScheme.primary,
                 onToggle = { number -> onNumberToggle(lineIndex, TicketNumberArea.PRIMARY, number) },
@@ -530,14 +537,17 @@ private fun TicketLineEditor(
             problems.firstMessageFor("betLines[$lineIndex].primaryNumbers")?.let { message ->
                 FieldProblem(message)
             }
-            NumberAreaEditor(
-                title = spec.secondaryName,
-                selectedNumbers = line.secondaryNumbers.value,
-                expectedCount = spec.secondaryCount,
-                range = spec.secondaryRange,
-                selectedColor = MaterialTheme.colorScheme.secondary,
-                onToggle = { number -> onNumberToggle(lineIndex, TicketNumberArea.SECONDARY, number) },
-            )
+            if (spec.hasSecondaryArea) {
+                NumberAreaEditor(
+                    title = spec.secondaryName,
+                    selectedNumbers = line.secondaryNumbers.value,
+                    expectedCount = spec.secondaryCount,
+                    maxCount = spec.secondaryRange.count(),
+                    range = spec.secondaryRange,
+                    selectedColor = MaterialTheme.colorScheme.secondary,
+                    onToggle = { number -> onNumberToggle(lineIndex, TicketNumberArea.SECONDARY, number) },
+                )
+            }
             problems.firstMessageFor("betLines[$lineIndex].secondaryNumbers")?.let { message ->
                 FieldProblem(message)
             }
@@ -566,17 +576,26 @@ private fun SelectedNumbersLine(
     primaryColor: Color,
     secondaryColor: Color,
 ) {
-    val primarySlots = primaryNumbers.sorted() + List(maxOf(0, spec.primaryCount - primaryNumbers.size)) { null }
+    // 快乐8 不设单式数量，没有号码时用一个占位提示尚未选择；复式或快乐8 号码多于占位数时不再补占位。
+    val minimumPrimarySlots = if (spec.hasSecondaryArea) spec.primaryCount else 1
+    val primarySlots =
+        primaryNumbers.sorted() + List(maxOf(0, minimumPrimarySlots - primaryNumbers.size)) { null }
     val secondarySlots =
         secondaryNumbers.sorted() + List(maxOf(0, spec.secondaryCount - secondaryNumbers.size)) { null }
+    val primaryDescription = "已选${spec.primaryName} ${primaryNumbers.sorted().joinToString("、") { it.twoDigitText() }}"
     val description =
-        "已选${spec.primaryName} ${primaryNumbers.sorted().joinToString("、") { it.twoDigitText() }}，" +
-            "${spec.secondaryName} ${secondaryNumbers.sorted().joinToString("、") { it.twoDigitText() }}"
+        if (spec.hasSecondaryArea) {
+            "$primaryDescription，${spec.secondaryName} ${secondaryNumbers.sorted().joinToString(
+                "、",
+            ) { it.twoDigitText() }}"
+        } else {
+            primaryDescription
+        }
     BoxWithConstraints(
         modifier = Modifier.fillMaxWidth().clearAndSetSemantics { contentDescription = description },
     ) {
         // 加号分隔符占用一个号码位，全部号码位与间距合计不超过当前宽度。
-        val slotCount = primarySlots.size + secondarySlots.size + 1
+        val slotCount = primarySlots.size + if (spec.hasSecondaryArea) secondarySlots.size + 1 else 0
         val ballSize =
             ((maxWidth - SELECTED_LINE_SPACING * (slotCount - 1)) / slotCount)
                 .coerceIn(SELECTED_LINE_MIN_BALL_SIZE, SELECTED_LINE_MAX_BALL_SIZE)
@@ -585,14 +604,16 @@ private fun SelectedNumbersLine(
             verticalArrangement = Arrangement.spacedBy(SELECTED_LINE_SPACING),
         ) {
             primarySlots.forEach { number -> SelectedNumberBall(number, ballSize, primaryColor) }
-            Box(modifier = Modifier.size(ballSize), contentAlignment = Alignment.Center) {
-                Text(
-                    "+",
-                    style = MaterialTheme.typography.titleMedium,
-                    textAlign = TextAlign.Center,
-                )
+            if (spec.hasSecondaryArea) {
+                Box(modifier = Modifier.size(ballSize), contentAlignment = Alignment.Center) {
+                    Text(
+                        "+",
+                        style = MaterialTheme.typography.titleMedium,
+                        textAlign = TextAlign.Center,
+                    )
+                }
+                secondarySlots.forEach { number -> SelectedNumberBall(number, ballSize, secondaryColor) }
             }
-            secondarySlots.forEach { number -> SelectedNumberBall(number, ballSize, secondaryColor) }
         }
     }
 }
@@ -633,16 +654,27 @@ private fun NumberAreaEditor(
     title: String,
     selectedNumbers: List<Int>,
     expectedCount: Int,
+    maxCount: Int,
     range: IntRange,
     selectedColor: Color,
     onToggle: (Int) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
-            if (selectedNumbers.size > expectedCount) {
-                "$title（已选 ${selectedNumbers.size} 个，复式）"
-            } else {
-                "$title（已选 ${selectedNumbers.size}/$expectedCount）"
+            when {
+                // 快乐8 不设单式数量，号码个数即玩法。
+                expectedCount == 0 -> {
+                    val play = PrizeTierCodes.happy8PlayName(selectedNumbers.size)?.let { "，$it" }.orEmpty()
+                    "$title（已选 ${selectedNumbers.size}/$maxCount$play）"
+                }
+
+                selectedNumbers.size > expectedCount -> {
+                    "$title（已选 ${selectedNumbers.size} 个，复式）"
+                }
+
+                else -> {
+                    "$title（已选 ${selectedNumbers.size}/$expectedCount）"
+                }
             },
             style = MaterialTheme.typography.bodyMedium,
         )
@@ -667,7 +699,7 @@ private fun NumberAreaEditor(
                                 number = number,
                                 size = ballSize,
                                 selected = selected,
-                                enabled = selected || (number in range && selectedNumbers.size < expectedCount),
+                                enabled = selected || (number in range && selectedNumbers.size < maxCount),
                                 selectedColor = selectedColor,
                                 onToggle = { onToggle(number) },
                             )
@@ -1208,6 +1240,7 @@ private fun LotteryType?.displayName(): String =
     when (this) {
         LotteryType.SUPER_LOTTO -> "超级大乐透"
         LotteryType.DOUBLE_COLOR_BALL -> "双色球"
+        LotteryType.HAPPY_8 -> "快乐8"
         null -> "待确认"
     }
 
@@ -1255,31 +1288,41 @@ private fun TicketLineReviewState.displayOrigin(): TicketFieldOrigin =
  * 号码球编辑器使用的玩法规格。
  *
  * @property primaryName 主号码区域名称。
- * @property primaryCount 主号码数量。
+ * @property primaryCount 主号码单式数量；快乐8 为 0，号码个数即玩法。
  * @property primaryRange 主号码范围。
+ * @property primaryMaxCount 一组最多可选的主号码个数；复式最多选满整个号码范围，快乐8 最多选十。
  * @property secondaryName 次号码区域名称。
- * @property secondaryCount 次号码数量。
+ * @property secondaryCount 次号码单式数量；没有次号码区时为 0。
  * @property secondaryRange 次号码范围。
  */
 private data class LotteryNumberSpec(
     val primaryName: String,
     val primaryCount: Int,
     val primaryRange: IntRange,
+    val primaryMaxCount: Int,
     val secondaryName: String,
     val secondaryCount: Int,
     val secondaryRange: IntRange,
 ) {
+    /** 是否有次号码区；快乐8 只有一个号码区。 */
+    val hasSecondaryArea: Boolean
+        get() = secondaryCount > 0
+
     /** 创建当前玩法的单式号码规格，复式在此基础上多选。 */
     companion object {
         /** 返回当前玩法的号码规格。 */
         fun forLottery(lotteryType: LotteryType): LotteryNumberSpec =
             when (lotteryType) {
                 LotteryType.DOUBLE_COLOR_BALL -> {
-                    LotteryNumberSpec("红球", 6, 1..33, "蓝球", 1, 1..16)
+                    LotteryNumberSpec("红球", 6, 1..33, 33, "蓝球", 1, 1..16)
                 }
 
                 LotteryType.SUPER_LOTTO -> {
-                    LotteryNumberSpec("前区", 5, 1..35, "后区", 2, 1..12)
+                    LotteryNumberSpec("前区", 5, 1..35, 35, "后区", 2, 1..12)
+                }
+
+                LotteryType.HAPPY_8 -> {
+                    LotteryNumberSpec("号码", 0, 1..80, BetCombinations.HAPPY_8_PICK_COUNTS.last, "", 0, IntRange.EMPTY)
                 }
             }
     }
@@ -1293,8 +1336,9 @@ private const val MAX_MULTIPLIER = 99
 
 /** 关于页展示的 V1 已支持票面范围。 */
 internal const val V1_SUPPORTED_TICKET_SCOPE_TEXT =
-    "单张电脑打印的超级大乐透或双色球彩票；支持 1 至 20 期受控连续投注、补打票、单式、多注单式、复式、倍数及大乐透追加。"
+    "单张电脑打印的超级大乐透、双色球或快乐8 彩票；支持 1 至 20 期受控连续投注、补打票、单式、多注单式、倍数及大乐透追加，" +
+        "大乐透和双色球另支持复式。"
 
 /** 关于页展示的 V1 未支持票面范围。 */
 internal const val V1_UNSUPPORTED_TICKET_SCOPE_TEXT =
-    "不支持胆拖、超过 20 期、跨年度未知期次、手写票、电子截图或未知票面版式。"
+    "不支持胆拖、快乐8 复式、超过 20 期、跨年度未知期次、手写票、电子截图或未知票面版式。"

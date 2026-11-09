@@ -117,6 +117,16 @@ internal fun testHistoricalDraw(
                 secondaryNumbers = listOf(ordinal % 16 + 1),
             )
         }
+
+        LotteryType.HAPPY_8 -> {
+            HistoricalDraw(
+                lotteryType = lotteryType,
+                issue = Issue("2026${ordinal.toString().padStart(3, '0')}"),
+                drawDate = date,
+                primaryNumbers = (0 until 20).map { offset -> (ordinal + shift + offset * 4) % 80 + 1 }.sorted(),
+                secondaryNumbers = emptyList(),
+            )
+        }
     }
 }
 

@@ -22,11 +22,14 @@ data class LotteryTrendAreaSpec(
     val drawnNumberCount: Int,
 )
 
+/** 走势、数学研究和 AI 分析支持的彩种；快乐8 只支持票据识别与开奖核对。 */
+val TREND_LOTTERY_TYPES: List<LotteryType> = listOf(LotteryType.SUPER_LOTTO, LotteryType.DOUBLE_COLOR_BALL)
+
 /**
  * 返回彩种对应的号码区域规则。
  *
  * @param area 需要展示的号码区域。
- * @return 与正式彩票规则一致的区域规格。
+ * @return 与正式彩票规则一致的区域规格；快乐8 每期开出 20 个号码，没有次号码区。
  */
 fun LotteryType.trendAreaSpec(area: LotteryTrendArea): LotteryTrendAreaSpec =
     when (this) {
@@ -50,6 +53,18 @@ fun LotteryType.trendAreaSpec(area: LotteryTrendArea): LotteryTrendAreaSpec =
 
                 LotteryTrendArea.SECONDARY -> {
                     LotteryTrendAreaSpec(area, numberRange = 1..16, drawnNumberCount = 1)
+                }
+            }
+        }
+
+        LotteryType.HAPPY_8 -> {
+            when (area) {
+                LotteryTrendArea.PRIMARY -> {
+                    LotteryTrendAreaSpec(area, numberRange = 1..80, drawnNumberCount = 20)
+                }
+
+                LotteryTrendArea.SECONDARY -> {
+                    LotteryTrendAreaSpec(area, numberRange = IntRange.EMPTY, drawnNumberCount = 0)
                 }
             }
         }
@@ -481,7 +496,7 @@ class LotteryTrendCalculator {
     private fun expectedIssueLength(lotteryType: LotteryType): Int =
         when (lotteryType) {
             LotteryType.SUPER_LOTTO -> SUPER_LOTTO_ISSUE_LENGTH
-            LotteryType.DOUBLE_COLOR_BALL -> DOUBLE_COLOR_BALL_ISSUE_LENGTH
+            LotteryType.DOUBLE_COLOR_BALL, LotteryType.HAPPY_8 -> DOUBLE_COLOR_BALL_ISSUE_LENGTH
         }
 
     /** 判断期号是否满足固定长度、全数字和非零期次要求。 */

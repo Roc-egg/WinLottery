@@ -380,6 +380,26 @@ V1 仅对 `2026014` 期及以后输出中奖或未中奖；更早期号统一返
 - 固化人工构造、经过最小化的同结构契约夹具和公告摘要用于离线测试，不把福彩原始响应提交 Git。线上 smoke test 不阻断每次 CI。
 - 测试空列表、HTTP 200 业务失败、类型漂移、未知奖级、不可解析奖金、数据修订和网络超时。
 
+## 11. 快乐8 开奖接口与规则
+
+核查日期：2026-11-09，决策见 ADR-035。
+
+快乐8 与双色球共用福彩网接口，只是玩法名为 `kl8`：
+
+```http
+GET https://www.cwl.gov.cn/cwl_admin/front/cwlkj/search/kjxx/findDrawNotice
+    ?name=kl8&issueStart=2026294&issueEnd=2026294&pageNo=1&pageSize=1&systemType=PC
+
+GET https://www.cwl.gov.cn/cwl_admin/front/cwlkj/search/kjxx/findKjxx/forIssue
+    ?name=kl8&code=2026294
+```
+
+- `red` 为 20 个开奖号码（1 至 80，升序），`blue` 为空；`kjhyjsx` 为开出顺序，不参与计奖。
+- `prizegrades` 列出 39 个奖级，`type` 为 `x{选几}z{中几}`，`typenum` 为注数，`typemoney` 为单注奖金（元，可带一位或两位小数，如选一中一 `4.5`）。
+- 中奖矩阵：选十中 10/9/8/7/6/5/0，选九中 9/8/7/6/5/4/0，选八中 8/7/6/5/4/0，选七中 7/6/5/4/0，选六中 6/5/4/3，选五中 5/4/3，选四中 4/3/2，选三中 3/2，选二中 2，选一中 1。2024001、2025001、2026001 期奖级结构一致；2026 年起部分金额调整，计奖一律使用当期公布值。
+- 单式一注 2 元；本版不支持快乐8 复式和胆拖。
+- `addmoney`、`addmoney2`、`z2add`、`m2add`、`msg` 任一非空视为存在未建模的活动金额，只确认号码与中奖奖级，金额待定。
+
 ## 10. 数据源替换路径
 
 未来增加自有服务器时，仅替换 `DrawRepository` 的远端实现：
