@@ -1,6 +1,5 @@
 package roc.win.lottery.app.ui
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -11,31 +10,25 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -45,6 +38,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
@@ -55,6 +49,7 @@ import roc.win.lottery.app.AppScreen
 import roc.win.lottery.app.MainDestination
 import roc.win.lottery.app.TicketRecordFilter
 import roc.win.lottery.app.filterTicketRecords
+import roc.win.lottery.app.theme.LotteryThemeTokens
 import roc.win.lottery.domain.LotteryType
 import roc.win.lottery.domain.betCount
 import roc.win.lottery.persistence.MAX_TICKET_RECORD_NAME_LENGTH
@@ -137,27 +132,37 @@ fun TicketRecordsScreen(
         scrollableContent = false,
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
-            Box(modifier = Modifier.fillMaxWidth().height(4.dp)) {
+            Box(modifier = Modifier.fillMaxWidth().height(3.dp)) {
                 if (isLoading || screen.isOperationInProgress) {
-                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(4.dp))
+                    LinearProgressIndicator(
+                        modifier = Modifier.fillMaxWidth().height(3.dp).clip(CircleShape),
+                        trackColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    )
                 }
             }
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(8.dp))
             OutlinedTextField(
                 value = screen.searchQuery,
                 onValueChange = onSearchChange,
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text("名称或起始期号") },
+                placeholder = { Text("名称或起始期号") },
                 enabled = controlsEnabled,
                 singleLine = true,
+                shape = CircleShape,
+                colors = lotteryTextFieldColors(),
                 leadingIcon = {
-                    Icon(LotteryIcons.Search, contentDescription = null)
+                    Icon(
+                        LotteryIcons.Search,
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 },
                 trailingIcon =
                     if (screen.searchQuery.isNotEmpty()) {
                         {
                             IconButton(onClick = { onSearchChange("") }) {
-                                Icon(LotteryIcons.Clear, contentDescription = "清除搜索")
+                                Icon(LotteryIcons.Clear, contentDescription = "清除搜索", modifier = Modifier.size(20.dp))
                             }
                         }
                     } else {
@@ -167,41 +172,25 @@ fun TicketRecordsScreen(
                 keyboardActions = KeyboardActions(onSearch = { focusManager.clearFocus() }),
             )
             Spacer(Modifier.height(12.dp))
-            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                TicketRecordFilter.entries.forEachIndexed { index, filter ->
-                    SegmentedButton(
-                        selected = screen.filter == filter,
-                        onClick = { onFilterChange(filter) },
-                        enabled = controlsEnabled,
-                        shape = SegmentedButtonDefaults.itemShape(index, TicketRecordFilter.entries.size),
-                        label = { Text(filter.displayName()) },
-                    )
-                }
-            }
+            SegmentedControl(
+                options = TicketRecordFilter.entries,
+                selected = screen.filter,
+                label = { it.displayName() },
+                onSelect = onFilterChange,
+                enabled = controlsEnabled,
+            )
             val errorMessage = loadError ?: screen.operationError
             if (errorMessage != null) {
                 Spacer(Modifier.height(12.dp))
-                Text(
-                    errorMessage,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.error,
-                )
+                Notice(message = errorMessage, tone = NoticeTone.ERROR)
             }
             screen.operationNotice?.let { notice ->
                 Spacer(Modifier.height(12.dp))
-                Text(
-                    notice,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.secondary,
-                )
+                Notice(message = notice, tone = NoticeTone.SUCCESS)
             }
             if (!isLoading && loadError == null) {
-                Spacer(Modifier.height(16.dp))
-                Text(
-                    "${visibleRecords.size} 条记录",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                Spacer(Modifier.height(18.dp))
+                FieldLabel("${visibleRecords.size} 条记录")
             }
             Spacer(Modifier.height(8.dp))
             LazyColumn(
@@ -242,11 +231,27 @@ fun TicketRecordsScreen(
                                 modifier = Modifier.fillParentMaxHeight().fillMaxWidth(),
                                 contentAlignment = Alignment.Center,
                             ) {
-                                Text(
-                                    if (records.isEmpty()) "暂无本机记录" else "没有符合条件的记录",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    IconTile(
+                                        icon = LotteryIcons.TicketChecked,
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        container = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                        size = 64.dp,
+                                    )
+                                    Spacer(Modifier.height(16.dp))
+                                    Text(
+                                        if (records.isEmpty()) "暂无本机记录" else "没有符合条件的记录",
+                                        style = MaterialTheme.typography.titleMedium,
+                                    )
+                                    if (records.isEmpty()) {
+                                        Spacer(Modifier.height(4.dp))
+                                        Text(
+                                            "核对过的彩票会以结构化信息保存在这里",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
@@ -348,15 +353,17 @@ private fun TicketRecordManagementMenu(
     onRequestClear: () -> Unit,
 ) {
     Box {
-        IconButton(
+        CircleIconButton(
+            icon = LotteryIcons.More,
+            contentDescription = "记录管理",
             onClick = { onExpandedChange(true) },
             enabled = enabled && (supportsFileExchange || canClear),
-        ) {
-            Icon(LotteryIcons.More, contentDescription = "记录管理")
-        }
+        )
         DropdownMenu(
             expanded = expanded,
             onDismissRequest = { onExpandedChange(false) },
+            shape = MaterialTheme.shapes.medium,
+            containerColor = MaterialTheme.colorScheme.surface,
         ) {
             if (supportsFileExchange) {
                 DropdownMenuItem(
@@ -379,7 +386,7 @@ private fun TicketRecordManagementMenu(
                         Icon(LotteryIcons.ExportFile, contentDescription = null)
                     },
                 )
-                HorizontalDivider()
+                HairlineDivider()
             }
             DropdownMenuItem(
                 text = { Text("清空全部", color = MaterialTheme.colorScheme.error) },
@@ -409,61 +416,91 @@ private fun TicketRecordItem(
     onQuery: () -> Unit,
     enabled: Boolean,
 ) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.small,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        color = MaterialTheme.colorScheme.surface,
-    ) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.Top,
-            ) {
+    val lotteryType = record.ticket.lotteryType.value
+    val (accent, accentContainer) =
+        when (lotteryType) {
+            LotteryType.SUPER_LOTTO -> {
+                MaterialTheme.colorScheme.primary to MaterialTheme.colorScheme.primaryContainer
+            }
+
+            LotteryType.DOUBLE_COLOR_BALL -> {
+                MaterialTheme.colorScheme.secondary to MaterialTheme.colorScheme.secondaryContainer
+            }
+
+            LotteryType.HAPPY_8 -> {
+                LotteryThemeTokens.colors.warning to LotteryThemeTokens.colors.warningContainer
+            }
+        }
+    LotteryCard(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            IconTile(icon = LotteryIcons.TicketChecked, tint = accent, container = accentContainer)
+            Spacer(Modifier.width(14.dp))
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
                     record.displayName,
-                    modifier = Modifier.weight(1f),
                     style = MaterialTheme.typography.titleMedium,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
-                Spacer(Modifier.width(8.dp))
-                IconButton(onClick = onRename, enabled = enabled) {
-                    Icon(LotteryIcons.Edit, contentDescription = "重命名记录")
-                }
-                IconButton(onClick = onDelete, enabled = enabled) {
-                    Icon(LotteryIcons.Delete, contentDescription = "删除记录")
-                }
+                Text(
+                    "${lotteryType.displayName()} · ${record.ticket.issue.value.value}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
+            Spacer(Modifier.width(12.dp))
             Text(
-                "${record.ticket.lotteryType.value.displayName()} · ${record.ticket.issue.value.value}",
-                style = MaterialTheme.typography.bodyLarge,
+                record.ticket.paidAmountFen.value
+                    .toYuanText(),
+                style = MaterialTheme.typography.titleMedium,
             )
-            Text(
-                "${record.ticket.periodCount.value} 期 · " +
-                    "${record.ticket.multiplier.value} 倍 · " +
-                    "${record.ticket.betLines.sumOf { it.betCount(record.ticket.lotteryType.value) }} 注 · " +
-                    record.ticket.paidAmountFen.value
-                        .toYuanText(),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            StatusTag("${record.ticket.periodCount.value} 期")
+            StatusTag("${record.ticket.multiplier.value} 倍")
+            StatusTag("${record.ticket.betLines.sumOf { it.betCount(lotteryType) }} 注")
+            Spacer(Modifier.weight(1f))
             Text(
                 "${record.acquisitionSource.displayName()} · ${record.createdAtEpochMillis.toLocalTimeText()}",
-                style = MaterialTheme.typography.bodyMedium,
+                style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
             )
-            Spacer(Modifier.height(4.dp))
-            Button(
+        }
+        HairlineDivider()
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            PrimaryActionButton(
+                text = "查询开奖",
                 onClick = onQuery,
                 enabled = enabled,
-                modifier = Modifier.fillMaxWidth().height(48.dp),
-                shape = MaterialTheme.shapes.small,
-            ) {
-                Icon(LotteryIcons.Search, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text("查询开奖")
-            }
+                icon = LotteryIcons.Search,
+                modifier = Modifier.weight(1f).heightIn(max = 44.dp),
+                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+            )
+            CircleIconButton(
+                icon = LotteryIcons.Edit,
+                contentDescription = "重命名记录",
+                onClick = onRename,
+                enabled = enabled,
+                modifier = Modifier.size(44.dp),
+            )
+            CircleIconButton(
+                icon = LotteryIcons.Delete,
+                contentDescription = "删除记录",
+                onClick = onDelete,
+                enabled = enabled,
+                modifier = Modifier.size(44.dp),
+                tint = MaterialTheme.colorScheme.error,
+            )
         }
     }
 }
@@ -495,6 +532,7 @@ private fun RenameTicketRecordDialog(
     val canConfirm = problem == null && normalized != currentName
     AlertDialog(
         onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surface,
         title = { Text("重命名记录") },
         text = {
             OutlinedTextField(
@@ -534,6 +572,7 @@ private fun TicketRecordConfirmationDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surface,
         title = { Text(title) },
         text = { Text(message) },
         confirmButton = {
@@ -572,6 +611,7 @@ private fun TicketRecordImportDialog(
     val hasConflicts = preview.conflicts.isNotEmpty()
     AlertDialog(
         onDismissRequest = { if (!isImporting) onDismiss() },
+        containerColor = MaterialTheme.colorScheme.surface,
         title = {
             Text(if (hasConflicts) "发现记录冲突" else "导入记录")
         },

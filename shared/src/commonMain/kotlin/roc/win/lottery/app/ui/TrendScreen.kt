@@ -10,18 +10,20 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
-import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -32,9 +34,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.PlainTooltip
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TooltipBox
@@ -52,6 +51,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.backhandler.BackHandler
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
@@ -150,13 +150,25 @@ fun TrendScreen(
             actions = {
                 // 基本走势的刷新入口在工具栏中，全屏时也能使用。
                 if (!isBasic) TrendRefreshButton(chart) { onAction(TrendChartAction.Refresh) }
-                TextButton(onClick = {
-                    onAction(
-                        TrendChartAction.ChangeView(
-                            if (isBasic) TrendWorkspaceView.MATHEMATICAL_RESEARCH else TrendWorkspaceView.BASIC_TREND,
+                TextButton(
+                    onClick = {
+                        onAction(
+                            TrendChartAction.ChangeView(
+                                if (isBasic) {
+                                    TrendWorkspaceView.MATHEMATICAL_RESEARCH
+                                } else {
+                                    TrendWorkspaceView.BASIC_TREND
+                                },
+                            ),
+                        )
+                    },
+                    shape = CircleShape,
+                    colors =
+                        ButtonDefaults.textButtonColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
                         ),
-                    )
-                }) { Text(if (isBasic) "数学研究" else "基本走势") }
+                ) { Text(if (isBasic) "数学研究" else "基本走势", style = MaterialTheme.typography.labelLarge) }
             },
         ) {
             if (!isBasic) {
@@ -204,7 +216,7 @@ fun TrendScreen(
                             )
                         }
                     }
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    HairlineDivider()
                     if (snapshot == null) {
                         TrendLoadStatus(Modifier.weight(1f), chart.content) { onAction(TrendChartAction.Retry) }
                     } else {
@@ -329,7 +341,9 @@ private fun TrendToolbar(
     Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
         Box {
             TrendToolButton(LotteryIcons.Navigation, "走势导航") { navigationOpen = true }
-            DropdownMenu(navigationOpen, { navigationOpen = false }) {
+            DropdownMenu(navigationOpen, {
+                navigationOpen = false
+            }, shape = MaterialTheme.shapes.medium, containerColor = MaterialTheme.colorScheme.surface) {
                 DropdownMenuItem(text = { Text("数学研究") }, leadingIcon = { Icon(LotteryIcons.Trends, null) }, onClick = {
                     navigationOpen = false
                     onAction(TrendChartAction.ChangeView(TrendWorkspaceView.MATHEMATICAL_RESEARCH))
@@ -411,17 +425,28 @@ private fun <T> TrendChoiceMenu(
     Box {
         TextButton(
             onClick = { open = true },
-            contentPadding = PaddingValues(horizontal = 8.dp),
+            contentPadding = PaddingValues(start = 12.dp, end = 8.dp),
+            shape = CircleShape,
+            colors =
+                ButtonDefaults.textButtonColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    contentColor = MaterialTheme.colorScheme.onSurface,
+                ),
             modifier =
-                Modifier.semantics {
-                    contentDescription =
-                        description
-                },
+                Modifier
+                    .padding(horizontal = 3.dp)
+                    .height(32.dp)
+                    .semantics {
+                        contentDescription =
+                            description
+                    },
         ) {
             Text(label, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
             Icon(LotteryIcons.Expand, null, Modifier.padding(start = 2.dp).size(14.dp))
         }
-        DropdownMenu(open, { open = false }) {
+        DropdownMenu(open, {
+            open = false
+        }, shape = MaterialTheme.shapes.medium, containerColor = MaterialTheme.colorScheme.surface) {
             options.forEach { option ->
                 DropdownMenuItem(text = { Text(text(option)) }, trailingIcon = {
                     if (option ==
@@ -457,18 +482,21 @@ internal fun TrendTab(
                 label,
                 fontSize = 13.sp,
                 fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                color =
+                    if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .height(
-                    2.dp,
-                ).background(if (selected) MaterialTheme.colorScheme.primary else Color.Transparent),
-        )
+        Box(Modifier.fillMaxWidth().height(3.dp), contentAlignment = Alignment.Center) {
+            Box(
+                Modifier
+                    .width(22.dp)
+                    .fillMaxHeight()
+                    .clip(CircleShape)
+                    .background(if (selected) MaterialTheme.colorScheme.primary else Color.Transparent),
+            )
+        }
     }
 }
 
@@ -503,7 +531,9 @@ private fun TrendDisplayMenu(
     var open by remember { mutableStateOf(false) }
     Box {
         TrendToolButton(LotteryIcons.DisplaySettings, "走势显示设置") { open = true }
-        DropdownMenu(open, { open = false }) {
+        DropdownMenu(open, {
+            open = false
+        }, shape = MaterialTheme.shapes.medium, containerColor = MaterialTheme.colorScheme.surface) {
             TrendCheckboxOption("紧凑显示", compact, onCompact)
             if (view == TrendDataView.NUMBERS) {
                 TrendCheckboxOption("显示遗漏", omissions, onOmissions)
@@ -537,7 +567,7 @@ private fun TrendSelectionBar(
 ) {
     val snapshot = requireNotNull(chart.snapshot)
     val statistic = snapshot.statistics.firstOrNull { it.number == selectedNumber }
-    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+    HairlineDivider()
     Row(Modifier.fillMaxWidth().height(44.dp), verticalAlignment = Alignment.CenterVertically) {
         Row(
             Modifier.weight(1f).horizontalScroll(rememberScrollState()).padding(start = 10.dp),
@@ -597,11 +627,12 @@ private fun TrendLoadStatus(
             if (content is TrendChartContent.Failed) {
                 Text("历史开奖暂时不可用", color = MaterialTheme.colorScheme.error)
                 Text(content.message, textAlign = TextAlign.Center, style = MaterialTheme.typography.bodyMedium)
-                Button(onRetry) {
-                    Icon(LotteryIcons.Refresh, null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("重试")
-                }
+                PrimaryActionButton(
+                    text = "重试",
+                    onClick = onRetry,
+                    icon = LotteryIcons.Refresh,
+                    modifier = Modifier.widthIn(max = 240.dp),
+                )
             } else {
                 CircularProgressIndicator(Modifier.size(32.dp))
                 Text("正在加载官方历史开奖", style = MaterialTheme.typography.bodyMedium)
@@ -622,6 +653,7 @@ private fun TrendSourceDialog(
     val smallUpperBound = spec.numberRange.last / 2
     AlertDialog(
         onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surface,
         title = { Text("数据与统计口径") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -738,16 +770,13 @@ internal fun LotteryTypeTrendSelector(
     selected: LotteryType,
     onSelected: (LotteryType) -> Unit,
 ) {
-    SingleChoiceSegmentedButtonRow(modifier) {
-        TREND_LOTTERY_TYPES.forEachIndexed { index, type ->
-            SegmentedButton(
-                selected = selected == type,
-                onClick = { onSelected(type) },
-                shape = SegmentedButtonDefaults.itemShape(index, TREND_LOTTERY_TYPES.size),
-                label = { Text(type.trendDisplayName()) },
-            )
-        }
-    }
+    SegmentedControl(
+        options = TREND_LOTTERY_TYPES,
+        selected = selected,
+        label = { it.trendDisplayName() },
+        onSelect = onSelected,
+        modifier = modifier,
+    )
 }
 
 /** 返回区域对应的高对比命中颜色。 */
@@ -756,9 +785,9 @@ internal fun trendHitColor(
     area: LotteryTrendArea,
 ): Color =
     when {
-        lotteryType == LotteryType.DOUBLE_COLOR_BALL && area == LotteryTrendArea.PRIMARY -> Color(0xFFC83C3C)
-        lotteryType == LotteryType.SUPER_LOTTO && area == LotteryTrendArea.SECONDARY -> Color(0xFFAC7600)
-        else -> Color(0xFF2875B7)
+        lotteryType == LotteryType.DOUBLE_COLOR_BALL && area == LotteryTrendArea.PRIMARY -> Color(0xFFE0313D)
+        lotteryType == LotteryType.SUPER_LOTTO && area == LotteryTrendArea.SECONDARY -> Color(0xFFB07400)
+        else -> Color(0xFF2B6CDF)
     }
 
 /** 命中球统一使用白色文字，深黄色后区也保持足够对比度。 */

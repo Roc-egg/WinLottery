@@ -14,22 +14,22 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
@@ -106,15 +106,9 @@ private fun ResearchLotteryControl(
     onLotteryTypeSelected: (LotteryType) -> Unit,
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+        modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            "彩种",
-            modifier = Modifier.width(44.dp),
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
         LotteryTypeTrendSelector(
             modifier = Modifier.weight(1f),
             selected = lotteryType,
@@ -131,7 +125,11 @@ private fun ResearchLoadStatus(
 ) {
     Box(modifier = modifier, contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            CircularProgressIndicator(modifier = Modifier.size(if (isLandscape) 28.dp else 40.dp))
+            CircularProgressIndicator(
+                modifier = Modifier.size(if (isLandscape) 28.dp else 40.dp),
+                strokeWidth = 3.dp,
+                trackColor = MaterialTheme.colorScheme.primaryContainer,
+            )
             Spacer(Modifier.height(12.dp))
             Text("正在计算数学研究", style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(6.dp))
@@ -170,7 +168,12 @@ private fun ResearchFailureStatus(
                 textAlign = TextAlign.Center,
             )
             Spacer(Modifier.height(18.dp))
-            Button(onClick = onRetry, shape = MaterialTheme.shapes.small) { Text("重试") }
+            PrimaryActionButton(
+                text = "重试",
+                onClick = onRetry,
+                icon = LotteryIcons.Refresh,
+                modifier = Modifier.widthIn(max = 240.dp),
+            )
         }
     }
 }
@@ -190,17 +193,17 @@ private fun ResearchReadyContent(
     LazyColumn(
         modifier = modifier,
         state = listState,
-        contentPadding = PaddingValues(bottom = 24.dp),
+        contentPadding = PaddingValues(bottom = 32.dp),
     ) {
         item(key = "research-status") {
             ResearchProtocolStatus(analysis = analysis, sourceName = sourceName)
-            Spacer(Modifier.height(if (isLandscape) 10.dp else 16.dp))
+            Spacer(Modifier.height(12.dp))
         }
         item(key = "research-results") {
             if (isLandscape) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(24.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalAlignment = Alignment.Top,
                 ) {
                     ResearchCandidateSection(
@@ -220,16 +223,14 @@ private fun ResearchReadyContent(
                         analysis = analysis,
                         isLandscape = false,
                     )
-                    Spacer(Modifier.height(18.dp))
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                    Spacer(Modifier.height(18.dp))
+                    Spacer(Modifier.height(12.dp))
                     ResearchBacktestSection(
                         modifier = Modifier.fillMaxWidth(),
                         analysis = analysis,
                     )
                 }
             }
-            Spacer(Modifier.height(18.dp))
+            Spacer(Modifier.height(12.dp))
             ResearchResponsibilityNotice()
         }
     }
@@ -242,31 +243,37 @@ private fun ResearchProtocolStatus(
     sourceName: String,
 ) {
     val candidate = analysis.candidate
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f),
-    ) {
-        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
-            Text(
-                "${candidate.strategyName} · v${candidate.strategyVersion}",
-                style = MaterialTheme.typography.titleMedium,
+    LotteryCard(verticalArrangement = Arrangement.Top) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconTile(
+                icon = LotteryIcons.Trends,
+                tint = MaterialTheme.colorScheme.secondary,
+                container = MaterialTheme.colorScheme.secondaryContainer,
+                size = 40.dp,
             )
-            Text(
-                "固定窗口 ${candidate.trainingWindowSize} 期 · " +
-                    "${candidate.trainingFirstIssue.value} 至 ${candidate.trainingLastIssue.value}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Text(
-                "策略标识：${candidate.strategyId}",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Text(
-                "官方历史开奖 · $sourceName · 仅在本机计算",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            Spacer(Modifier.width(14.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "${candidate.strategyName} · v${candidate.strategyVersion}",
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                Text(
+                    "固定窗口 ${candidate.trainingWindowSize} 期 · " +
+                        "${candidate.trainingFirstIssue.value} 至 ${candidate.trainingLastIssue.value}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    "策略标识：${candidate.strategyId}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    "官方历史开奖 · $sourceName · 仅在本机计算",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
     }
 }
@@ -280,11 +287,12 @@ private fun ResearchCandidateSection(
 ) {
     val candidate = analysis.candidate
     val line = candidate.line
-    Column(
+    LotteryCard(
         modifier =
             modifier.semantics {
                 contentDescription = candidateDescription(candidate.lotteryType, line)
             },
+        verticalArrangement = Arrangement.Top,
     ) {
         Text("下一期候选", style = MaterialTheme.typography.titleLarge)
         Spacer(Modifier.height(4.dp))
@@ -322,11 +330,7 @@ private fun ResearchNumberArea(
     ballSize: Dp,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
-        Text(
-            label,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        FieldLabel(label)
         Row(
             modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -335,34 +339,53 @@ private fun ResearchNumberArea(
                 ResearchNumberBall(
                     number = number,
                     size = ballSize,
-                    background = trendHitColor(lotteryType, area),
-                    foreground = trendHitContentColor(lotteryType, area),
+                    lotteryType = lotteryType,
+                    area = area,
                 )
             }
         }
     }
 }
 
-/** 绘制固定尺寸且不受辅助字号挤压的两位候选号码球。 */
+/**
+ * 绘制固定尺寸且不受辅助字号挤压的两位候选号码球。
+ *
+ * 颜色与走势矩阵的区域色一致：双色球红球用红球，大乐透后区用琥珀色，其余区域用蓝球。
+ */
 @Composable
 private fun ResearchNumberBall(
     number: Int,
     size: Dp,
-    background: Color,
-    foreground: Color,
+    lotteryType: LotteryType,
+    area: LotteryTrendArea,
 ) {
-    Surface(
-        modifier = Modifier.size(size),
-        shape = CircleShape,
-        color = background,
-        contentColor = foreground,
-    ) {
-        Box(contentAlignment = Alignment.Center) {
-            Text(
-                number.toString().padStart(2, '0'),
-                style = researchBallTextStyle(),
-                maxLines = 1,
-            )
+    val text = number.toString().padStart(2, '0')
+    when {
+        lotteryType == LotteryType.DOUBLE_COLOR_BALL && area == LotteryTrendArea.PRIMARY -> {
+            LotteryBall(text = text, style = BallStyle.RED, size = size, fontSize = researchBallTextStyle().fontSize)
+        }
+
+        lotteryType == LotteryType.SUPER_LOTTO && area == LotteryTrendArea.SECONDARY -> {
+            val accent = trendHitColor(lotteryType, area)
+            Box(
+                modifier =
+                    Modifier
+                        .size(size)
+                        .clip(CircleShape)
+                        .background(Brush.linearGradient(listOf(accent.copy(alpha = 0.82f), accent))),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text,
+                    style = researchBallTextStyle(),
+                    color = trendHitContentColor(lotteryType, area),
+                    maxLines = 1,
+                )
+            }
+        }
+
+        else -> {
+            LotteryBall(text = text, style = BallStyle.BLUE, size = size, fontSize = researchBallTextStyle().fontSize)
         }
     }
 }
@@ -386,7 +409,7 @@ private fun ResearchBacktestSection(
     analysis: LotteryPredictionAnalysis,
 ) {
     val backtest = analysis.backtest
-    Column(modifier = modifier) {
+    LotteryCard(modifier = modifier, verticalArrangement = Arrangement.Top) {
         Text("时间前推回测", style = MaterialTheme.typography.titleLarge)
         Spacer(Modifier.height(4.dp))
         Text(
@@ -430,8 +453,9 @@ private fun ResearchBacktestAreaRow(
         modifier =
             Modifier
                 .fillMaxWidth()
-                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.34f))
-                .padding(horizontal = 10.dp, vertical = 9.dp)
+                .clip(MaterialTheme.shapes.medium)
+                .background(MaterialTheme.colorScheme.surfaceContainer)
+                .padding(horizontal = 14.dp, vertical = 12.dp)
                 .semantics {
                     contentDescription =
                         "$areaName，策略平均命中 ${result.averageMatches.toResearchDecimal()}，" +
@@ -484,30 +508,17 @@ private fun ResearchMetric(
 /** 持续展示样本结论和不可用于购彩决策的责任边界。 */
 @Composable
 private fun ResearchResponsibilityNotice() {
-    Surface(
+    Notice(
+        title = "当前前推样本尚未证明稳定优于均匀随机",
+        message = "历史排序不会改变下一期各号码概率，仅供娱乐和研究，不构成购彩建议。",
+        tone = NoticeTone.WARNING,
         modifier =
-            Modifier
-                .fillMaxWidth()
-                .semantics {
-                    contentDescription =
-                        "当前前推样本尚未证明稳定优于均匀随机。" +
-                        "历史排序不会改变下一期各号码概率，仅供娱乐和研究，不构成购彩建议。"
-                },
-        color = MaterialTheme.colorScheme.surfaceVariant,
-    ) {
-        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
-            Text(
-                "当前前推样本尚未证明稳定优于均匀随机",
-                style = MaterialTheme.typography.titleSmall,
-            )
-            Spacer(Modifier.height(4.dp))
-            Text(
-                "历史排序不会改变下一期各号码概率，仅供娱乐和研究，不构成购彩建议。",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-    }
+            Modifier.clearAndSetSemantics {
+                contentDescription =
+                    "当前前推样本尚未证明稳定优于均匀随机。" +
+                    "历史排序不会改变下一期各号码概率，仅供娱乐和研究，不构成购彩建议。"
+            },
+    )
 }
 
 /** 返回候选号码的完整无障碍摘要。 */

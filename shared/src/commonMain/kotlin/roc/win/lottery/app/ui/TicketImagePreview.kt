@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -94,11 +93,11 @@ internal fun TicketImagePreview(
     var selectedField by remember(regions) { mutableStateOf<TicketFieldReference?>(null) }
     val selectedRegion = regions.firstOrNull { it.field == selectedField }
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("票面原图", style = MaterialTheme.typography.titleLarge)
+        SectionHeader(title = "票面原图", subtitle = "点按下方字段可在原图中定位")
         Surface(
             modifier = Modifier.fillMaxWidth().height(PREVIEW_HEIGHT),
-            shape = MaterialTheme.shapes.small,
-            color = MaterialTheme.colorScheme.surfaceVariant,
+            shape = MaterialTheme.shapes.large,
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
         ) {
             when (state) {
                 TicketPreviewState.Loading -> {
@@ -133,16 +132,16 @@ internal fun TicketImagePreview(
                 modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                FilterChip(
+                ChoicePill(
                     selected = selectedField == null,
                     onClick = { selectedField = null },
-                    label = { Text("整票") },
+                    label = "整票",
                 )
                 regions.forEach { region ->
-                    FilterChip(
+                    ChoicePill(
                         selected = selectedField == region.field,
                         onClick = { selectedField = region.field },
-                        label = { Text(region.field.displayName()) },
+                        label = region.field.displayName(),
                     )
                 }
             }

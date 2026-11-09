@@ -9,28 +9,35 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
+import androidx.compose.material3.NavigationRailItemDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.VerticalDivider
@@ -41,14 +48,24 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import roc.win.lottery.app.MainDestination
+import roc.win.lottery.app.theme.LotteryThemeTokens
 
 /** 宽度达到该阈值时，一级导航从底栏切换为侧栏。 */
 private val WIDE_NAVIGATION_THRESHOLD = 840.dp
@@ -138,7 +155,7 @@ fun AppShell(
                                 destinations = availableMainDestinations,
                                 onDestinationSelected = onMainDestinationSelected,
                             )
-                            VerticalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                            VerticalDivider(color = LotteryThemeTokens.colors.hairline)
                             AppShellBody(
                                 modifier = Modifier.weight(1f),
                                 title = title,
@@ -149,7 +166,7 @@ fun AppShell(
                                 onAction = onAction,
                                 actions = actions,
                                 scrollableContent = scrollableContent,
-                                horizontalPadding = 32.dp,
+                                horizontalPadding = 40.dp,
                                 content = content,
                             )
                         }
@@ -213,13 +230,13 @@ private fun CompactMainAppShellBody(
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
-            modifier = Modifier.fillMaxWidth().height(48.dp).padding(horizontal = 8.dp),
+            modifier = Modifier.fillMaxWidth().height(52.dp).padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
                 text = title,
                 modifier = Modifier.padding(end = 8.dp),
-                style = MaterialTheme.typography.titleMedium,
+                style = MaterialTheme.typography.titleLarge,
             )
             Row(
                 modifier = Modifier.weight(1f),
@@ -227,26 +244,41 @@ private fun CompactMainAppShellBody(
                 verticalAlignment = Alignment.CenterVertically,
                 content = actions,
             )
-            destinations.forEach { destination ->
-                val isSelected = destination == selectedDestination
-                IconButton(
-                    onClick = { onDestinationSelected(destination) },
-                    modifier = Modifier.semantics { selected = isSelected },
-                ) {
-                    Icon(
-                        imageVector = destination.icon(),
-                        contentDescription = destination.label(),
-                        tint =
-                            if (isSelected) {
-                                MaterialTheme.colorScheme.primary
-                            } else {
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                            },
-                    )
+            Row(
+                modifier =
+                    Modifier
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                        .padding(2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                destinations.forEach { destination ->
+                    val isSelected = destination == selectedDestination
+                    IconButton(
+                        onClick = { onDestinationSelected(destination) },
+                        modifier = Modifier.size(40.dp).semantics { selected = isSelected },
+                        colors =
+                            IconButtonDefaults.iconButtonColors(
+                                containerColor =
+                                    if (isSelected) MaterialTheme.colorScheme.surfaceBright else Color.Transparent,
+                                contentColor =
+                                    if (isSelected) {
+                                        MaterialTheme.colorScheme.primary
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    },
+                            ),
+                    ) {
+                        Icon(
+                            imageVector = destination.icon(),
+                            contentDescription = destination.label(),
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
                 }
             }
         }
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        HairlineDivider()
         Box(
             modifier =
                 Modifier
@@ -272,6 +304,7 @@ private fun CompactMainAppShellBody(
 /**
  * 绘制除一级导航之外的顶部栏和正文。
  *
+ * 一级页面使用左对齐大标题，次级流程使用圆形返回按钮和居中标题；正文滚动离开顶部后才显示极细分隔线。
  * 只有正文内容区避让输入法；[bottomNavigationHeight] 是正文下方底部导航的高度，键盘先遮住底部导航，
  * 再遮住正文，因此正文只需让出超过底部导航的那部分键盘高度。
  */
@@ -290,35 +323,60 @@ private fun AppShellBody(
     bottomNavigationHeight: Dp = 0.dp,
     content: @Composable () -> Unit,
 ) {
+    val scrollState = rememberScrollState()
+    val showsDivider = scrollableContent && scrollState.value > 0
+    val trailing: @Composable RowScope.() -> Unit = {
+        actions()
+        actionIcon?.let { icon ->
+            CircleIconButton(icon = icon, contentDescription = actionDescription, onClick = onAction)
+        }
+    }
     Column(modifier = modifier) {
-        Row(
-            modifier = Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Box(modifier = Modifier.widthIn(min = 48.dp), contentAlignment = Alignment.CenterStart) {
-                navigationIcon?.let { icon ->
-                    IconButton(onClick = onNavigate) {
-                        Icon(icon, contentDescription = "返回")
-                    }
-                }
+        if (navigationIcon == null) {
+            Row(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .height(64.dp)
+                        .padding(start = horizontalPadding, end = horizontalPadding - 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = title,
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.headlineMedium,
+                    maxLines = 1,
+                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    content = trailing,
+                )
             }
-            Text(
-                text = title,
-                modifier = Modifier.weight(1f),
-                style = MaterialTheme.typography.titleLarge,
-            )
-            Box(modifier = Modifier.widthIn(min = 48.dp), contentAlignment = Alignment.CenterEnd) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    actions()
-                    actionIcon?.let { icon ->
-                        IconButton(onClick = onAction) {
-                            Icon(icon, contentDescription = actionDescription)
-                        }
-                    }
+        } else {
+            Box(
+                modifier = Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 12.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = title,
+                    modifier = Modifier.padding(horizontal = 96.dp),
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1,
+                    textAlign = TextAlign.Center,
+                )
+                Box(modifier = Modifier.align(Alignment.CenterStart)) {
+                    CircleIconButton(icon = navigationIcon, contentDescription = "返回", onClick = onNavigate)
                 }
+                Row(
+                    modifier = Modifier.align(Alignment.CenterEnd),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    content = trailing,
+                )
             }
         }
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        HairlineDivider(Modifier.alpha(if (showsDivider) 1f else 0f))
         Box(
             modifier =
                 Modifier
@@ -335,13 +393,13 @@ private fun AppShellBody(
                         Modifier
                             .widthIn(max = MAX_CONTENT_WIDTH)
                             .fillMaxWidth()
-                            .verticalScroll(rememberScrollState())
+                            .verticalScroll(scrollState)
                             .padding(horizontal = horizontalPadding),
                     verticalArrangement = Arrangement.Top,
                 ) {
-                    Spacer(Modifier.height(24.dp))
+                    Spacer(Modifier.height(if (navigationIcon == null) 4.dp else 12.dp))
                     content()
-                    Spacer(Modifier.height(32.dp))
+                    Spacer(Modifier.height(40.dp))
                 }
             } else {
                 Box(
@@ -358,7 +416,7 @@ private fun AppShellBody(
     }
 }
 
-/** 绘制移动宽度的底部一级导航。 */
+/** 绘制移动宽度的底部一级导航：白色底栏、顶部极细线和品牌浅色胶囊指示器。 */
 @Composable
 private fun MainNavigationBar(
     modifier: Modifier,
@@ -366,21 +424,55 @@ private fun MainNavigationBar(
     destinations: List<MainDestination>,
     onDestinationSelected: (MainDestination) -> Unit,
 ) {
-    NavigationBar(modifier = modifier, containerColor = MaterialTheme.colorScheme.surface) {
-        destinations.forEach { destination ->
-            NavigationBarItem(
-                selected = destination == selectedDestination,
-                onClick = { onDestinationSelected(destination) },
-                icon = {
-                    Icon(destination.icon(), contentDescription = destination.label())
-                },
-                label = { Text(destination.label()) },
-            )
+    // 外壳已让出系统导航区，这里把白色底栏延伸进手势条区域，避免底部露出页面灰底。
+    val bottomInset = WindowInsets.navigationBars.getBottom(LocalDensity.current).toFloat()
+    val barColor = MaterialTheme.colorScheme.surface
+    Column(
+        modifier =
+            modifier.drawBehind {
+                if (bottomInset > 0f) {
+                    drawRect(barColor, topLeft = Offset(0f, size.height), size = Size(size.width, bottomInset))
+                }
+            },
+    ) {
+        HairlineDivider()
+        NavigationBar(
+            containerColor = MaterialTheme.colorScheme.surface,
+            tonalElevation = 0.dp,
+            windowInsets = WindowInsets(0, 0, 0, 0),
+            modifier = Modifier.height(68.dp),
+        ) {
+            destinations.forEach { destination ->
+                NavigationBarItem(
+                    selected = destination == selectedDestination,
+                    onClick = { onDestinationSelected(destination) },
+                    icon = {
+                        Icon(
+                            destination.icon(),
+                            contentDescription = destination.label(),
+                            modifier = Modifier.size(22.dp),
+                        )
+                    },
+                    label = { Text(destination.label(), style = MaterialTheme.typography.labelMedium) },
+                    colors = navigationItemColors(),
+                )
+            }
         }
     }
 }
 
-/** 绘制宽屏的侧边一级导航。 */
+/** 底部导航项的统一配色。 */
+@Composable
+private fun navigationItemColors() =
+    NavigationBarItemDefaults.colors(
+        selectedIconColor = MaterialTheme.colorScheme.primary,
+        selectedTextColor = MaterialTheme.colorScheme.primary,
+        indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+        unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+        unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+
+/** 绘制宽屏的侧边一级导航，顶部展示品牌标识。 */
 @Composable
 private fun MainNavigationRail(
     selectedDestination: MainDestination,
@@ -388,35 +480,69 @@ private fun MainNavigationRail(
     onDestinationSelected: (MainDestination) -> Unit,
 ) {
     NavigationRail(
-        modifier = Modifier.fillMaxHeight(),
+        modifier = Modifier.fillMaxHeight().width(88.dp),
         containerColor = MaterialTheme.colorScheme.surface,
+        windowInsets = WindowInsets(0, 0, 0, 0),
         header = {
             Column(
-                modifier = Modifier.padding(top = 16.dp, bottom = 20.dp),
+                modifier = Modifier.padding(top = 20.dp, bottom = 28.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Icon(
-                    LotteryIcons.Verification,
-                    contentDescription = null,
-                    modifier = Modifier.size(26.dp),
-                    tint = MaterialTheme.colorScheme.primary,
-                )
-                Text("给我中", style = MaterialTheme.typography.labelMedium)
+                BrandMark(size = 40.dp)
+                Text("给我中", style = MaterialTheme.typography.labelLarge)
             }
         },
     ) {
-        destinations.forEach { destination ->
-            NavigationRailItem(
-                selected = destination == selectedDestination,
-                onClick = { onDestinationSelected(destination) },
-                icon = {
-                    Icon(destination.icon(), contentDescription = destination.label())
-                },
-                label = { Text(destination.label()) },
-                alwaysShowLabel = true,
-            )
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            destinations.forEach { destination ->
+                NavigationRailItem(
+                    selected = destination == selectedDestination,
+                    onClick = { onDestinationSelected(destination) },
+                    icon = {
+                        Icon(
+                            destination.icon(),
+                            contentDescription = destination.label(),
+                            modifier = Modifier.size(22.dp),
+                        )
+                    },
+                    label = { Text(destination.label(), style = MaterialTheme.typography.labelMedium) },
+                    alwaysShowLabel = true,
+                    colors =
+                        NavigationRailItemDefaults.colors(
+                            selectedIconColor = MaterialTheme.colorScheme.primary,
+                            selectedTextColor = MaterialTheme.colorScheme.primary,
+                            indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+                            unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                            unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        ),
+                )
+            }
         }
+    }
+}
+
+/**
+ * 品牌标识：红色渐变圆角方块中的“中”字。
+ *
+ * @param size 标识边长。
+ */
+@Composable
+internal fun BrandMark(size: Dp) {
+    val colors = LotteryThemeTokens.colors
+    Box(
+        modifier =
+            Modifier
+                .size(size)
+                .clip(RoundedCornerShape(size * 0.28f))
+                .background(Brush.linearGradient(listOf(colors.heroStart, colors.heroEnd))),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            "中",
+            style = MaterialTheme.typography.titleLarge.copy(fontSize = (size.value * 0.5f).sp),
+            color = Color.White,
+        )
     }
 }
 

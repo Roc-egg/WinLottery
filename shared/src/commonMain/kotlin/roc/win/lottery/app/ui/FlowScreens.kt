@@ -1,12 +1,14 @@
 package roc.win.lottery.app.ui
 
-import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -14,23 +16,19 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -40,7 +38,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -55,6 +54,7 @@ import roc.win.lottery.app.TicketLineReviewState
 import roc.win.lottery.app.TicketNumberArea
 import roc.win.lottery.app.TicketReviewEvaluation
 import roc.win.lottery.app.TicketReviewState
+import roc.win.lottery.app.theme.LotteryThemeTokens
 import roc.win.lottery.domain.BetCombinations
 import roc.win.lottery.domain.DrawResult
 import roc.win.lottery.domain.IssueSequenceResolver
@@ -79,23 +79,70 @@ fun AnalysisScreen(
         navigationIcon = LotteryIcons.Back,
         onNavigate = onCancel,
     ) {
-        Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-            Spacer(Modifier.height(48.dp))
-            CircularProgressIndicator()
-            Spacer(Modifier.height(28.dp))
-            Text(title, style = MaterialTheme.typography.headlineMedium)
-            Spacer(Modifier.height(10.dp))
-            Text(detail, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        ProgressStage(icon = LotteryIcons.Scan, title = title, detail = detail) {
             Spacer(Modifier.height(28.dp))
             LinearProgressIndicator(
                 progress = { progress.coerceIn(0f, 1f) },
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().height(6.dp).clip(CircleShape),
+                trackColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                drawStopIndicator = {},
+                gapSize = 0.dp,
+            )
+            Spacer(Modifier.height(10.dp))
+            Text(
+                "${(progress.coerceIn(0f, 1f) * 100).toInt()}%",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.height(32.dp))
-            OutlinedButton(onClick = onCancel, shape = MaterialTheme.shapes.small) {
-                Text("取消")
-            }
+            SecondaryActionButton(text = "取消", onClick = onCancel, modifier = Modifier.widthIn(max = 220.dp))
         }
+    }
+}
+
+/**
+ * 进度类页面的居中舞台：带光晕的图标、标题、说明和附加内容。
+ *
+ * @param icon 主图标。
+ * @param title 阶段标题。
+ * @param detail 阶段说明。
+ * @param content 说明下方的附加内容。
+ */
+@Composable
+private fun ProgressStage(
+    icon: ImageVector,
+    title: String,
+    detail: String,
+    content: @Composable ColumnScope.() -> Unit = {},
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(top = 56.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Box(
+                Modifier
+                    .size(120.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)),
+            )
+            CircularProgressIndicator(
+                modifier = Modifier.size(96.dp),
+                strokeWidth = 3.dp,
+                trackColor = MaterialTheme.colorScheme.primaryContainer,
+            )
+            IconTile(icon = icon, size = 64.dp, container = MaterialTheme.colorScheme.surface)
+        }
+        Spacer(Modifier.height(28.dp))
+        Text(title, style = MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center)
+        Spacer(Modifier.height(8.dp))
+        Text(
+            detail,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+        )
+        content()
     }
 }
 
@@ -165,114 +212,102 @@ fun ReviewScreen(
         onNavigate = onBack,
     ) {
         if (isDemo) {
-            StatusBanner(
-                when {
-                    isImageAssistedManualEntry -> {
-                        "本地 OCR 未能安全形成完整草稿：$manualEntryReason。以下字段保持空白，请对照原图逐项录入。"
-                    }
+            Notice(
+                message =
+                    when {
+                        isImageAssistedManualEntry -> {
+                            "本地 OCR 未能安全形成完整草稿：$manualEntryReason。以下字段保持空白，请对照原图逐项录入。"
+                        }
 
-                    isManualEntry && usesRealDrawData -> {
-                        "手动录入会绕过 OCR；确认后会精确查询该期官网数据并在本机测算。当前仍是预览验证版。"
-                    }
+                        isManualEntry && usesRealDrawData -> {
+                            "手动录入会绕过 OCR；确认后会精确查询该期官网数据并在本机测算。当前仍是预览验证版。"
+                        }
 
-                    usesRealRecognition && usesRealDrawData -> {
-                        "票面来自本地 OCR；确认后会精确查询该期官网数据并在本机测算。当前仍是预览验证版。"
-                    }
+                        usesRealRecognition && usesRealDrawData -> {
+                            "票面来自本地 OCR；确认后会精确查询该期官网数据并在本机测算。当前仍是预览验证版。"
+                        }
 
-                    usesRealRecognition -> {
-                        "票面来自本地 OCR，可逐项校正；继续后仍使用固定演示开奖数据，不用于真实中奖判断。"
-                    }
+                        usesRealRecognition -> {
+                            "票面来自本地 OCR，可逐项校正；继续后仍使用固定演示开奖数据，不用于真实中奖判断。"
+                        }
 
-                    else -> {
-                        "以下字段来自固定演示票据，用于验证人工校正和确认流程。"
-                    }
-                },
+                        else -> {
+                            "以下字段来自固定演示票据，用于验证人工校正和确认流程。"
+                        }
+                    },
             )
-            Spacer(Modifier.height(20.dp))
+            Spacer(Modifier.height(16.dp))
         }
         saveError?.let { message ->
-            StorageErrorBanner(message)
-            Spacer(Modifier.height(20.dp))
+            Notice(message = message, tone = NoticeTone.ERROR)
+            Spacer(Modifier.height(16.dp))
         }
         previewState?.let { state ->
             TicketImagePreview(state = state, fieldRegions = fieldRegions)
-            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(SectionSpacing))
         }
-        Text("请逐项核对", style = MaterialTheme.typography.headlineMedium)
-        Spacer(Modifier.height(8.dp))
-        Text(
-            "关键字段未经确认，不会查询开奖或输出中奖结论。",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(Modifier.height(24.dp))
-        Text("彩种", style = MaterialTheme.typography.titleMedium)
-        Spacer(Modifier.height(8.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            LotteryType.entries.forEach { lotteryType ->
-                FilterChip(
-                    selected = editor.lotteryType.value == lotteryType,
-                    onClick = { onLotteryTypeChange(lotteryType) },
-                    label = { Text(lotteryType.displayName()) },
-                )
+        SectionHeader(title = "请逐项核对", subtitle = "关键字段未经确认，不会查询开奖或输出中奖结论。")
+        Spacer(Modifier.height(SectionTitleSpacing))
+        LotteryCard(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            FieldLabel("彩种")
+            SegmentedControl<LotteryType?>(
+                options = LotteryType.entries,
+                selected = editor.lotteryType.value,
+                label = { it.displayName() },
+                onSelect = { lotteryType -> lotteryType?.let(onLotteryTypeChange) },
+            )
+            evaluation.problems.firstMessageFor("lotteryType")?.let { message ->
+                FieldProblem(message)
             }
-        }
-        evaluation.problems.firstMessageFor("lotteryType")?.let { message ->
-            FieldProblem(message)
-        }
-        Spacer(Modifier.height(18.dp))
-        OutlinedTextField(
-            value = editor.issue.value,
-            onValueChange = onIssueChange,
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text("开奖期号") },
-            singleLine = true,
-            isError = evaluation.problems.hasField("issue"),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Done),
-            keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() }),
-            trailingIcon = {
-                IconButton(onClick = { focusManager.clearFocus() }) {
-                    Icon(LotteryIcons.Done, contentDescription = "完成期号输入")
-                }
-            },
-        )
-        CandidateChoiceRow(
-            title = "识别到多个期号，请按原图选择",
-            values = fieldCandidates.filterIsInstance<TicketFieldCandidate.Issue>().map { it.value },
-            selectedValue = editor.issue.value,
-            onSelect = onIssueChange,
-        )
-        evaluation.problems.firstMessageFor("issue")?.let { message ->
-            FieldProblem(message)
+            Spacer(Modifier.height(4.dp))
+            OutlinedTextField(
+                value = editor.issue.value,
+                onValueChange = onIssueChange,
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("开奖期号") },
+                singleLine = true,
+                isError = evaluation.problems.hasField("issue"),
+                shape = MaterialTheme.shapes.medium,
+                colors = lotteryTextFieldColors(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() }),
+                trailingIcon = {
+                    IconButton(onClick = { focusManager.clearFocus() }) {
+                        Icon(LotteryIcons.Done, contentDescription = "完成期号输入", modifier = Modifier.size(20.dp))
+                    }
+                },
+            )
+            CandidateChoiceRow(
+                title = "识别到多个期号，请按原图选择",
+                values = fieldCandidates.filterIsInstance<TicketFieldCandidate.Issue>().map { it.value },
+                selectedValue = editor.issue.value,
+                onSelect = onIssueChange,
+            )
+            evaluation.problems.firstMessageFor("issue")?.let { message ->
+                FieldProblem(message)
+            }
         }
         val selectedLotteryType = editor.lotteryType.value
         if (selectedLotteryType != null) {
             val hasCompound = editor.betLines.any { it.isCompound(selectedLotteryType) }
-            Spacer(Modifier.height(24.dp))
-            Text(
-                if (hasCompound) {
-                    "投注号码（共 ${editor.betLines.size} 组 · ${editor.betCount} 注）"
-                } else {
-                    "投注号码（共 ${editor.betLines.size} 注）"
-                },
-                style = MaterialTheme.typography.titleLarge,
-            )
-            if (isManualEntry) {
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    if (selectedLotteryType == LotteryType.HAPPY_8) {
+            Spacer(Modifier.height(SectionSpacing))
+            SectionHeader(
+                title =
+                    if (hasCompound) {
+                        "投注号码（共 ${editor.betLines.size} 组 · ${editor.betCount} 注）"
+                    } else {
+                        "投注号码（共 ${editor.betLines.size} 注）"
+                    },
+                subtitle =
+                    if (!isManualEntry) {
+                        null
+                    } else if (selectedLotteryType == LotteryType.HAPPY_8) {
                         "快乐8 每注选 1 至 10 个号码，个数即玩法（选一至选十），同一张票各注个数相同；暂不支持复式和胆拖。"
                     } else {
                         "一组号码可以多选，多于单式数量时按复式展开计算注数和金额。"
                     },
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Spacer(Modifier.height(12.dp))
+            )
+            Spacer(Modifier.height(SectionTitleSpacing))
             editor.betLines.forEachIndexed { index, line ->
                 val removeAction: (() -> Unit)? =
                     if (isManualEntry) {
@@ -300,130 +335,127 @@ fun ReviewScreen(
                     onRemove = removeAction,
                     onNumberToggle = onNumberToggle,
                 )
-                Spacer(Modifier.height(10.dp))
+                Spacer(Modifier.height(12.dp))
             }
             if (isManualEntry) {
-                OutlinedButton(
-                    onClick = onAddBetLine,
-                    modifier = Modifier.fillMaxWidth().height(48.dp),
-                    shape = MaterialTheme.shapes.small,
-                ) {
-                    Icon(LotteryIcons.Plus, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("添加一注")
-                }
+                SecondaryActionButton(text = "添加一注", onClick = onAddBetLine, icon = LotteryIcons.Plus)
             }
         }
-        Spacer(Modifier.height(14.dp))
-        Text("投注属性", style = MaterialTheme.typography.titleLarge)
-        Spacer(Modifier.height(12.dp))
-        MultiplierEditor(
-            multiplier = editor.multiplier.value,
-            onMultiplierChange = onMultiplierChange,
-        )
-        evaluation.problems.firstMessageFor("multiplier")?.let { message ->
-            FieldProblem(message)
-        }
-        Spacer(Modifier.height(12.dp))
-        if (editor.lotteryType.value == LotteryType.SUPER_LOTTO) {
-            SettingRow(
-                title = "追加投注",
-                detail =
-                    when (editor.isAdditional) {
-                        true -> "每注增加 1 元"
-                        false -> "基本投注"
-                        null -> "待确认"
-                    },
-            ) {
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    FilterChip(
-                        selected = editor.isAdditional == false,
-                        onClick = { onAdditionalChange(false) },
-                        label = { Text("基本") },
-                    )
-                    FilterChip(
-                        selected = editor.isAdditional == true,
-                        onClick = { onAdditionalChange(true) },
-                        label = { Text("追加") },
-                    )
-                }
-            }
-            evaluation.problems.firstMessageFor("isAdditional")?.let { message ->
+        Spacer(Modifier.height(SectionSpacing))
+        SectionHeader(title = "投注属性")
+        Spacer(Modifier.height(SectionTitleSpacing))
+        LotteryCard(
+            contentPadding = PaddingValues(horizontal = 18.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.Top,
+        ) {
+            MultiplierEditor(
+                multiplier = editor.multiplier.value,
+                onMultiplierChange = onMultiplierChange,
+            )
+            evaluation.problems.firstMessageFor("multiplier")?.let { message ->
                 FieldProblem(message)
             }
-            Spacer(Modifier.height(12.dp))
-        }
-        PeriodCountEditor(
-            periodCount = editor.periodCount.value,
-            onPeriodCountChange = onPeriodCountChange,
-        )
-        evaluation.problems.firstMessageFor("periodCount")?.let { message ->
-            FieldProblem(message)
-        }
-        Spacer(Modifier.height(18.dp))
-        Text("票面金额", style = MaterialTheme.typography.titleLarge)
-        Spacer(Modifier.height(12.dp))
-        OutlinedTextField(
-            value = editor.paidAmountYuan.value,
-            onValueChange = onPaidAmountChange,
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text("合计金额") },
-            suffix = { Text("元") },
-            singleLine = true,
-            isError = evaluation.problems.hasField("paidAmountFen"),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Done),
-            keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() }),
-            trailingIcon = {
-                IconButton(onClick = { focusManager.clearFocus() }) {
-                    Icon(LotteryIcons.Done, contentDescription = "完成金额输入")
+            if (editor.lotteryType.value == LotteryType.SUPER_LOTTO) {
+                HairlineDivider()
+                SettingRow(
+                    title = "追加投注",
+                    detail =
+                        when (editor.isAdditional) {
+                            true -> "每注增加 1 元"
+                            false -> "基本投注"
+                            null -> "待确认"
+                        },
+                ) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        ChoicePill(
+                            selected = editor.isAdditional == false,
+                            onClick = { onAdditionalChange(false) },
+                            label = "基本",
+                        )
+                        ChoicePill(
+                            selected = editor.isAdditional == true,
+                            onClick = { onAdditionalChange(true) },
+                            label = "追加",
+                        )
+                    }
                 }
-            },
-        )
-        CandidateChoiceRow(
-            title = "识别到多个合计金额，请按原图选择",
-            values =
-                fieldCandidates
-                    .filterIsInstance<TicketFieldCandidate.PaidAmount>()
-                    .map { it.valueFen.toYuanInput() },
-            selectedValue = editor.paidAmountYuan.value,
-            valueSuffix = " 元",
-            onSelect = onPaidAmountChange,
-        )
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                "按当前投注计算：${editor.calculatedAmountFen.toYuanText()}",
-                modifier = Modifier.weight(1f),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                evaluation.problems.firstMessageFor("isAdditional")?.let { message ->
+                    FieldProblem(message)
+                }
+            }
+            HairlineDivider()
+            PeriodCountEditor(
+                periodCount = editor.periodCount.value,
+                onPeriodCountChange = onPeriodCountChange,
             )
-            Spacer(Modifier.width(8.dp))
-            TextButton(
-                onClick = onUseCalculatedAmount,
-                enabled = editor.calculatedAmountFen != null,
-            ) {
-                Text("使用计算金额")
+            evaluation.problems.firstMessageFor("periodCount")?.let { message ->
+                FieldProblem(message)
             }
         }
-        evaluation.problems.firstMessageFor("paidAmountFen")?.let { message ->
-            FieldProblem(message)
+        Spacer(Modifier.height(SectionSpacing))
+        SectionHeader(title = "票面金额")
+        Spacer(Modifier.height(SectionTitleSpacing))
+        LotteryCard(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(
+                value = editor.paidAmountYuan.value,
+                onValueChange = onPaidAmountChange,
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("合计金额") },
+                suffix = { Text("元") },
+                singleLine = true,
+                isError = evaluation.problems.hasField("paidAmountFen"),
+                shape = MaterialTheme.shapes.medium,
+                colors = lotteryTextFieldColors(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() }),
+                trailingIcon = {
+                    IconButton(onClick = { focusManager.clearFocus() }) {
+                        Icon(LotteryIcons.Done, contentDescription = "完成金额输入", modifier = Modifier.size(20.dp))
+                    }
+                },
+            )
+            CandidateChoiceRow(
+                title = "识别到多个合计金额，请按原图选择",
+                values =
+                    fieldCandidates
+                        .filterIsInstance<TicketFieldCandidate.PaidAmount>()
+                        .map { it.valueFen.toYuanInput() },
+                selectedValue = editor.paidAmountYuan.value,
+                valueSuffix = " 元",
+                onSelect = onPaidAmountChange,
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "按当前投注计算：${editor.calculatedAmountFen.toYuanText()}",
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.width(8.dp))
+                InlineTextButton(
+                    text = "使用计算金额",
+                    onClick = onUseCalculatedAmount,
+                    enabled = editor.calculatedAmountFen != null,
+                )
+            }
+            evaluation.problems.firstMessageFor("paidAmountFen")?.let { message ->
+                FieldProblem(message)
+            }
         }
         if (evaluation.problems.isNotEmpty()) {
-            Spacer(Modifier.height(18.dp))
+            Spacer(Modifier.height(20.dp))
             ValidationSummary(evaluation.problems)
         }
-        Spacer(Modifier.height(24.dp))
-        Button(
+        Spacer(Modifier.height(SectionSpacing))
+        PrimaryActionButton(
+            text = "已核对，继续",
             onClick = onConfirm,
             enabled = evaluation.canConfirm && (previewState == null || previewState is TicketPreviewState.Ready),
-            modifier = Modifier.fillMaxWidth().height(52.dp),
-            shape = MaterialTheme.shapes.small,
-        ) {
-            Text("已核对，继续")
-        }
+        )
     }
 }
 
@@ -451,18 +483,16 @@ private fun CandidateChoiceRow(
         } else {
             MaterialTheme.colorScheme.error
         }
-    Spacer(Modifier.height(8.dp))
-    Text(title, style = MaterialTheme.typography.bodyMedium, color = instructionColor)
-    Spacer(Modifier.height(6.dp))
+    Text(title, style = MaterialTheme.typography.bodySmall, color = instructionColor)
     Row(
         modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         values.forEach { value ->
-            FilterChip(
+            ChoicePill(
                 selected = value == selectedValue,
                 onClick = { onSelect(value) },
-                label = { Text(value + valueSuffix) },
+                label = value + valueSuffix,
             )
         }
     }
@@ -492,46 +522,43 @@ private fun TicketLineEditor(
     onNumberToggle: (Int, TicketNumberArea, Int) -> Unit,
 ) {
     val spec = LotteryNumberSpec.forLottery(lotteryType)
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.small,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        color = MaterialTheme.colorScheme.surface,
-    ) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    LotteryCard {
+        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(title, style = MaterialTheme.typography.titleMedium)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        line.displayOrigin().displayName(),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                Text(title, modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                val origin = line.displayOrigin()
+                StatusTag(
+                    origin.displayName(),
+                    tone = if (origin == TicketFieldOrigin.OCR) TagTone.INFO else TagTone.NEUTRAL,
+                )
+                onRemove?.let { remove ->
+                    Spacer(Modifier.width(8.dp))
+                    CircleIconButton(
+                        icon = LotteryIcons.Delete,
+                        contentDescription = "删除本注",
+                        onClick = remove,
+                        enabled = canRemove,
+                        modifier = Modifier.size(36.dp),
+                        tint = MaterialTheme.colorScheme.error,
                     )
-                    onRemove?.let { remove ->
-                        IconButton(onClick = remove, enabled = canRemove) {
-                            Icon(LotteryIcons.Delete, contentDescription = "删除本注")
-                        }
-                    }
                 }
             }
             SelectedNumbersLine(
                 spec = spec,
                 primaryNumbers = line.primaryNumbers.value,
                 secondaryNumbers = line.secondaryNumbers.value,
-                primaryColor = MaterialTheme.colorScheme.primary,
-                secondaryColor = MaterialTheme.colorScheme.secondary,
             )
+            HairlineDivider()
             NumberAreaEditor(
                 title = spec.primaryName,
                 selectedNumbers = line.primaryNumbers.value,
                 expectedCount = spec.primaryCount,
                 maxCount = spec.primaryMaxCount,
                 range = spec.primaryRange,
-                selectedColor = MaterialTheme.colorScheme.primary,
+                selectedStyle = BallStyle.RED,
                 onToggle = { number -> onNumberToggle(lineIndex, TicketNumberArea.PRIMARY, number) },
             )
             problems.firstMessageFor("betLines[$lineIndex].primaryNumbers")?.let { message ->
@@ -544,7 +571,7 @@ private fun TicketLineEditor(
                     expectedCount = spec.secondaryCount,
                     maxCount = spec.secondaryRange.count(),
                     range = spec.secondaryRange,
-                    selectedColor = MaterialTheme.colorScheme.secondary,
+                    selectedStyle = BallStyle.BLUE,
                     onToggle = { number -> onNumberToggle(lineIndex, TicketNumberArea.SECONDARY, number) },
                 )
             }
@@ -554,7 +581,7 @@ private fun TicketLineEditor(
             if (line.originalText.isNotBlank()) {
                 Text(
                     "OCR 原文：${line.originalText}",
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
@@ -573,8 +600,6 @@ private fun SelectedNumbersLine(
     spec: LotteryNumberSpec,
     primaryNumbers: List<Int>,
     secondaryNumbers: List<Int>,
-    primaryColor: Color,
-    secondaryColor: Color,
 ) {
     // 快乐8 不设单式数量，没有号码时用一个占位提示尚未选择；复式或快乐8 号码多于占位数时不再补占位。
     val minimumPrimarySlots = if (spec.hasSecondaryArea) spec.primaryCount else 1
@@ -603,16 +628,17 @@ private fun SelectedNumbersLine(
             horizontalArrangement = Arrangement.spacedBy(SELECTED_LINE_SPACING),
             verticalArrangement = Arrangement.spacedBy(SELECTED_LINE_SPACING),
         ) {
-            primarySlots.forEach { number -> SelectedNumberBall(number, ballSize, primaryColor) }
+            primarySlots.forEach { number -> SelectedNumberBall(number, ballSize, BallStyle.RED) }
             if (spec.hasSecondaryArea) {
                 Box(modifier = Modifier.size(ballSize), contentAlignment = Alignment.Center) {
                     Text(
                         "+",
-                        style = MaterialTheme.typography.titleMedium,
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.outline,
                         textAlign = TextAlign.Center,
                     )
                 }
-                secondarySlots.forEach { number -> SelectedNumberBall(number, ballSize, secondaryColor) }
+                secondarySlots.forEach { number -> SelectedNumberBall(number, ballSize, BallStyle.BLUE) }
             }
         }
     }
@@ -623,25 +649,13 @@ private fun SelectedNumbersLine(
 private fun SelectedNumberBall(
     number: Int?,
     size: Dp,
-    color: Color,
+    style: BallStyle,
 ) {
-    Surface(
-        modifier = Modifier.size(size),
-        shape = CircleShape,
-        color = if (number == null) MaterialTheme.colorScheme.surface else color,
-        contentColor =
-            if (number == null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onPrimary,
-        border = if (number == null) BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant) else null,
-    ) {
-        Box(contentAlignment = Alignment.Center) {
-            Text(
-                number?.twoDigitText() ?: "--",
-                style = MaterialTheme.typography.labelLarge,
-                maxLines = 1,
-                softWrap = false,
-            )
-        }
-    }
+    LotteryBall(
+        text = number?.twoDigitText() ?: "--",
+        style = if (number == null) BallStyle.PLACEHOLDER else style,
+        size = size,
+    )
 }
 
 /**
@@ -656,10 +670,10 @@ private fun NumberAreaEditor(
     expectedCount: Int,
     maxCount: Int,
     range: IntRange,
-    selectedColor: Color,
+    selectedStyle: BallStyle,
     onToggle: (Int) -> Unit,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(
             when {
                 // 快乐8 不设单式数量，号码个数即玩法。
@@ -676,7 +690,8 @@ private fun NumberAreaEditor(
                     "$title（已选 ${selectedNumbers.size}/$expectedCount）"
                 }
             },
-            style = MaterialTheme.typography.bodyMedium,
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         val lastVisibleNumber = maxOf(range.last, selectedNumbers.maxOrNull() ?: range.last)
         val numbers = (range.first..lastVisibleNumber).toList()
@@ -700,7 +715,7 @@ private fun NumberAreaEditor(
                                 size = ballSize,
                                 selected = selected,
                                 enabled = selected || (number in range && selectedNumbers.size < maxCount),
-                                selectedColor = selectedColor,
+                                selectedStyle = selectedStyle,
                                 onToggle = { onToggle(number) },
                             )
                         }
@@ -718,48 +733,29 @@ private fun NumberBall(
     size: Dp,
     selected: Boolean,
     enabled: Boolean,
-    selectedColor: Color,
+    selectedStyle: BallStyle,
     onToggle: () -> Unit,
 ) {
-    Surface(
+    LotteryBall(
+        text = number.twoDigitText(),
+        style =
+            when {
+                selected -> selectedStyle
+                enabled -> BallStyle.OUTLINE
+                else -> BallStyle.DISABLED
+            },
         modifier =
             Modifier
-                .size(size)
+                .clip(CircleShape)
                 .selectable(
                     selected = selected,
                     enabled = enabled,
                     role = Role.Checkbox,
                     onClick = onToggle,
                 ),
-        shape = CircleShape,
-        color =
-            when {
-                selected -> selectedColor
-                enabled -> MaterialTheme.colorScheme.surface
-                else -> MaterialTheme.colorScheme.surfaceVariant
-            },
-        contentColor =
-            when {
-                selected -> MaterialTheme.colorScheme.onPrimary
-                enabled -> MaterialTheme.colorScheme.onSurface
-                else -> MaterialTheme.colorScheme.onSurfaceVariant
-            },
-        border =
-            if (selected) {
-                null
-            } else {
-                BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-            },
-    ) {
-        Box(contentAlignment = Alignment.Center) {
-            Text(
-                number.twoDigitText(),
-                style = MaterialTheme.typography.labelLarge,
-                maxLines = 1,
-                softWrap = false,
-            )
-        }
-    }
+        size = size,
+        elevated = false,
+    )
 }
 
 /** 号码按票面习惯补足两位显示。 */
@@ -791,29 +787,17 @@ private fun MultiplierEditor(
 ) {
     SettingRow(title = "投注倍数", detail = if (multiplier == null) "待确认" else "可选 1 至 99 倍") {
         if (multiplier == null) {
-            TextButton(onClick = { onMultiplierChange(MIN_MULTIPLIER) }) {
-                Text("确认 1 倍")
-            }
+            InlineTextButton(text = "确认 1 倍", onClick = { onMultiplierChange(MIN_MULTIPLIER) })
         } else {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                IconButton(
-                    onClick = { onMultiplierChange(multiplier - 1) },
-                    enabled = multiplier > MIN_MULTIPLIER,
-                ) {
-                    Icon(LotteryIcons.Minus, contentDescription = "减少倍数")
-                }
-                Text(
-                    "$multiplier 倍",
-                    modifier = Modifier.width(64.dp),
-                    style = MaterialTheme.typography.titleMedium,
-                )
-                IconButton(
-                    onClick = { onMultiplierChange(multiplier + 1) },
-                    enabled = multiplier < MAX_MULTIPLIER,
-                ) {
-                    Icon(LotteryIcons.Plus, contentDescription = "增加倍数")
-                }
-            }
+            Stepper(
+                valueText = "$multiplier 倍",
+                onDecrement = { onMultiplierChange(multiplier - 1) },
+                onIncrement = { onMultiplierChange(multiplier + 1) },
+                decrementEnabled = multiplier > MIN_MULTIPLIER,
+                incrementEnabled = multiplier < MAX_MULTIPLIER,
+                decrementDescription = "减少倍数",
+                incrementDescription = "增加倍数",
+            )
         }
     }
 }
@@ -828,33 +812,23 @@ private fun PeriodCountEditor(
         title = "投注期数",
         detail = if (periodCount == 1) "单期开奖核对" else "从起始期号逐期核对",
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            IconButton(
-                onClick = {
-                    onPeriodCountChange(
-                        if (periodCount > IssueSequenceResolver.MAX_PERIOD_COUNT) {
-                            IssueSequenceResolver.MAX_PERIOD_COUNT
-                        } else {
-                            periodCount - 1
-                        },
-                    )
-                },
-                enabled = periodCount > IssueSequenceResolver.MIN_PERIOD_COUNT,
-            ) {
-                Icon(LotteryIcons.Minus, contentDescription = "减少投注期数")
-            }
-            Text(
-                "$periodCount 期",
-                modifier = Modifier.width(64.dp),
-                style = MaterialTheme.typography.titleMedium,
-            )
-            IconButton(
-                onClick = { onPeriodCountChange(periodCount + 1) },
-                enabled = periodCount < IssueSequenceResolver.MAX_PERIOD_COUNT,
-            ) {
-                Icon(LotteryIcons.Plus, contentDescription = "增加投注期数")
-            }
-        }
+        Stepper(
+            valueText = "$periodCount 期",
+            onDecrement = {
+                onPeriodCountChange(
+                    if (periodCount > IssueSequenceResolver.MAX_PERIOD_COUNT) {
+                        IssueSequenceResolver.MAX_PERIOD_COUNT
+                    } else {
+                        periodCount - 1
+                    },
+                )
+            },
+            onIncrement = { onPeriodCountChange(periodCount + 1) },
+            decrementEnabled = periodCount > IssueSequenceResolver.MIN_PERIOD_COUNT,
+            incrementEnabled = periodCount < IssueSequenceResolver.MAX_PERIOD_COUNT,
+            decrementDescription = "减少投注期数",
+            incrementDescription = "增加投注期数",
+        )
     }
 }
 
@@ -865,61 +839,37 @@ private fun SettingRow(
     detail: String,
     control: @Composable () -> Unit,
 ) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.small,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        color = MaterialTheme.colorScheme.surface,
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.titleMedium)
-                Text(
-                    detail,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Spacer(Modifier.width(12.dp))
-            control()
-        }
-    }
+    SettingLine(
+        title = title,
+        detail = detail,
+        modifier = Modifier.padding(vertical = 10.dp),
+        control = control,
+    )
 }
 
 /** 在对应输入下方显示一条领域问题。 */
 @Composable
 private fun FieldProblem(message: String) {
-    Text(
-        message,
-        modifier = Modifier.padding(start = 16.dp, top = 4.dp),
-        style = MaterialTheme.typography.bodyMedium,
-        color = MaterialTheme.colorScheme.error,
-    )
+    Row(modifier = Modifier.padding(top = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+        Icon(
+            LotteryIcons.Warning,
+            contentDescription = null,
+            modifier = Modifier.size(14.dp),
+            tint = MaterialTheme.colorScheme.error,
+        )
+        Spacer(Modifier.width(6.dp))
+        Text(message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+    }
 }
 
 /** 汇总当前仍阻断确认的领域问题。 */
 @Composable
 private fun ValidationSummary(problems: List<TicketValidationProblem>) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.small,
-        color = MaterialTheme.colorScheme.errorContainer,
-    ) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("请先修正以下信息", style = MaterialTheme.typography.titleMedium)
-            problems.distinctBy { it.field to it.message }.forEach { problem ->
-                Text(
-                    "• ${problem.message}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onErrorContainer,
-                )
-            }
-        }
-    }
+    Notice(
+        title = "请先修正以下信息",
+        message = problems.distinctBy { it.field to it.message }.joinToString("\n") { "• ${it.message}" },
+        tone = NoticeTone.ERROR,
+    )
 }
 
 /**
@@ -944,20 +894,15 @@ fun DrawQueryScreen(
         navigationIcon = LotteryIcons.Back,
         onNavigate = onCancel,
     ) {
-        Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-            Spacer(Modifier.height(64.dp))
-            CircularProgressIndicator()
-            Spacer(Modifier.height(24.dp))
-            Text(
+        ProgressStage(
+            icon = LotteryIcons.Evidence,
+            title =
                 if (totalPeriodCount > 1) {
                     "正在查询第 $issue 期（${completedPeriodCount + 1}/$totalPeriodCount）"
                 } else {
                     "正在查询第 $issue 期"
                 },
-                style = MaterialTheme.typography.headlineMedium,
-            )
-            Spacer(Modifier.height(10.dp))
-            Text(
+            detail =
                 if (usesRealDrawData) {
                     if (totalPeriodCount > 1) {
                         "正在按顺序核对每一期的两份官方数据"
@@ -967,10 +912,7 @@ fun DrawQueryScreen(
                 } else {
                     "只有用户确认后才会发起单期查询"
                 },
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
+        )
     }
 }
 
@@ -994,11 +936,11 @@ fun DemoCompleteScreen(
         navigationIcon = LotteryIcons.Back,
         onNavigate = onBack,
     ) {
-        StatusBanner("开发链路已跑通，本页不代表真实中奖结果。")
+        Notice("开发链路已跑通，本页不代表真实中奖结果。")
         Spacer(Modifier.height(24.dp))
         Text(
             if (usesRealRecognition) "本地识别校正链路可用" else "共享演示状态流可用",
-            style = MaterialTheme.typography.headlineMedium,
+            style = MaterialTheme.typography.headlineSmall,
         )
         Spacer(Modifier.height(12.dp))
         Text(
@@ -1007,11 +949,11 @@ fun DemoCompleteScreen(
             } else {
                 "票面结构已使用保守解析器；图片采集、OCR 和开奖查询仍为固定演示实现。"
             },
-            style = MaterialTheme.typography.bodyLarge,
+            style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        Spacer(Modifier.height(28.dp))
-        InfoSection(
+        Spacer(Modifier.height(24.dp))
+        KeyValueCard(
             rows =
                 listOf(
                     "演示彩种" to drawResult.lotteryType.displayName(),
@@ -1020,14 +962,8 @@ fun DemoCompleteScreen(
                     "规则标识" to drawResult.ruleVersion,
                 ),
         )
-        Spacer(Modifier.height(28.dp))
-        Button(
-            onClick = onDone,
-            modifier = Modifier.fillMaxWidth().height(52.dp),
-            shape = MaterialTheme.shapes.small,
-        ) {
-            Text("返回首页")
-        }
+        Spacer(Modifier.height(SectionSpacing))
+        PrimaryActionButton(text = "返回首页", onClick = onDone)
     }
 }
 
@@ -1051,12 +987,27 @@ fun ErrorScreen(
         navigationIcon = LotteryIcons.Back,
         onNavigate = onBack,
     ) {
-        Text(title, style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.error)
-        Spacer(Modifier.height(12.dp))
-        Text(message, style = MaterialTheme.typography.bodyLarge)
-        Spacer(Modifier.height(28.dp))
-        Button(onClick = onDone, shape = MaterialTheme.shapes.small) {
-            Text("返回首页")
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(top = 48.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            IconTile(
+                icon = LotteryIcons.Warning,
+                tint = MaterialTheme.colorScheme.error,
+                container = MaterialTheme.colorScheme.errorContainer,
+                size = 72.dp,
+            )
+            Spacer(Modifier.height(24.dp))
+            Text(title, style = MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center)
+            Spacer(Modifier.height(8.dp))
+            Text(
+                message,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+            )
+            Spacer(Modifier.height(32.dp))
+            PrimaryActionButton(text = "返回首页", onClick = onDone, modifier = Modifier.widthIn(max = 320.dp))
         }
     }
 }
@@ -1080,59 +1031,70 @@ fun AboutScreen(
         navigationIcon = LotteryIcons.Back,
         onNavigate = onBack,
     ) {
-        Text("数据如何处理", style = MaterialTheme.typography.headlineMedium)
-        Spacer(Modifier.height(16.dp))
-        PolicyRow("本地处理", "图片、OCR 文本和投注号码默认只在当前设备处理。")
-        PolicyRow("最少查询", "查询开奖时只发送用户确认的彩种和期号。")
-        PolicyRow("本机记录", "确认后只保存结构化票据信息，不保存票图、OCR 全文或单张票的中奖结论。")
-        PolicyRow(
-            "开奖缓存",
-            "走势和 AI 分析使用的最近 500 期官方开奖只保存号码、日期、来源和核对时间；" +
-                "仅在打开页面或手动刷新时联网，距上次核对超过 30 分钟才增量补拉。" +
-                "查询开奖时，已开奖期次的官方号码和奖级金额也保存在本机，再次查询只补查未开奖或奖金待确认的期次，" +
-                "按开奖日程未到时间的期次不联网。清空票据记录不会清除这些开奖数据。",
-        )
-        Spacer(Modifier.height(12.dp))
-        OutlinedButton(
-            onClick = { confirmsClear = true },
-            enabled = !screen.isClearingHistory,
-            shape = MaterialTheme.shapes.small,
-        ) {
-            if (screen.isClearingHistory) {
-                CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                Spacer(Modifier.width(8.dp))
+        LotteryCard(contentPadding = PaddingValues(20.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                BrandMark(size = 56.dp)
+                Spacer(Modifier.width(16.dp))
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("给我中", style = MaterialTheme.typography.headlineSmall)
+                    Text(
+                        "纸质彩票识别与中奖测算工具",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
-            Text("清除本机开奖数据")
         }
-        screen.historyMessage?.let { message ->
-            Spacer(Modifier.height(8.dp))
-            Text(
-                message,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+        Spacer(Modifier.height(SectionSpacing))
+        SectionHeader(title = "数据如何处理")
+        Spacer(Modifier.height(SectionTitleSpacing))
+        LotteryCard(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            PolicyRow(LotteryIcons.Privacy, "本地处理", "图片、OCR 文本和投注号码默认只在当前设备处理。")
+            PolicyRow(LotteryIcons.Search, "最少查询", "查询开奖时只发送用户确认的彩种和期号。")
+            PolicyRow(
+                LotteryIcons.Lock,
+                "本机记录",
+                "确认后只保存结构化票据信息，不保存票图、OCR 全文或单张票的中奖结论。",
             )
+            PolicyRow(
+                LotteryIcons.Storage,
+                "开奖缓存",
+                "走势和 AI 分析使用的最近 500 期官方开奖只保存号码、日期、来源和核对时间；" +
+                    "仅在打开页面或手动刷新时联网，距上次核对超过 30 分钟才增量补拉。" +
+                    "查询开奖时，已开奖期次的官方号码和奖级金额也保存在本机，再次查询只补查未开奖或奖金待确认的期次，" +
+                    "按开奖日程未到时间的期次不联网。清空票据记录不会清除这些开奖数据。",
+            )
+            HairlineDivider()
+            OutlineActionButton(
+                text = "清除本机开奖数据",
+                onClick = { confirmsClear = true },
+                enabled = !screen.isClearingHistory,
+                loading = screen.isClearingHistory,
+                contentColor = MaterialTheme.colorScheme.error,
+            )
+            screen.historyMessage?.let { message ->
+                Text(
+                    message,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
-        Spacer(Modifier.height(28.dp))
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-        Spacer(Modifier.height(24.dp))
-        Text("V1 支持范围", style = MaterialTheme.typography.titleLarge)
-        Spacer(Modifier.height(12.dp))
-        Text(
-            V1_SUPPORTED_TICKET_SCOPE_TEXT,
-            style = MaterialTheme.typography.bodyLarge,
-        )
-        Spacer(Modifier.height(12.dp))
-        Text(
-            V1_UNSUPPORTED_TICKET_SCOPE_TEXT,
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(Modifier.height(28.dp))
-        StatusBanner("中奖测算不等于彩票验真，也不能确认撤单、作废或兑奖状态。")
+        Spacer(Modifier.height(SectionSpacing))
+        SectionHeader(title = "V1 支持范围")
+        Spacer(Modifier.height(SectionTitleSpacing))
+        LotteryCard(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            ScopeRow(supported = true, text = V1_SUPPORTED_TICKET_SCOPE_TEXT)
+            HairlineDivider()
+            ScopeRow(supported = false, text = V1_UNSUPPORTED_TICKET_SCOPE_TEXT)
+        }
+        Spacer(Modifier.height(20.dp))
+        Notice("中奖测算不等于彩票验真，也不能确认撤单、作废或兑奖状态。", tone = NoticeTone.WARNING)
     }
     if (confirmsClear) {
         AlertDialog(
             onDismissRequest = { confirmsClear = false },
+            containerColor = MaterialTheme.colorScheme.surface,
             title = { Text("清除本机开奖数据？") },
             text = {
                 Text(
@@ -1157,81 +1119,51 @@ fun AboutScreen(
     }
 }
 
-/** 展示成组键值信息。 */
+/** 展示一条隐私原则：左侧图标底座，右侧标题与说明。 */
 @Composable
-private fun InfoSection(rows: List<Pair<String, String>>) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.small,
-        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        color = MaterialTheme.colorScheme.surface,
-    ) {
-        Column {
-            rows.forEachIndexed { index, row ->
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        row.first,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Spacer(Modifier.width(24.dp))
-                    Text(row.second, style = MaterialTheme.typography.titleMedium)
-                }
-                if (index != rows.lastIndex) {
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                }
-            }
+private fun PolicyRow(
+    icon: ImageVector,
+    title: String,
+    body: String,
+) {
+    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+        IconTile(
+            icon = icon,
+            tint = MaterialTheme.colorScheme.secondary,
+            container = MaterialTheme.colorScheme.secondaryContainer,
+            size = 36.dp,
+        )
+        Spacer(Modifier.width(14.dp))
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(title, style = MaterialTheme.typography.titleSmall)
+            Text(body, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
 
-/** 展示一条隐私原则。 */
+/** 展示已支持或未支持的票面范围。 */
 @Composable
-private fun PolicyRow(
-    title: String,
-    body: String,
+private fun ScopeRow(
+    supported: Boolean,
+    text: String,
 ) {
-    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalAlignment = Alignment.Top) {
-        Text(title, modifier = Modifier.width(92.dp), style = MaterialTheme.typography.titleMedium)
-        Text(body, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-    }
-}
-
-/** 展示流程内需要醒目标识的信息。 */
-@Composable
-private fun StatusBanner(message: String) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.small,
-        color = MaterialTheme.colorScheme.secondaryContainer,
-    ) {
-        Text(
-            message,
-            modifier = Modifier.padding(16.dp),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSecondaryContainer,
+    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+        IconTile(
+            icon = if (supported) LotteryIcons.Success else LotteryIcons.Clear,
+            tint = if (supported) LotteryThemeTokens.colors.success else MaterialTheme.colorScheme.onSurfaceVariant,
+            container =
+                if (supported) {
+                    LotteryThemeTokens.colors.successContainer
+                } else {
+                    MaterialTheme.colorScheme.surfaceContainerHigh
+                },
+            size = 36.dp,
         )
-    }
-}
-
-/** 展示阻断确认流程的本机保存错误。 */
-@Composable
-private fun StorageErrorBanner(message: String) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.small,
-        color = MaterialTheme.colorScheme.errorContainer,
-    ) {
-        Text(
-            message,
-            modifier = Modifier.padding(16.dp),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onErrorContainer,
-        )
+        Spacer(Modifier.width(14.dp))
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(if (supported) "已支持" else "暂不支持", style = MaterialTheme.typography.titleSmall)
+            Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
     }
 }
 

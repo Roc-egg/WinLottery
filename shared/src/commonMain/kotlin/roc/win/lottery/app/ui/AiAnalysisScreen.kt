@@ -1,6 +1,5 @@
 package roc.win.lottery.app.ui
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -33,18 +32,12 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuAnchorType
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -56,6 +49,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
@@ -73,6 +67,7 @@ import roc.win.lottery.app.AiHistoryAvailability
 import roc.win.lottery.app.AiModelCatalogState
 import roc.win.lottery.app.HistoricalDrawRefreshStatus
 import roc.win.lottery.app.MainDestination
+import roc.win.lottery.app.theme.LotteryThemeTokens
 import roc.win.lottery.data.AiApiFormat
 import roc.win.lottery.data.AiProviderConfigurationValidator
 import roc.win.lottery.data.AiProviderRequestPreview
@@ -136,55 +131,52 @@ fun AiAnalysisScreen(
     ) {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(top = 24.dp, bottom = 32.dp),
+            contentPadding = PaddingValues(top = 4.dp, bottom = 40.dp),
         ) {
             item(key = "configuration") {
                 CenteredAiContent {
-                    Text("公开历史数据分析", style = MaterialTheme.typography.headlineMedium)
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        "模型只观察本机保存的官方历史开奖；候选号码不代表概率优势。",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Spacer(Modifier.height(24.dp))
-                    AiPrivacyBoundary(savesApiKeyLocally)
-                    Spacer(Modifier.height(28.dp))
-                    Text("连接配置", style = MaterialTheme.typography.titleLarge)
-                    Spacer(Modifier.height(12.dp))
-                    AiConnectionFields(
-                        settings = workspace.settings,
-                        apiKey = apiKey,
-                        savesApiKeyLocally = savesApiKeyLocally,
-                        showsApiKey = showsApiKey,
-                        enabled = !isRequesting,
-                        onSettingsChange = onSettingsChange,
-                        onApiKeyChange = { value -> onApiKeyChange(value.take(MAX_API_KEY_INPUT_LENGTH)) },
-                        onToggleApiKeyVisibility = { showsApiKey = !showsApiKey },
-                        onFetchModels = onFetchModels,
-                    )
-                    val hasConnection =
-                        apiKey.isNotEmpty() ||
-                            workspace.settings.providerName.isNotEmpty() ||
-                            workspace.settings.baseUrl.isNotEmpty() ||
-                            workspace.settings.model.isNotEmpty()
-                    TextButton(
-                        onClick = onClearSavedConnection,
-                        enabled = hasConnection && !isRequesting,
-                    ) {
-                        Text("清除本机保存的连接配置")
-                    }
-                    Spacer(Modifier.height(30.dp))
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                    Spacer(Modifier.height(24.dp))
-                    Text("分析范围", style = MaterialTheme.typography.titleLarge)
+                    PageLead("公开历史数据分析：模型只观察本机保存的官方历史开奖；候选号码不代表概率优势。")
                     Spacer(Modifier.height(16.dp))
-                    AiAnalysisSelectors(
-                        settings = workspace.settings,
-                        enabled = !isRequesting,
-                        onSettingsChange = onSettingsChange,
-                    )
-                    Spacer(Modifier.height(22.dp))
+                    AiPrivacyBoundary(savesApiKeyLocally)
+                    Spacer(Modifier.height(SectionSpacing))
+                    SectionHeader(title = "连接配置")
+                    Spacer(Modifier.height(SectionTitleSpacing))
+                    LotteryCard(verticalArrangement = Arrangement.Top) {
+                        AiConnectionFields(
+                            settings = workspace.settings,
+                            apiKey = apiKey,
+                            savesApiKeyLocally = savesApiKeyLocally,
+                            showsApiKey = showsApiKey,
+                            enabled = !isRequesting,
+                            onSettingsChange = onSettingsChange,
+                            onApiKeyChange = { value -> onApiKeyChange(value.take(MAX_API_KEY_INPUT_LENGTH)) },
+                            onToggleApiKeyVisibility = { showsApiKey = !showsApiKey },
+                            onFetchModels = onFetchModels,
+                        )
+                        val hasConnection =
+                            apiKey.isNotEmpty() ||
+                                workspace.settings.providerName.isNotEmpty() ||
+                                workspace.settings.baseUrl.isNotEmpty() ||
+                                workspace.settings.model.isNotEmpty()
+                        HairlineDivider(Modifier.padding(vertical = 8.dp))
+                        InlineTextButton(
+                            text = "清除本机保存的连接配置",
+                            onClick = onClearSavedConnection,
+                            enabled = hasConnection && !isRequesting,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                    Spacer(Modifier.height(SectionSpacing))
+                    SectionHeader(title = "分析范围")
+                    Spacer(Modifier.height(SectionTitleSpacing))
+                    LotteryCard(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        AiAnalysisSelectors(
+                            settings = workspace.settings,
+                            enabled = !isRequesting,
+                            onSettingsChange = onSettingsChange,
+                        )
+                    }
+                    Spacer(Modifier.height(12.dp))
                     AiHistoryStatus(
                         history = workspace.history,
                         refresh = workspace.historyRefresh,
@@ -192,29 +184,23 @@ fun AiAnalysisScreen(
                         onRefresh = onRefreshHistory,
                     )
                     workspace.errorMessage?.let { message ->
-                        Spacer(Modifier.height(14.dp))
+                        Spacer(Modifier.height(12.dp))
                         AiErrorMessage(message)
                     }
-                    Spacer(Modifier.height(18.dp))
-                    Button(
+                    Spacer(Modifier.height(20.dp))
+                    PrimaryActionButton(
+                        text = "查看发送内容",
                         onClick = { onPreparePreview(apiKey) },
                         enabled = workspace.history is AiHistoryAvailability.Ready && !isRequesting,
-                        modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp),
-                        shape = MaterialTheme.shapes.small,
-                    ) {
-                        Icon(LotteryIcons.Send, contentDescription = null)
-                        Spacer(Modifier.width(10.dp))
-                        Text("查看发送内容")
-                    }
+                        icon = LotteryIcons.Send,
+                    )
                 }
             }
 
             workspace.lastResult?.let { result ->
                 item(key = "result-header") {
                     CenteredAiContent {
-                        Spacer(Modifier.height(34.dp))
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                        Spacer(Modifier.height(24.dp))
+                        Spacer(Modifier.height(SectionSpacing))
                         AiResultHeader(result)
                     }
                 }
@@ -225,7 +211,7 @@ fun AiAnalysisScreen(
                     },
                 ) { index, candidate ->
                     CenteredAiContent {
-                        Spacer(Modifier.height(if (index == 0) 18.dp else 12.dp))
+                        Spacer(Modifier.height(12.dp))
                         AiCandidateItem(
                             index = index,
                             lotteryType = result.analysis.lotteryType,
@@ -235,12 +221,8 @@ fun AiAnalysisScreen(
                 }
                 item(key = "result-footer") {
                     CenteredAiContent {
-                        Spacer(Modifier.height(18.dp))
-                        Text(
-                            "AI 结果仅供个人研究和娱乐，不构成购彩建议；开奖以发行机构公告为准。",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                        Spacer(Modifier.height(16.dp))
+                        FootnoteText("AI 结果仅供个人研究和娱乐，不构成购彩建议；开奖以发行机构公告为准。")
                     }
                 }
             }
@@ -288,38 +270,20 @@ private fun CenteredAiContent(content: @Composable ColumnScope.() -> Unit) {
 /** 展示联网、费用和本机存储边界。 */
 @Composable
 private fun AiPrivacyBoundary(savesApiKeyLocally: Boolean) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.small,
-        color = MaterialTheme.colorScheme.secondaryContainer,
+    Notice(
+        message =
+            if (savesApiKeyLocally) {
+                "连接配置和密钥只加密保存在本机，不写入票据记录、导出包或云端备份；发送快照和分析结果不保存。"
+            } else {
+                "服务商、地址和模型只保存在本机；密钥只在本次运行有效。发送快照和分析结果不保存。"
+            },
+        icon = LotteryIcons.Privacy,
     ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
-            verticalAlignment = Alignment.Top,
-        ) {
-            Icon(
-                LotteryIcons.Privacy,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSecondaryContainer,
-            )
-            Spacer(Modifier.width(12.dp))
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(
-                    if (savesApiKeyLocally) {
-                        "连接配置和密钥只加密保存在本机，不写入票据记录、导出包或云端备份；发送快照和分析结果不保存。"
-                    } else {
-                        "服务商、地址和模型只保存在本机；密钥只在本次运行有效。发送快照和分析结果不保存。"
-                    },
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSecondaryContainer,
-                )
-                Text(
-                    "每次发送前单独确认；费用由你填写的服务商账户承担。",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSecondaryContainer,
-                )
-            }
-        }
+        Text(
+            "每次发送前单独确认；费用由你填写的服务商账户承担。",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
@@ -349,6 +313,8 @@ private fun AiConnectionFields(
         modifier = Modifier.fillMaxWidth(),
         enabled = enabled,
         singleLine = true,
+        shape = MaterialTheme.shapes.medium,
+        colors = lotteryTextFieldColors(),
         label = { Text("服务商名称") },
         placeholder = { Text("例如：个人 API 账户") },
         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
@@ -368,6 +334,8 @@ private fun AiConnectionFields(
         modifier = Modifier.fillMaxWidth(),
         enabled = enabled,
         singleLine = true,
+        shape = MaterialTheme.shapes.medium,
+        colors = lotteryTextFieldColors(),
         label = { Text("Base URL") },
         placeholder = { Text(settings.apiFormat.baseUrlExample) },
         supportingText =
@@ -397,6 +365,8 @@ private fun AiConnectionFields(
         modifier = Modifier.fillMaxWidth(),
         enabled = enabled,
         singleLine = true,
+        shape = MaterialTheme.shapes.medium,
+        colors = lotteryTextFieldColors(),
         label = { Text("模型") },
         placeholder = { Text("填写模型标识或从列表选择") },
         trailingIcon = {
@@ -423,6 +393,8 @@ private fun AiConnectionFields(
         modifier = Modifier.fillMaxWidth(),
         enabled = enabled,
         singleLine = true,
+        shape = MaterialTheme.shapes.medium,
+        colors = lotteryTextFieldColors(),
         label = { Text("API 密钥") },
         leadingIcon = {
             Icon(LotteryIcons.SecretKey, contentDescription = null)
@@ -453,15 +425,15 @@ private fun AiOutputTokenLimitControl(
     enabled: Boolean,
     onSelect: (Int) -> Unit,
 ) {
-    Text("输出上限", style = MaterialTheme.typography.titleMedium)
+    FieldLabel("输出上限")
     Spacer(Modifier.height(8.dp))
     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         items(items = AiAnalysisProtocol.OUTPUT_TOKEN_LIMITS, key = { limit -> limit }) { limit ->
-            FilterChip(
+            ChoicePill(
                 selected = limit == selected,
                 onClick = { onSelect(limit) },
                 enabled = enabled,
-                label = { Text("${limit / TOKENS_PER_K}K token") },
+                label = "${limit / TOKENS_PER_K}K token",
             )
         }
     }
@@ -496,12 +468,16 @@ private fun AiApiFormatField(
             enabled = enabled,
             readOnly = true,
             singleLine = true,
+            shape = MaterialTheme.shapes.medium,
+            colors = lotteryTextFieldColors(),
             label = { Text("接口格式") },
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded && enabled) },
         )
         ExposedDropdownMenu(
             expanded = expanded && enabled,
             onDismissRequest = { expanded = false },
+            shape = MaterialTheme.shapes.medium,
+            containerColor = MaterialTheme.colorScheme.surface,
         ) {
             AiApiFormat.entries.forEach { format ->
                 DropdownMenuItem(
@@ -531,47 +507,39 @@ private fun AiAnalysisSelectors(
     enabled: Boolean,
     onSettingsChange: (AiAnalysisSettings) -> Unit,
 ) {
-    Text("彩种", style = MaterialTheme.typography.titleMedium)
-    Spacer(Modifier.height(10.dp))
-    val lotteryTypes = listOf(LotteryType.SUPER_LOTTO, LotteryType.DOUBLE_COLOR_BALL)
-    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-        lotteryTypes.forEachIndexed { index, lotteryType ->
-            SegmentedButton(
-                selected = lotteryType == settings.lotteryType,
-                onClick = { onSettingsChange(settings.copy(lotteryType = lotteryType)) },
-                enabled = enabled,
-                shape = SegmentedButtonDefaults.itemShape(index, lotteryTypes.size),
-                label = { Text(lotteryType.aiDisplayName()) },
-            )
-        }
-    }
-    Spacer(Modifier.height(22.dp))
-    Text("历史样本", style = MaterialTheme.typography.titleMedium)
-    Spacer(Modifier.height(8.dp))
+    FieldLabel("彩种")
+    SegmentedControl(
+        options = listOf(LotteryType.SUPER_LOTTO, LotteryType.DOUBLE_COLOR_BALL),
+        selected = settings.lotteryType,
+        label = { it.aiDisplayName() },
+        onSelect = { lotteryType -> onSettingsChange(settings.copy(lotteryType = lotteryType)) },
+        enabled = enabled,
+    )
+    Spacer(Modifier.height(6.dp))
+    FieldLabel("历史样本")
     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         items(items = TrendSampleSize.entries, key = { item -> item.count }) { sampleSize ->
-            FilterChip(
+            ChoicePill(
                 selected = sampleSize == settings.sampleSize,
                 onClick = { onSettingsChange(settings.copy(sampleSize = sampleSize)) },
                 enabled = enabled,
-                label = { Text("${sampleSize.count} 期") },
+                label = "${sampleSize.count} 期",
             )
         }
     }
-    Spacer(Modifier.height(22.dp))
-    Text("分析模板", style = MaterialTheme.typography.titleMedium)
-    Spacer(Modifier.height(8.dp))
+    Spacer(Modifier.height(6.dp))
+    FieldLabel("分析模板")
     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         items(items = AiAnalysisTemplate.entries, key = { item -> item.id }) { template ->
-            FilterChip(
+            ChoicePill(
                 selected = template == settings.template,
                 onClick = { onSettingsChange(settings.copy(template = template)) },
                 enabled = enabled,
-                label = { Text(template.displayName) },
+                label = template.displayName,
             )
         }
     }
-    Spacer(Modifier.height(22.dp))
+    HairlineDivider(Modifier.padding(top = 6.dp))
     AiCandidateCountControl(
         value = settings.candidateCount,
         enabled = enabled,
@@ -586,33 +554,16 @@ private fun AiCandidateCountControl(
     enabled: Boolean,
     onValueChange: (Int) -> Unit,
 ) {
-    Surface(
-        modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp),
-        shape = MaterialTheme.shapes.small,
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text("候选注数", modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
-            IconButton(
-                onClick = { onValueChange(value - 1) },
-                enabled = enabled && value > AiAnalysisProtocol.MIN_CANDIDATE_COUNT,
-            ) {
-                Icon(LotteryIcons.Minus, contentDescription = "减少候选注数")
-            }
-            Box(modifier = Modifier.widthIn(min = 52.dp), contentAlignment = Alignment.Center) {
-                Text("$value 注", style = MaterialTheme.typography.labelLarge)
-            }
-            IconButton(
-                onClick = { onValueChange(value + 1) },
-                enabled = enabled && value < AiAnalysisProtocol.MAX_CANDIDATE_COUNT,
-            ) {
-                Icon(LotteryIcons.Plus, contentDescription = "增加候选注数")
-            }
-        }
+    SettingLine(title = "候选注数") {
+        Stepper(
+            valueText = "$value 注",
+            onDecrement = { onValueChange(value - 1) },
+            onIncrement = { onValueChange(value + 1) },
+            decrementEnabled = enabled && value > AiAnalysisProtocol.MIN_CANDIDATE_COUNT,
+            incrementEnabled = enabled && value < AiAnalysisProtocol.MAX_CANDIDATE_COUNT,
+            decrementDescription = "减少候选注数",
+            incrementDescription = "增加候选注数",
+        )
     }
 }
 
@@ -624,16 +575,8 @@ private fun AiHistoryStatus(
     onRetry: () -> Unit,
     onRefresh: () -> Unit,
 ) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.small,
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
+    LotteryCard(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
             when (history) {
                 AiHistoryAvailability.Loading -> {
                     CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
@@ -642,16 +585,17 @@ private fun AiHistoryStatus(
                 }
 
                 is AiHistoryAvailability.Ready -> {
-                    Icon(
-                        LotteryIcons.Done,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.secondary,
+                    IconTile(
+                        icon = LotteryIcons.Storage,
+                        tint = LotteryThemeTokens.colors.success,
+                        container = LotteryThemeTokens.colors.successContainer,
+                        size = 40.dp,
                     )
-                    Spacer(Modifier.width(12.dp))
+                    Spacer(Modifier.width(14.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
                             "已就绪 ${history.availableDrawCount} 期",
-                            style = MaterialTheme.typography.titleMedium,
+                            style = MaterialTheme.typography.titleSmall,
                         )
                         Text(
                             "${history.sourceName} · 核对于 ${formatAiTime(history.fetchedAtEpochMillis)}",
@@ -698,9 +642,7 @@ private fun AiHistoryStatus(
                             strokeWidth = 2.dp,
                         )
                     } else {
-                        TextButton(onClick = onRefresh) {
-                            Text("刷新")
-                        }
+                        InlineTextButton(text = "刷新", onClick = onRefresh)
                     }
                 }
 
@@ -714,9 +656,7 @@ private fun AiHistoryStatus(
                         )
                     }
                     Spacer(Modifier.width(8.dp))
-                    TextButton(onClick = onRetry) {
-                        Text("重试")
-                    }
+                    InlineTextButton(text = "重试", onClick = onRetry)
                 }
             }
         }
@@ -726,45 +666,40 @@ private fun AiHistoryStatus(
 /** 展示本地阻断或单次请求失败。 */
 @Composable
 private fun AiErrorMessage(message: String) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.small,
-        color = MaterialTheme.colorScheme.errorContainer,
-    ) {
-        Text(
-            text = message,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onErrorContainer,
-        )
-    }
+    Notice(message = message, tone = NoticeTone.ERROR)
 }
 
 /** 展示最近一次合法结果的可复核元数据与摘要。 */
 @Composable
 private fun AiResultHeader(result: AiAnalysisSessionResult) {
-    Text("分析结果", style = MaterialTheme.typography.headlineMedium)
-    Spacer(Modifier.height(6.dp))
-    Text(
-        "${result.preview.providerName} · ${result.preview.model}",
-        style = MaterialTheme.typography.bodyLarge,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    SectionHeader(
+        title = "分析结果",
+        subtitle = "${result.preview.providerName} · ${result.preview.model}",
     )
-    Spacer(Modifier.height(4.dp))
-    Text(
-        "${result.sourceName} · ${result.preview.firstIssue} 至 ${result.preview.lastIssue} · ${result.preview.sampleCount} 期",
-        style = MaterialTheme.typography.bodyMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
-    Text(
-        "生成于 ${formatAiTime(
-            result.generatedAtEpochMillis,
-        )} · 快照 ${result.preview.snapshotId.take(SHORT_SNAPSHOT_LENGTH)}",
-        style = MaterialTheme.typography.bodyMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
-    Spacer(Modifier.height(16.dp))
-    Text(result.analysis.summary, style = MaterialTheme.typography.bodyLarge)
+    Spacer(Modifier.height(SectionTitleSpacing))
+    LotteryCard(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconTile(icon = LotteryIcons.Sparkles, size = 36.dp)
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "${result.sourceName} · ${result.preview.firstIssue} 至 ${result.preview.lastIssue} · " +
+                        "${result.preview.sampleCount} 期",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    "生成于 ${formatAiTime(
+                        result.generatedAtEpochMillis,
+                    )} · 快照 ${result.preview.snapshotId.take(SHORT_SNAPSHOT_LENGTH)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        HairlineDivider()
+        Text(result.analysis.summary, style = MaterialTheme.typography.bodyMedium)
+    }
 }
 
 /** 绘制一注通过本地彩票规则复核的 AI 候选。 */
@@ -774,69 +709,23 @@ private fun AiCandidateItem(
     lotteryType: LotteryType,
     candidate: AiAnalysisCandidate,
 ) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.small,
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text("第 ${index + 1} 注", style = MaterialTheme.typography.titleMedium)
-            Spacer(Modifier.height(12.dp))
-            Text(
-                lotteryType.primaryAreaName(),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(6.dp))
-            AiNumberRow(candidate.line.primaryNumbers, isPrimary = true)
-            Spacer(Modifier.height(10.dp))
-            Text(
-                lotteryType.secondaryAreaName(),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(6.dp))
-            AiNumberRow(candidate.line.secondaryNumbers, isPrimary = false)
-            Spacer(Modifier.height(12.dp))
-            Text(
-                candidate.reason,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-    }
-}
-
-/** 使用稳定尺寸和彩票区域色绘制一组升序号码。 */
-@Composable
-private fun AiNumberRow(
-    numbers: List<Int>,
-    isPrimary: Boolean,
-) {
-    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        numbers.forEach { number ->
-            Surface(
-                modifier = Modifier.size(32.dp),
-                shape = CircleShape,
-                color =
-                    if (isPrimary) {
-                        MaterialTheme.colorScheme.primaryContainer
-                    } else {
-                        MaterialTheme.colorScheme.secondaryContainer
-                    },
-                contentColor =
-                    if (isPrimary) {
-                        MaterialTheme.colorScheme.onPrimaryContainer
-                    } else {
-                        MaterialTheme.colorScheme.onSecondaryContainer
-                    },
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Text(number.toString().padStart(2, '0'), style = MaterialTheme.typography.labelLarge)
-                }
-            }
-        }
+    val description =
+        "第 ${index + 1} 注，${lotteryType.primaryAreaName()} " +
+            candidate.line.primaryNumbers.joinToString(" ") { it.toString().padStart(2, '0') } +
+            "，${lotteryType.secondaryAreaName()} " +
+            candidate.line.secondaryNumbers.joinToString(" ") { it.toString().padStart(2, '0') }
+    LotteryCard(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text("第 ${index + 1} 注", style = MaterialTheme.typography.titleSmall)
+        NumberBallLine(
+            primaryNumbers = candidate.line.primaryNumbers,
+            secondaryNumbers = candidate.line.secondaryNumbers,
+            modifier = Modifier.clearAndSetSemantics { contentDescription = description },
+        )
+        Text(
+            candidate.reason,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
@@ -849,6 +738,7 @@ private fun AiRequestConfirmationDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surface,
         title = { Text("确认发送公开历史数据") },
         text = {
             Column(
@@ -886,7 +776,7 @@ private fun AiRequestConfirmationDialog(
             }
         },
         confirmButton = {
-            Button(onClick = onConfirm, shape = MaterialTheme.shapes.small) {
+            Button(onClick = onConfirm, shape = CircleShape) {
                 Icon(LotteryIcons.Send, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
                 Text("确认并发送")
@@ -917,10 +807,11 @@ private fun AiModelCatalogDialog(
         AiModelCatalogState.Loading -> {
             AlertDialog(
                 onDismissRequest = onDismiss,
+                containerColor = MaterialTheme.colorScheme.surface,
                 title = { Text("获取模型列表") },
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth().clip(CircleShape))
                         Text("正在从服务商读取模型列表…", style = MaterialTheme.typography.bodyMedium)
                     }
                 },
@@ -933,6 +824,7 @@ private fun AiModelCatalogDialog(
         is AiModelCatalogState.Failed -> {
             AlertDialog(
                 onDismissRequest = onDismiss,
+                containerColor = MaterialTheme.colorScheme.surface,
                 title = { Text("无法获取模型列表") },
                 text = { Text(state.message, style = MaterialTheme.typography.bodyMedium) },
                 confirmButton = {
@@ -952,6 +844,7 @@ private fun AiModelCatalogDialog(
                 }
             AlertDialog(
                 onDismissRequest = onDismiss,
+                containerColor = MaterialTheme.colorScheme.surface,
                 title = { Text("选择模型（共 ${state.models.size} 个）") },
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -962,6 +855,8 @@ private fun AiModelCatalogDialog(
                                 modifier = Modifier.fillMaxWidth(),
                                 singleLine = true,
                                 placeholder = { Text("搜索模型") },
+                                shape = CircleShape,
+                                colors = lotteryTextFieldColors(),
                                 leadingIcon = { Icon(LotteryIcons.Search, contentDescription = null) },
                             )
                         }
@@ -1024,10 +919,11 @@ private fun AiRequestingDialog(
 ) {
     AlertDialog(
         onDismissRequest = onCancel,
+        containerColor = MaterialTheme.colorScheme.surface,
         title = { Text("正在等待 AI 服务") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth().clip(CircleShape))
                 Text(
                     "${preview.providerName} · ${preview.model} · ${preview.sampleCount} 期",
                     style = MaterialTheme.typography.bodyMedium,
@@ -1037,7 +933,7 @@ private fun AiRequestingDialog(
             }
         },
         confirmButton = {
-            OutlinedButton(onClick = onCancel, shape = MaterialTheme.shapes.small) {
+            OutlinedButton(onClick = onCancel, shape = CircleShape) {
                 Icon(LotteryIcons.Stop, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
                 Text("取消请求")

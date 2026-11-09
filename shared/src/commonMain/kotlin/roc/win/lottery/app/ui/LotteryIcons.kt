@@ -3,12 +3,17 @@ package roc.win.lottery.app.ui
 import androidx.compose.ui.graphics.vector.ImageVector
 import com.composables.icons.lucide.ArrowLeft
 import com.composables.icons.lucide.BrainCircuit
+import com.composables.icons.lucide.Calendar
 import com.composables.icons.lucide.Camera
 import com.composables.icons.lucide.ChartNoAxesCombined
 import com.composables.icons.lucide.Check
 import com.composables.icons.lucide.ChevronDown
+import com.composables.icons.lucide.ChevronRight
+import com.composables.icons.lucide.ChevronUp
+import com.composables.icons.lucide.CircleCheck
 import com.composables.icons.lucide.CircleStop
 import com.composables.icons.lucide.ClipboardCheck
+import com.composables.icons.lucide.Database
 import com.composables.icons.lucide.Dices
 import com.composables.icons.lucide.EllipsisVertical
 import com.composables.icons.lucide.Eye
@@ -20,6 +25,7 @@ import com.composables.icons.lucide.Image
 import com.composables.icons.lucide.Info
 import com.composables.icons.lucide.KeyRound
 import com.composables.icons.lucide.ListChecks
+import com.composables.icons.lucide.Lock
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.Maximize
 import com.composables.icons.lucide.Menu
@@ -28,12 +34,18 @@ import com.composables.icons.lucide.Minus
 import com.composables.icons.lucide.MoveDown
 import com.composables.icons.lucide.Pencil
 import com.composables.icons.lucide.Plus
+import com.composables.icons.lucide.ReceiptText
 import com.composables.icons.lucide.RefreshCw
+import com.composables.icons.lucide.ScanLine
 import com.composables.icons.lucide.Search
 import com.composables.icons.lucide.Send
 import com.composables.icons.lucide.ShieldCheck
 import com.composables.icons.lucide.SlidersHorizontal
+import com.composables.icons.lucide.Sparkles
+import com.composables.icons.lucide.TicketCheck
 import com.composables.icons.lucide.Trash2
+import com.composables.icons.lucide.TriangleAlert
+import com.composables.icons.lucide.Trophy
 import com.composables.icons.lucide.X
 
 /** 从 Lucide 图标集集中暴露应用使用的图标。 */
@@ -136,4 +148,40 @@ object LotteryIcons {
 
     /** 重新加载图标。 */
     val Refresh: ImageVector = Lucide.RefreshCw
+
+    /** 进入下一级的箭头。 */
+    val ChevronRight: ImageVector = Lucide.ChevronRight
+
+    /** 收起内容的箭头。 */
+    val Collapse: ImageVector = Lucide.ChevronUp
+
+    /** 正向完成状态。 */
+    val Success: ImageVector = Lucide.CircleCheck
+
+    /** 提醒与警告状态。 */
+    val Warning: ImageVector = Lucide.TriangleAlert
+
+    /** 品牌强调与 AI 生成。 */
+    val Sparkles: ImageVector = Lucide.Sparkles
+
+    /** 扫描票面。 */
+    val Scan: ImageVector = Lucide.ScanLine
+
+    /** 本机数据存储。 */
+    val Storage: ImageVector = Lucide.Database
+
+    /** 本机加密与私密。 */
+    val Lock: ImageVector = Lucide.Lock
+
+    /** 已核对的彩票。 */
+    val TicketChecked: ImageVector = Lucide.TicketCheck
+
+    /** 中奖结果。 */
+    val Trophy: ImageVector = Lucide.Trophy
+
+    /** 开奖日期。 */
+    val Calendar: ImageVector = Lucide.Calendar
+
+    /** 官方证据。 */
+    val Evidence: ImageVector = Lucide.ReceiptText
 }

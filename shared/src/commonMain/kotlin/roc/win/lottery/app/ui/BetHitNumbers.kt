@@ -6,7 +6,6 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -18,10 +17,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -32,13 +29,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import roc.win.lottery.domain.DrawResult
@@ -113,8 +108,7 @@ internal fun BetHitNumbers(
                     number = number,
                     isHit = number in drawResult.primaryNumbers,
                     size = size,
-                    hitColor = MaterialTheme.colorScheme.primary,
-                    onHitColor = MaterialTheme.colorScheme.onPrimary,
+                    hitStyle = BallStyle.RED,
                 )
             }
         }
@@ -123,8 +117,8 @@ internal fun BetHitNumbers(
             Box(modifier = Modifier.size(size), contentAlignment = Alignment.Center) {
                 Text(
                     "+",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.outline,
                 )
             }
             secondaryNumbers.sorted().forEach { number ->
@@ -132,8 +126,7 @@ internal fun BetHitNumbers(
                     number = number,
                     isHit = number in drawResult.secondaryNumbers,
                     size = size,
-                    hitColor = MaterialTheme.colorScheme.secondary,
-                    onHitColor = MaterialTheme.colorScheme.onSecondary,
+                    hitStyle = BallStyle.BLUE,
                 )
             }
         }
@@ -225,37 +218,27 @@ internal fun ExpandableSection(
     }
 }
 
-/** 一个命中或未命中的只读号码球。 */
+/** 一个命中或未命中的只读号码球：命中为实心彩球，未命中为白底描边。 */
 @Composable
 private fun HitBall(
     number: Int,
     isHit: Boolean,
     size: Dp,
-    hitColor: Color,
-    onHitColor: Color,
+    hitStyle: BallStyle,
 ) {
-    Surface(
-        modifier = Modifier.size(size),
-        shape = CircleShape,
-        color = if (isHit) hitColor else MaterialTheme.colorScheme.surface,
-        contentColor = if (isHit) onHitColor else MaterialTheme.colorScheme.onSurfaceVariant,
-        border = if (isHit) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-    ) {
-        Box(contentAlignment = Alignment.Center) {
-            Text(
-                number.toString().padStart(2, '0'),
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = if (isHit) FontWeight.Bold else FontWeight.Normal,
-            )
-        }
-    }
+    LotteryBall(
+        text = number.toString().padStart(2, '0'),
+        style = if (isHit) hitStyle else BallStyle.OUTLINE,
+        size = size,
+        elevated = false,
+    )
 }
 
 /** 把号码列表转换为空格分隔的两位文本。 */
 private fun List<Int>.toBallText(): String = joinToString(separator = " ") { it.toString().padStart(2, '0') }
 
 /** 命中号码球最大直径。 */
-private val HIT_BALL_MAX_SIZE = 32.dp
+private val HIT_BALL_MAX_SIZE = 34.dp
 
 /** 单行排列时号码球的最小直径，再小就改为换行排列。 */
 private val HIT_BALL_MIN_SIZE = 26.dp
