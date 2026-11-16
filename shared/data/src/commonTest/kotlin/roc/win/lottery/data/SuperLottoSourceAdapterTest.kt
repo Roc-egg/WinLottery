@@ -121,18 +121,26 @@ class SuperLottoSourceAdapterTest {
         )
     }
 
-    /** 审核、开奖或公告字段未完成时只能返回发布中。 */
+    /** 尚未审核的记录只能返回发布中，不使用其中的号码。 */
     @Test
-    fun incompletePublicationFieldsArePublishing() {
+    fun unverifiedRecordIsPublishing() {
         assertIs<SourceParseResult.Publishing>(
             parseMain(DrawContractFixtures.superLottoMain(verify = 0)),
         )
-        assertIs<SourceParseResult.Publishing>(
-            parseMain(DrawContractFixtures.superLottoMain(drawStatus = 10)),
-        )
-        assertIs<SourceParseResult.Publishing>(
-            parseMain(DrawContractFixtures.superLottoMain(notice = 0)),
-        )
+    }
+
+    /** 已审核但开奖或公告状态未到终态时照常比对号码，奖金保持待官方确认。 */
+    @Test
+    fun verifiedNumbersBeforeFinalNoticeDeferPayout() {
+        listOf(
+            DrawContractFixtures.superLottoMain(drawStatus = 10),
+            DrawContractFixtures.superLottoMain(notice = 0),
+            DrawContractFixtures.superLottoMain(drawStatus = 10, notice = 0),
+        ).forEach { raw ->
+            val snapshot = assertIs<SourceParseResult.Success<MainDrawSnapshot>>(parseMain(raw)).value
+            assertEquals(listOf(3, 4, 7, 12, 32), snapshot.primaryNumbers, raw)
+            assertFalse(snapshot.payoutFieldsComplete, raw)
+        }
     }
 
     /** 已审核派奖期应保留开奖号码和基础奖级，同时把奖金状态降为待确认。 */

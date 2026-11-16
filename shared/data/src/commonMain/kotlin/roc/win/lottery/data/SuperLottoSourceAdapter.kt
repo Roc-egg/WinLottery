@@ -130,7 +130,11 @@ internal object SuperLottoSourceAdapter {
             )
         }
 
-    /** 解析一条大乐透主记录；号码必须严格合法，奖级金额无法确认时只留空。 */
+    /**
+     * 解析一条大乐透主记录；号码必须严格合法，奖级金额无法确认时只留空。
+     *
+     * 只要记录已审核且号码合法即可比对号码；开奖或公告状态尚未到终态时，奖级表照常解析，但金额保持待官方确认。
+     */
     private fun parseMainRecord(
         record: JsonObject,
         targetIssue: String,
@@ -148,9 +152,11 @@ internal object SuperLottoSourceAdapter {
         val notice =
             record.int("lotteryNotice")
                 ?: return SourceParseResult.SourceUnavailable("大乐透主响应缺少公告状态")
-        if (verify != VERIFIED_VALUE || drawStatus != FINAL_DRAW_STATUS || notice != PUBLISHED_NOTICE_VALUE) {
-            return SourceParseResult.Publishing("大乐透目标期次仍处于发布中")
+        if (verify != VERIFIED_VALUE) {
+            return SourceParseResult.Publishing("大乐透目标期次尚未完成审核")
         }
+        // 已审核的开奖号码即为官方号码；开奖与公告状态都到终态后，奖级金额才可能完整。
+        val publicationComplete = drawStatus == FINAL_DRAW_STATUS && notice == PUBLISHED_NOTICE_VALUE
         val promotionFlag =
             record.int("lotteryPromotionFlag")
                 ?: return SourceParseResult.SourceUnavailable("大乐透主响应缺少派奖状态")
@@ -164,14 +170,14 @@ internal object SuperLottoSourceAdapter {
             return SourceParseResult.SourceUnavailable("大乐透开奖日期与期号年份不一致")
         }
         val promotionActive = promotionFlag != NO_PROMOTION_VALUE
-        // 审核和公告字段已确认终态，奖级表异常只让金额待定，不阻断号码比对。
+        // 号码已审核，奖级表异常只让金额待定，不阻断号码比对。
         val tiers =
             when (val tierResult = parsePrizeTiers(record, promotionActive)) {
                 is PrizeTierParseResult.Success -> tierResult.tiers
                 is PrizeTierParseResult.Failure -> emptyList()
             }
         val detailUrl = normalizeDetailUrl(record.text("drawPdfUrl"), targetIssue)
-        val payoutFieldsComplete = !promotionActive && hasCompletePayouts(tiers)
+        val payoutFieldsComplete = publicationComplete && !promotionActive && hasCompletePayouts(tiers)
         val canonical =
             canonicalMainDraw(
                 lotteryType = LotteryType.SUPER_LOTTO,

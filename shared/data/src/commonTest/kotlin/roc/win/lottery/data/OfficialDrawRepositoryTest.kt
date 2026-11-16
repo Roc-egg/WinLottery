@@ -158,6 +158,51 @@ class OfficialDrawRepositoryTest {
             assertEquals(DrawStatus.FINAL_PAYOUT, assertIs<DrawQueryResult.Success>(result).drawResult.status)
         }
 
+    /** 号码已审核但公告和奖金尚未发布时，仍返回号码已确认，可直接判断中奖奖级，奖金待官方确认。 */
+    @Test
+    fun verifiedSuperLottoNumbersBeforeNoticeStillCompare() =
+        runTest {
+            val repository =
+                repository(clock = MutableTestClock("2026-08-12T15:00:00Z")) { request ->
+                    when (request.url.encodedPath) {
+                        DLT_MAIN_PATH -> jsonResponse(DrawContractFixtures.superLottoMain(drawStatus = 10, notice = 0))
+                        DLT_SUPPORTING_PATH -> jsonResponse(DrawContractFixtures.superLottoSupporting(notice = 0))
+                        else -> error("收到未预期请求：${request.url}")
+                    }
+                }
+
+            val draw =
+                assertIs<DrawQueryResult.Success>(
+                    repository.getDraw(LotteryType.SUPER_LOTTO, Issue("26091")),
+                ).drawResult
+            assertEquals(DrawStatus.FINAL_NUMBERS, draw.status)
+            assertEquals(listOf(3, 4, 7, 12, 32), draw.primaryNumbers)
+            assertEquals(listOf(1, 2), draw.secondaryNumbers)
+
+            val ticket =
+                ConfirmedTicket(
+                    lotteryType = confirmed(LotteryType.SUPER_LOTTO),
+                    issue = confirmed(Issue("26091")),
+                    betLines =
+                        listOf(
+                            BetLine(
+                                primaryNumbers = confirmed(listOf(3, 4, 7, 12, 32)),
+                                secondaryNumbers = confirmed(listOf(1, 2)),
+                                isAdditional = confirmed(false),
+                                originalText = "公告前比对测试投注行",
+                            ),
+                        ),
+                    multiplier = confirmed(1),
+                    periodCount = confirmed(1),
+                    paidAmountFen = confirmed(200L),
+                )
+            val result = LotteryPrizeCalculator().calculate(ticket, draw)
+
+            assertEquals(PrizeCheckStatus.WIN, result.status)
+            assertEquals(PrizeTierCodes.FIRST, result.lineResults.single().prizeTierCode)
+            assertNull(result.estimatedPrizeFen)
+        }
+
     /** 主、辅助号码不一致必须进入冲突，绝不能输出开奖或未中奖结论。 */
     @Test
     fun inconsistentSourcesReturnConflict() =

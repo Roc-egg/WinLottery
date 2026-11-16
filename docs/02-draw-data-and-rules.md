@@ -62,7 +62,7 @@ verify == 1
 lotteryDrawResult 可解析为 5+2 个合法号码
 ```
 
-主接口必须同时满足 `lotteryDrawStatus=20` 和 `lotteryNotice=1`，并显式提供 `lotteryPromotionFlag`。该字段为 `0` 时可继续确认完整奖金；非零时不再否定已经审核发布的号码和基础奖级，但只能进入 `FINAL_NUMBERS`，派奖金额保持待官方确认。`drawPdfUrl` 用于最新聚合接口已经滚动到其他期号时的历史公告回退，不能单独证明开奖结果。
+主接口必须显式提供 `lotteryDrawStatus`、`lotteryNotice` 和 `lotteryPromotionFlag`。按 ADR-037，`verify=1` 且号码合法即可比对号码；只有同时满足 `lotteryDrawStatus=20` 和 `lotteryNotice=1` 时奖级金额才可能完整，否则只形成 `FINAL_NUMBERS`。`lotteryPromotionFlag` 为 `0` 时可继续确认完整奖金；非零时不再否定已经审核发布的号码和基础奖级，但只能进入 `FINAL_NUMBERS`，派奖金额保持待官方确认。`drawPdfUrl` 用于最新聚合接口已经滚动到其他期号时的历史公告回退，不能单独证明开奖结果。
 
 关键字段：
 
@@ -195,8 +195,8 @@ message 包含“没有查到数据”：映射为开奖数据尚不可用
 
 ```text
 无记录 → NOT_PUBLISHED
-记录存在但官网审核/开奖/公告状态尚未完成 → PUBLISHING
-主接口给出已发布的合法开奖号码 → FINAL_NUMBERS
+记录存在但尚未通过官网审核 → PUBLISHING
+主接口给出已审核的合法开奖号码（大乐透开奖或公告状态未到终态时同样适用）→ FINAL_NUMBERS
 有中奖注的奖级金额完整、无未建模派奖或说明，且辅助数据面未给出矛盾金额 → FINAL_PAYOUT
 设备离线、DNS 或连接超时 → NETWORK_UNAVAILABLE
 主接口 HTTP/业务失败、号码或日期解析失败 → SOURCE_UNAVAILABLE
@@ -208,11 +208,11 @@ message 包含“没有查到数据”：映射为开奖数据尚不可用
 V1 直连条件下必须满足：
 
 - 主接口给出明确发布的目标期号和合法开奖号码即可进入 `FINAL_NUMBERS`；同一次用户操作中会尽力取得辅助数据面交叉核对，辅助数据面网络失败、未发布、PDF 不可解析或平台未接入提取器时不阻断结果，只是不附带辅助证据。
-- 大乐透主接口必须满足 `success=true`、`errorCode="0"`、目标期号唯一、`verify=1`、`lotteryDrawStatus=20`、`lotteryNotice=1`、号码合法。`lotteryPromotionFlag` 非零时，已知派奖行与七个基础奖级隔离，只形成 `FINAL_NUMBERS`；奖级表出现未知奖级或金额不符合现行规则时放弃整张奖级表，金额待官方确认，但号码照常比对。
+- 大乐透主接口必须满足 `success=true`、`errorCode="0"`、目标期号唯一、`verify=1`、号码合法；`lotteryDrawStatus=20` 且 `lotteryNotice=1` 才可能进入 `FINAL_PAYOUT`，未到终态时号码照常比对、金额待官方确认（ADR-037）。`lotteryPromotionFlag` 非零时，已知派奖行与七个基础奖级隔离，只形成 `FINAL_NUMBERS`；奖级表出现未知奖级或金额不符合现行规则时放弃整张奖级表，金额待官方确认，但号码照常比对。
 - 大乐透最新聚合接口实际返回目标期且 `verify=1`、`lotteryNotice=1` 时用于交叉核对，不额外下载同一期 PDF；非最新历史期改为下载主记录绑定的同一期 `pdf.sporttery.cn` 公告，期号、日期、号码、全部奖级及奖金乘法由共享解析器校验。
 - 双色球必须以 `findDrawNotice` 为主源；`forIssue` 只能辅助核对号码和基础奖级。派奖字段非空、政策字段缺失、奖级表不符合现行规则或出现未建模说明时，号码照常比对，金额停留在 `FINAL_NUMBERS`。
 - 双色球 `2026014` 至 `2026075` 的特别规定范围已由官方公告和开奖字段交叉确认（`2026075.specialRuleInfo` 明确说明从 `2026076` 起退出），该区间始终按福运奖矩阵判级，福运奖字段缺失时只让福运奖金额待定。区间之外主接口给出 `fyjCount/fyjMoney` 时按官网字段启用福运奖；均为空时按普通矩阵判级。
-- 发布窗口不再使用固定等待时间推断完整性。主接口无记录或审核状态未完成时保持 `NOT_PUBLISHED` 或 `PUBLISHING`；双源号码不一致时返回 `CONFLICT`，该状态只影响本次查询，重新查询即可恢复。应用不在后台等待或自动轮询。
+- 发布窗口不再使用固定等待时间推断完整性。主接口无记录或尚未通过审核时保持 `NOT_PUBLISHED` 或 `PUBLISHING`；号码已审核但开奖、公告或奖金尚未完整时进入 `FINAL_NUMBERS`，先给出中奖奖级；双源号码不一致时返回 `CONFLICT`，该状态只影响本次查询，重新查询即可恢复。应用不在后台等待或自动轮询。
 - `detailsLink` 或 `drawPdfUrl` 的存在本身不是最终状态；最终状态仍要求明确发布字段、完整结构和两个官方证据的数据一致性。
 - PDF 响应必须保持精确最终 URL、`application/pdf`、不超过 1 MB、PDF 1.4、单页、未加密、无表单和固定生产器；平台文本顺序可匹配已测试布局，但不得放宽字段或金额关系。iOS 26.5 Simulator 已在无代理条件下完成 Darwin 主 JSON、官方 PDFKit 和双证据复测；若系统信任评估再次拒绝证书，仍必须返回 `NETWORK_UNAVAILABLE`，禁止跳过 TLS 信任评估。
 - 当前结果只在用户主动查询时更新，不高频轮询，不缓存或持久化原始响应。按 ADR-027，号码已确认的开奖（含奖级金额和证据摘要）按彩种和期号保存到本机，再次查询时对本票已完成的期次直接使用、现算判级；本票中奖但金额待确认的期次仍会重查。3.1 的走势历史开奖不含奖级金额，中奖核对只把它的最新一期用作开奖日程的参考。
