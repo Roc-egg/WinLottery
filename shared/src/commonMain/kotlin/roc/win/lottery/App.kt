@@ -17,6 +17,7 @@ import roc.win.lottery.app.AppContainer
 import roc.win.lottery.app.AppScreen
 import roc.win.lottery.app.LotteryAppSession
 import roc.win.lottery.app.MainDestination
+import roc.win.lottery.app.TicketRecordDrawSummary
 import roc.win.lottery.app.TicketReviewAction
 import roc.win.lottery.app.theme.LotteryTheme
 import roc.win.lottery.app.theme.PlatformAppearanceEffect
@@ -138,6 +139,22 @@ fun App(session: LotteryAppSession) {
             }
         }
 
+    val readyRecords = (recordCollection as? TicketRecordCollectionState.Ready)?.records.orEmpty()
+    val isRecordsScreen = uiState.screen is AppScreen.Records
+    // 进入记录页、记录变化或查询开奖后返回时，用本机已保存的开奖重新现算每条记录的核对概况。
+    val recordSummaries by
+        produceState(emptyMap<String, TicketRecordDrawSummary>(), readyRecords, isRecordsScreen) {
+            if (!isRecordsScreen) return@produceState
+            value =
+                try {
+                    controller.summarizeTicketRecords(readyRecords)
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (_: Exception) {
+                    emptyMap()
+                }
+        }
+
     SystemBackHandler(enabled = uiState.screen != AppScreen.Home) {
         if (uiState.screen is AppScreen.AiAnalysis) {
             cancelAiRequest()
@@ -226,10 +243,8 @@ fun App(session: LotteryAppSession) {
             is AppScreen.Records -> {
                 TicketRecordsScreen(
                     screen = screen,
-                    records =
-                        (recordCollection as? TicketRecordCollectionState.Ready)
-                            ?.records
-                            .orEmpty(),
+                    records = readyRecords,
+                    recordSummaries = recordSummaries,
                     isLoading = recordCollection is TicketRecordCollectionState.Loading,
                     loadError =
                         (recordCollection as? TicketRecordCollectionState.Failed)

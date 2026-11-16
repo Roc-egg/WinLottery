@@ -1,5 +1,6 @@
 package roc.win.lottery.app
 
+import androidx.compose.runtime.getValue
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
@@ -35,6 +36,7 @@ import roc.win.lottery.domain.RandomNumberGenerationResult
 import roc.win.lottery.domain.TREND_LOTTERY_TYPES
 import roc.win.lottery.persistence.AiAnalysisRecord
 import roc.win.lottery.persistence.SavedAiConnection
+import roc.win.lottery.persistence.StoredTicketRecord
 import roc.win.lottery.persistence.TICKET_RECORD_EXPORT_EXTENSION
 import roc.win.lottery.persistence.ThemePreference
 import roc.win.lottery.persistence.TicketAcquisitionSource
@@ -1007,6 +1009,43 @@ class LotteryAppController(
             } else {
                 state
             }
+        }
+    }
+
+    /**
+     * 用本机已保存的官方开奖现算每条记录的核对概况，不联网，也不保存任何票据的中奖结论。
+     *
+     * 多期票按本年度顺延推算期号；跨年度的期次要在查询开奖取得官网期号后才能对上，此前计为未核对。
+     *
+     * @param records 需要展示概况的记录。
+     * @return 以记录标识为键的核对概况。
+     */
+    suspend fun summarizeTicketRecords(records: List<StoredTicketRecord>): Map<String, TicketRecordDrawSummary> {
+        val issuesByRecord =
+            records.associate { record ->
+                val ticket = record.ticket
+                val issues =
+                    (
+                        issueSequenceResolver.resolve(
+                            ticket.lotteryType.value,
+                            ticket.issue.value,
+                            ticket.periodCount.value,
+                        ) as? IssueSequenceResult.Success
+                    )?.issues.orEmpty()
+                record.id to issues
+            }
+        val drawsByLottery =
+            records.groupBy { it.ticket.lotteryType.value }.mapValues { (lotteryType, sameLottery) ->
+                drawResultCache.load(lotteryType, sameLottery.flatMap { issuesByRecord.getValue(it.id) }.toSet())
+            }
+        return records.associate { record ->
+            record.id to
+                summarizeTicketDraws(
+                    ticket = record.ticket,
+                    issues = issuesByRecord.getValue(record.id),
+                    draws = drawsByLottery[record.ticket.lotteryType.value].orEmpty(),
+                    calculator = container.prizeCalculator,
+                )
         }
     }
 

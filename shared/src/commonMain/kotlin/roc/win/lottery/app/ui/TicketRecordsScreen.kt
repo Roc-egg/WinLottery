@@ -1,5 +1,6 @@
 package roc.win.lottery.app.ui
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -10,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -47,6 +49,7 @@ import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 import roc.win.lottery.app.AppScreen
 import roc.win.lottery.app.MainDestination
+import roc.win.lottery.app.TicketRecordDrawSummary
 import roc.win.lottery.app.TicketRecordFilter
 import roc.win.lottery.app.filterTicketRecords
 import roc.win.lottery.app.theme.LotteryThemeTokens
@@ -63,6 +66,7 @@ import kotlin.time.Instant
  *
  * @param screen 当前列表筛选与操作状态。
  * @param records 仓库提供的全部合法记录。
+ * @param recordSummaries 用本机已保存开奖现算的各记录核对概况；尚未算出的记录不在其中。
  * @param isLoading 是否仍在等待数据库首次返回。
  * @param loadError 数据库读取失败时的安全错误说明。
  * @param supportsFileExchange 当前平台是否接入逻辑包系统文件接口。
@@ -83,6 +87,7 @@ import kotlin.time.Instant
 fun TicketRecordsScreen(
     screen: AppScreen.Records,
     records: List<StoredTicketRecord>,
+    recordSummaries: Map<String, TicketRecordDrawSummary>,
     isLoading: Boolean,
     loadError: String?,
     supportsFileExchange: Boolean,
@@ -257,9 +262,13 @@ fun TicketRecordsScreen(
                     }
 
                     else -> {
+                        item(key = "overview") {
+                            TicketRecordsOverview(visibleRecords.mapNotNull { recordSummaries[it.id] })
+                        }
                         items(items = visibleRecords, key = StoredTicketRecord::id) { record ->
                             TicketRecordItem(
                                 record = record,
+                                summary = recordSummaries[record.id],
                                 onRename = {
                                     renamingRecord = record
                                     renameValue = record.displayName
@@ -407,16 +416,60 @@ private fun TicketRecordManagementMenu(
     }
 }
 
-/** 显示一条可重复操作的结构化票据摘要。 */
+/**
+ * 列表顶部的汇总卡：当前筛选下核对完成与中奖的张数，以及已确认的税前奖金合计。
+ *
+ * @param summaries 当前可见记录中已算出的核对概况。
+ */
+@Composable
+private fun TicketRecordsOverview(summaries: List<TicketRecordDrawSummary>) {
+    if (summaries.isEmpty()) return
+    val completeCount = summaries.count { it.isComplete }
+    val winningCount = summaries.count { it.winningPeriodCount > 0 }
+    val confirmedPrizeFen =
+        summaries.fold(0L) { total, summary ->
+            val amount = summary.confirmedPrizeFen
+            if (total > Long.MAX_VALUE - amount) Long.MAX_VALUE else total + amount
+        }
+    val incompleteCount = summaries.size - completeCount
+    LotteryCard(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(modifier = Modifier.fillMaxWidth()) {
+            RecordMetric(label = "核对完成", value = "$completeCount/${summaries.size} 张", modifier = Modifier.weight(1f))
+            RecordMetric(
+                label = "中奖",
+                value = "$winningCount 张",
+                modifier = Modifier.weight(1f),
+                highlighted = winningCount > 0,
+            )
+            RecordMetric(
+                label = "已确认奖金",
+                value = if (confirmedPrizeFen > 0L) confirmedPrizeFen.toGroupedYuanText() else "—",
+                modifier = Modifier.weight(1.3f),
+                highlighted = confirmedPrizeFen > 0L,
+            )
+        }
+        if (incompleteCount > 0) {
+            Text(
+                "$incompleteCount 张未全部核对，点记录上的“继续核对”或“查询开奖”可联网补查。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/** 显示一条可重复操作的结构化票据摘要，并直观展示已开奖、中奖期数和税前奖金。 */
 @Composable
 private fun TicketRecordItem(
     record: StoredTicketRecord,
+    summary: TicketRecordDrawSummary?,
     onRename: () -> Unit,
     onDelete: () -> Unit,
     onQuery: () -> Unit,
     enabled: Boolean,
 ) {
-    val lotteryType = record.ticket.lotteryType.value
+    val ticket = record.ticket
+    val lotteryType = ticket.lotteryType.value
     val (accent, accentContainer) =
         when (lotteryType) {
             LotteryType.SUPER_LOTTO -> {
@@ -443,45 +496,44 @@ private fun TicketRecordItem(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    "${lotteryType.displayName()} · ${record.ticket.issue.value.value}",
+                    "${lotteryType.shortDisplayName()} · 第 ${ticket.issue.value.value} 期起 · " +
+                        "${ticket.periodCount.value} 期",
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            Spacer(Modifier.width(12.dp))
-            Text(
-                record.ticket.paidAmountFen.value
-                    .toYuanText(),
-                style = MaterialTheme.typography.titleMedium,
-            )
+            summary?.let {
+                Spacer(Modifier.width(8.dp))
+                RecordStatusTag(it)
+            }
         }
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            StatusTag("${record.ticket.periodCount.value} 期")
-            StatusTag("${record.ticket.multiplier.value} 倍")
-            StatusTag("${record.ticket.betLines.sumOf { it.betCount(lotteryType) }} 注")
-            Spacer(Modifier.weight(1f))
-            Text(
-                "${record.acquisitionSource.displayName()} · ${record.createdAtEpochMillis.toLocalTimeText()}",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-            )
-        }
+        summary?.let { RecordDrawPanel(it) }
+        Text(
+            "${record.acquisitionSource.displayName()} · ${record.createdAtEpochMillis.toLocalTimeText()} · " +
+                "${ticket.betLines.sumOf { it.betCount(lotteryType) }} 注 · ${ticket.multiplier.value} 倍 · " +
+                "实付 ${ticket.paidAmountFen.value.toYuanText()}",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         HairlineDivider()
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            val (actionLabel, actionIcon) =
+                when {
+                    summary == null || summary.drawnPeriodCount == 0 -> "查询开奖" to LotteryIcons.Search
+                    !summary.isComplete -> "继续核对" to LotteryIcons.Refresh
+                    else -> "查看结果" to LotteryIcons.Evidence
+                }
             PrimaryActionButton(
-                text = "查询开奖",
+                text = actionLabel,
                 onClick = onQuery,
                 enabled = enabled,
-                icon = LotteryIcons.Search,
+                icon = actionIcon,
                 modifier = Modifier.weight(1f).heightIn(max = 44.dp),
                 containerColor = MaterialTheme.colorScheme.primaryContainer,
                 contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
@@ -502,6 +554,112 @@ private fun TicketRecordItem(
                 tint = MaterialTheme.colorScheme.error,
             )
         }
+    }
+}
+
+/** 记录的核对状态标签：待核对、未全部核对、已中奖或未中奖。 */
+@Composable
+private fun RecordStatusTag(summary: TicketRecordDrawSummary) {
+    when {
+        summary.drawnPeriodCount == 0 -> StatusTag("待核对")
+        !summary.isComplete -> StatusTag("未全部核对", tone = TagTone.WARNING)
+        summary.winningPeriodCount > 0 -> StatusTag("已中奖", tone = TagTone.BRAND)
+        else -> StatusTag("未中奖", tone = TagTone.SUCCESS)
+    }
+}
+
+/**
+ * 记录卡片中的核对统计条：已开奖期数、中奖期数和税前奖金，多期票附带进度条，未核对完时说明原因。
+ *
+ * @param summary 本记录的核对概况。
+ */
+@Composable
+private fun RecordDrawPanel(summary: TicketRecordDrawSummary) {
+    val hasWin = summary.winningPeriodCount > 0
+    val confirmed = summary.confirmedPrizeFen
+    val hasPending = summary.pendingPrizePeriodCount > 0
+    val prizeText =
+        when {
+            !hasWin -> "—"
+            confirmed > 0L && hasPending -> "${confirmed.toGroupedYuanText()}起"
+            confirmed > 0L || !hasPending -> confirmed.toGroupedYuanText()
+            else -> "待确认"
+        }
+    val extended = LotteryThemeTokens.colors
+    Column(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .clip(MaterialTheme.shapes.medium)
+                .background(
+                    if (hasWin) {
+                        MaterialTheme.colorScheme.primaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.surfaceContainer
+                    },
+                ).padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Row(modifier = Modifier.fillMaxWidth()) {
+            RecordMetric(
+                label = "已开奖",
+                value = "${summary.drawnPeriodCount}/${summary.periodCount} 期",
+                modifier = Modifier.weight(1f),
+            )
+            RecordMetric(
+                label = "中奖",
+                value = if (summary.drawnPeriodCount == 0) "—" else "${summary.winningPeriodCount} 期",
+                modifier = Modifier.weight(1f),
+                highlighted = hasWin,
+            )
+            RecordMetric(
+                label = "税前奖金",
+                value = prizeText,
+                modifier = Modifier.weight(1.3f),
+                highlighted = hasWin,
+            )
+        }
+        if (summary.periodCount > 1 || !summary.isComplete) {
+            LinearProgressIndicator(
+                progress = { summary.drawnPeriodCount.toFloat() / summary.periodCount.coerceAtLeast(1) },
+                modifier = Modifier.fillMaxWidth().height(4.dp).clip(CircleShape),
+                color = if (summary.isComplete) extended.success else extended.warning,
+                trackColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.7f),
+                drawStopIndicator = {},
+                gapSize = 0.dp,
+            )
+        }
+        val hints =
+            listOfNotNull(
+                summary.remainingPeriodCount.takeIf { it > 0 }?.let { "还有 $it 期未核对" },
+                summary.pendingPrizePeriodCount.takeIf { it > 0 }?.let { "$it 期奖金待官方确认" },
+            )
+        if (hints.isNotEmpty()) {
+            Text(
+                hints.joinToString("，"),
+                style = MaterialTheme.typography.labelMedium,
+                color = extended.onWarningContainer.takeIf { !hasWin } ?: MaterialTheme.colorScheme.onPrimaryContainer,
+            )
+        }
+    }
+}
+
+/** 统计条中的一项：小号标签加醒目数值。 */
+@Composable
+private fun RecordMetric(
+    label: String,
+    value: String,
+    modifier: Modifier = Modifier,
+    highlighted: Boolean = false,
+) {
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(
+            value,
+            style = MaterialTheme.typography.titleMedium,
+            color = if (highlighted) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+        )
     }
 }
 
@@ -691,10 +849,10 @@ private fun TicketRecordFilter.displayName(): String =
         TicketRecordFilter.HAPPY_8 -> "快乐8"
     }
 
-/** 返回彩种的简体中文名称。 */
-private fun LotteryType.displayName(): String =
+/** 返回彩种在列表副标题中的简称。 */
+private fun LotteryType.shortDisplayName(): String =
     when (this) {
-        LotteryType.SUPER_LOTTO -> "超级大乐透"
+        LotteryType.SUPER_LOTTO -> "大乐透"
         LotteryType.DOUBLE_COLOR_BALL -> "双色球"
         LotteryType.HAPPY_8 -> "快乐8"
     }
@@ -706,6 +864,18 @@ private fun TicketAcquisitionSource.displayName(): String =
         TicketAcquisitionSource.SYSTEM_PICKER -> "系统选图"
         TicketAcquisitionSource.MANUAL_ENTRY -> "手动录入"
     }
+
+/** 把分转换为带千位分隔的人民币展示文本。 */
+private fun Long.toGroupedYuanText(): String {
+    val yuan =
+        (this / FEN_PER_YUAN)
+            .toString()
+            .reversed()
+            .chunked(3)
+            .joinToString(",")
+            .reversed()
+    return "$yuan.${(this % FEN_PER_YUAN).toString().padStart(2, '0')} 元"
+}
 
 /** 把分转换为只用于列表展示的人民币文本。 */
 private fun Long.toYuanText(): String = "${this / FEN_PER_YUAN}.${(this % FEN_PER_YUAN).toString().padStart(2, '0')} 元"
