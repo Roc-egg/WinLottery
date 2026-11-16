@@ -23,6 +23,8 @@ import roc.win.lottery.domain.Issue
 import roc.win.lottery.domain.LotteryPrizeCalculator
 import roc.win.lottery.domain.LotteryType
 import roc.win.lottery.domain.TicketValidator
+import roc.win.lottery.persistence.AiAnalysisRecord
+import roc.win.lottery.persistence.AiAnalysisRecordStore
 import roc.win.lottery.persistence.AiConnectionStore
 import roc.win.lottery.persistence.HistoricalDrawStore
 import roc.win.lottery.persistence.SavedAiConnection
@@ -36,6 +38,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Clock
@@ -318,6 +321,137 @@ class AiAnalysisControllerIntegrationTest {
             assertEquals(listOf(LotteryType.SUPER_LOTTO to 100), history.requests)
         }
 
+    /** 新结果写入本机；重启后进入 AI 页直接显示保存的结果和查询时间，不重新请求。 */
+    @Test
+    fun persistsResultAndRestoresAfterRestart() =
+        runTest {
+            val store = InMemoryAiAnalysisRecordStore()
+            val controller =
+                createController(CountingHistoryRepository(), RecordingAiProvider(), aiAnalysisRecordStore = store)
+            assertTrue(controller.savesAiResultsLocally)
+
+            controller.showAiAnalysis()
+            val record = controller.analyzeOnce()
+            assertEquals(record, store.records[LotteryType.SUPER_LOTTO])
+            assertEquals("测试服务", record.providerName)
+            assertEquals("test-model-v1", record.model)
+
+            val restartedProvider = RecordingAiProvider()
+            val restarted =
+                createController(CountingHistoryRepository(), restartedProvider, aiAnalysisRecordStore = store)
+            restarted.showAiAnalysis()
+
+            val screen = assertIs<AppScreen.AiAnalysis>(restarted.uiState.value.screen)
+            assertEquals(record, screen.workspace.lastResult)
+            assertEquals(0, restartedProvider.requestCount)
+        }
+
+    /** 每个彩种显示自己的结果；删除只影响当前彩种，本机内容同步删除。 */
+    @Test
+    fun eachLotteryShowsItsOwnResultAndDeleteRemovesIt() =
+        runTest {
+            val superLotto = testAiRecord(LotteryType.SUPER_LOTTO)
+            val doubleColorBall = testAiRecord(LotteryType.DOUBLE_COLOR_BALL)
+            val store = InMemoryAiAnalysisRecordStore(superLotto, doubleColorBall)
+            val controller =
+                createController(CountingHistoryRepository(), RecordingAiProvider(), aiAnalysisRecordStore = store)
+
+            controller.showAiAnalysis()
+            assertEquals(superLotto, controller.aiWorkspace().lastResult)
+            controller.updateAiAnalysisSettings(
+                controller.aiWorkspace().settings.copy(lotteryType = LotteryType.DOUBLE_COLOR_BALL),
+            )
+            assertEquals(doubleColorBall, controller.aiWorkspace().lastResult)
+            controller.updateAiAnalysisSettings(
+                controller.aiWorkspace().settings.copy(lotteryType = LotteryType.SUPER_LOTTO),
+            )
+            assertEquals(superLotto, controller.aiWorkspace().lastResult)
+
+            controller.deleteAiAnalysisRecord()
+            assertNull(controller.aiWorkspace().lastResult)
+            assertEquals(mapOf(LotteryType.DOUBLE_COLOR_BALL to doubleColorBall), store.records)
+            controller.navigateHome()
+            controller.showAiAnalysis()
+            assertNull(controller.aiWorkspace().lastResult)
+            controller.updateAiAnalysisSettings(
+                controller.aiWorkspace().settings.copy(lotteryType = LotteryType.DOUBLE_COLOR_BALL),
+            )
+            assertEquals(doubleColorBall, controller.aiWorkspace().lastResult)
+        }
+
+    /** 本机读取失败时视为没有保存；写入失败时本次运行仍显示新结果。 */
+    @Test
+    fun recordStoreFailuresDoNotBlockAnalysis() =
+        runTest {
+            val controller =
+                createController(
+                    CountingHistoryRepository(),
+                    RecordingAiProvider(),
+                    aiAnalysisRecordStore = FailingAiAnalysisRecordStore,
+                )
+
+            controller.showAiAnalysis()
+            assertNull(controller.aiWorkspace().lastResult)
+            val record = controller.analyzeOnce()
+            assertEquals(record, controller.aiWorkspace().lastResult)
+            controller.deleteAiAnalysisRecord()
+            assertNull(controller.aiWorkspace().lastResult)
+        }
+
+    /** 当前 AI 页状态。 */
+    private fun LotteryAppController.aiWorkspace(): AiAnalysisWorkspaceState =
+        assertIs<AppScreen.AiAnalysis>(uiState.value.screen).workspace
+
+    /** 填写连接配置后预览并确认一次请求，返回得到的结果。 */
+    private suspend fun LotteryAppController.analyzeOnce(): AiAnalysisRecord {
+        updateAiAnalysisSettings(
+            aiWorkspace().settings.copy(
+                providerName = "测试服务",
+                baseUrl = "https://api.example.test/v1",
+                model = "test-model-v1",
+            ),
+        )
+        assertTrue(prepareAiAnalysisPreview(TEST_CONTROLLER_AI_SECRET))
+        val fingerprint =
+            assertIs<AiAnalysisOperation.AwaitingConfirmation>(aiWorkspace().operation)
+                .preview
+                .requestFingerprint
+        assertTrue(confirmAiAnalysisPreview(fingerprint))
+        return assertNotNull(aiWorkspace().lastResult)
+    }
+
+    /** 构造指定彩种的一条合法结果。 */
+    private fun testAiRecord(lotteryType: LotteryType): AiAnalysisRecord =
+        AiAnalysisRecord(
+            providerName = "已保存服务",
+            model = "saved-model",
+            templateName = "综合历史分析",
+            sourceName = "测试官方来源",
+            sampleCount = 50,
+            firstIssue = if (lotteryType == LotteryType.SUPER_LOTTO) "26101" else "2026101",
+            lastIssue = if (lotteryType == LotteryType.SUPER_LOTTO) "26150" else "2026150",
+            generatedAtEpochMillis = 1_789_000_000_000L,
+            analysis =
+                AiAnalysisResult(
+                    schemaVersion = AiAnalysisProtocol.OUTPUT_SCHEMA_VERSION,
+                    lotteryType = lotteryType,
+                    snapshotId = "b".repeat(64),
+                    summary = "已保存的分析摘要",
+                    candidates =
+                        listOf(
+                            AiAnalysisCandidate(
+                                line =
+                                    if (lotteryType == LotteryType.SUPER_LOTTO) {
+                                        GeneratedNumberLine(listOf(3, 11, 19, 25, 33), listOf(4, 10))
+                                    } else {
+                                        GeneratedNumberLine(listOf(2, 9, 15, 21, 27, 33), listOf(12))
+                                    },
+                                reason = "已保存的候选说明",
+                            ),
+                        ),
+                ),
+        )
+
     /** 创建同时接入官方历史仓库和测试 AI Provider 的共享控制器。 */
     private fun createController(
         historyRepository: HistoricalDrawRepository,
@@ -325,6 +459,7 @@ class AiAnalysisControllerIntegrationTest {
         historicalDrawStore: HistoricalDrawStore? = null,
         clock: Clock = MutableTestClock(),
         aiConnectionStore: AiConnectionStore? = null,
+        aiAnalysisRecordStore: AiAnalysisRecordStore? = null,
     ): LotteryAppController =
         LotteryAppController(
             AppContainer(
@@ -338,6 +473,7 @@ class AiAnalysisControllerIntegrationTest {
                 historicalDrawStore = historicalDrawStore,
                 aiAnalysisProvider = aiProvider,
                 aiConnectionStore = aiConnectionStore,
+                aiAnalysisRecordStore = aiAnalysisRecordStore,
                 prizeCalculator = LotteryPrizeCalculator(),
                 appPaths = FakeAppPaths(),
                 ticketValidator = TicketValidator(),
@@ -374,6 +510,31 @@ class AiAnalysisControllerIntegrationTest {
         override suspend fun clear() {
             saved = null
         }
+    }
+
+    /** 内存中的 AI 分析结果仓库，每个彩种保存一条。 */
+    private class InMemoryAiAnalysisRecordStore(
+        vararg initial: AiAnalysisRecord,
+    ) : AiAnalysisRecordStore {
+        /** 当前保存的结果。 */
+        val records = initial.associateBy { it.lotteryType }.toMutableMap()
+
+        override suspend fun load(lotteryType: LotteryType): AiAnalysisRecord? = records[lotteryType]
+
+        override suspend fun save(record: AiAnalysisRecord) {
+            records[record.lotteryType] = record
+        }
+
+        override suspend fun delete(lotteryType: LotteryType): Boolean = records.remove(lotteryType) != null
+    }
+
+    /** 读写都失败的 AI 分析结果仓库。 */
+    private object FailingAiAnalysisRecordStore : AiAnalysisRecordStore {
+        override suspend fun load(lotteryType: LotteryType): AiAnalysisRecord? = error("读取失败")
+
+        override suspend fun save(record: AiAnalysisRecord): Unit = error("写入失败")
+
+        override suspend fun delete(lotteryType: LotteryType): Boolean = error("删除失败")
     }
 
     /** 按彩种返回完整 500 期数据并记录实际查询次数。 */

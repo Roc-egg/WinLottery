@@ -60,7 +60,6 @@ import androidx.compose.ui.unit.dp
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 import roc.win.lottery.app.AiAnalysisOperation
-import roc.win.lottery.app.AiAnalysisSessionResult
 import roc.win.lottery.app.AiAnalysisSettings
 import roc.win.lottery.app.AiAnalysisWorkspaceState
 import roc.win.lottery.app.AiHistoryAvailability
@@ -76,6 +75,7 @@ import roc.win.lottery.domain.AiAnalysisProtocol
 import roc.win.lottery.domain.AiAnalysisTemplate
 import roc.win.lottery.domain.LotteryType
 import roc.win.lottery.domain.TrendSampleSize
+import roc.win.lottery.persistence.AiAnalysisRecord
 import kotlin.time.Instant
 
 /**
@@ -86,6 +86,7 @@ import kotlin.time.Instant
  * @param onMainDestinationSelected 一级目的地切换操作。
  * @param apiKey 当前填写的服务商密钥。
  * @param savesApiKeyLocally 当前平台能否把密钥加密保存在本机。
+ * @param savesResultsLocally 当前平台能否把分析结果保存在本机。
  * @param onSettingsChange 修改非敏感分析配置。
  * @param onApiKeyChange 修改服务商密钥。
  * @param onClearSavedConnection 删除本机保存的连接配置并清空已填写的连接字段。
@@ -98,6 +99,7 @@ import kotlin.time.Instant
  * @param onDismissPreview 返回修改并销毁本次待确认请求。
  * @param onConfirmPreview 消费当前指纹并发送至多一次请求。
  * @param onCancelRequest 主动取消正在执行的模型请求。
+ * @param onDeleteResult 删除当前彩种保存的分析结果。
  */
 @Composable
 fun AiAnalysisScreen(
@@ -106,6 +108,7 @@ fun AiAnalysisScreen(
     onMainDestinationSelected: (MainDestination) -> Unit,
     apiKey: String,
     savesApiKeyLocally: Boolean,
+    savesResultsLocally: Boolean,
     onSettingsChange: (AiAnalysisSettings) -> Unit,
     onApiKeyChange: (String) -> Unit,
     onClearSavedConnection: () -> Unit,
@@ -118,8 +121,10 @@ fun AiAnalysisScreen(
     onDismissPreview: () -> Unit,
     onConfirmPreview: (String) -> Unit,
     onCancelRequest: () -> Unit,
+    onDeleteResult: () -> Unit,
 ) {
     var showsApiKey by remember { mutableStateOf(false) }
+    var confirmsDeleteResult by remember { mutableStateOf(false) }
     val isRequesting = workspace.operation is AiAnalysisOperation.Requesting
 
     AppShell(
@@ -137,7 +142,7 @@ fun AiAnalysisScreen(
                 CenteredAiContent {
                     PageLead("公开历史数据分析：模型只观察本机保存的官方历史开奖；候选号码不代表概率优势。")
                     Spacer(Modifier.height(16.dp))
-                    AiPrivacyBoundary(savesApiKeyLocally)
+                    AiPrivacyBoundary(savesApiKeyLocally, savesResultsLocally)
                     Spacer(Modifier.height(SectionSpacing))
                     SectionHeader(title = "连接配置")
                     Spacer(Modifier.height(SectionTitleSpacing))
@@ -201,7 +206,13 @@ fun AiAnalysisScreen(
                 item(key = "result-header") {
                     CenteredAiContent {
                         Spacer(Modifier.height(SectionSpacing))
-                        AiResultHeader(result)
+                        AiResultHeader(
+                            result = result,
+                            history = workspace.history,
+                            savesResultsLocally = savesResultsLocally,
+                            deleteEnabled = !isRequesting,
+                            onDelete = { confirmsDeleteResult = true },
+                        )
                     }
                 }
                 itemsIndexed(
@@ -247,6 +258,34 @@ fun AiAnalysisScreen(
             )
         }
     }
+    workspace.lastResult?.takeIf { confirmsDeleteResult }?.let { result ->
+        AlertDialog(
+            onDismissRequest = { confirmsDeleteResult = false },
+            containerColor = MaterialTheme.colorScheme.surface,
+            title = { Text("删除这次分析结果？") },
+            text = {
+                Text(
+                    "将删除${result.analysis.lotteryType.aiDisplayName()}于 ${formatAiTime(
+                        result.generatedAtEpochMillis,
+                    )} " +
+                        "查询的分析结果，不影响连接配置和历史开奖。删除后需要重新分析才能再次查看。",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmsDeleteResult = false
+                    onDeleteResult()
+                }) {
+                    Text("删除", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmsDeleteResult = false }) {
+                    Text("取消")
+                }
+            },
+        )
+    }
     AiModelCatalogDialog(
         state = workspace.modelCatalog,
         currentModel = workspace.settings.model,
@@ -269,13 +308,22 @@ private fun CenteredAiContent(content: @Composable ColumnScope.() -> Unit) {
 
 /** 展示联网、费用和本机存储边界。 */
 @Composable
-private fun AiPrivacyBoundary(savesApiKeyLocally: Boolean) {
+private fun AiPrivacyBoundary(
+    savesApiKeyLocally: Boolean,
+    savesResultsLocally: Boolean,
+) {
+    val resultText =
+        if (savesResultsLocally) {
+            "每个彩种最近一次分析结果连同查询时间保存在本机，发送快照不保存。"
+        } else {
+            "发送快照和分析结果不保存。"
+        }
     Notice(
         message =
             if (savesApiKeyLocally) {
-                "连接配置和密钥只加密保存在本机，不写入票据记录、导出包或云端备份；发送快照和分析结果不保存。"
+                "连接配置和密钥只加密保存在本机，不写入票据记录、导出包或云端备份；$resultText"
             } else {
-                "服务商、地址和模型只保存在本机；密钥只在本次运行有效。发送快照和分析结果不保存。"
+                "服务商、地址和模型只保存在本机；密钥只在本次运行有效。$resultText"
             },
         icon = LotteryIcons.Privacy,
     ) {
@@ -669,13 +717,47 @@ private fun AiErrorMessage(message: String) {
     Notice(message = message, tone = NoticeTone.ERROR)
 }
 
-/** 展示最近一次合法结果的可复核元数据与摘要。 */
+/**
+ * 展示当前彩种最近一次合法结果的查询时间、来源与摘要。
+ *
+ * 本机历史开奖已有晚于本次样本的开奖时，提示可以重新分析，但不会自动重新请求。
+ *
+ * @param result 当前彩种的分析结果。
+ * @param history 当前彩种的历史开奖状态。
+ * @param savesResultsLocally 结果是否已保存在本机。
+ * @param deleteEnabled 是否允许删除；请求进行中时不允许。
+ * @param onDelete 请求删除本次结果。
+ */
 @Composable
-private fun AiResultHeader(result: AiAnalysisSessionResult) {
+private fun AiResultHeader(
+    result: AiAnalysisRecord,
+    history: AiHistoryAvailability,
+    savesResultsLocally: Boolean,
+    deleteEnabled: Boolean,
+    onDelete: () -> Unit,
+) {
     SectionHeader(
         title = "分析结果",
-        subtitle = "${result.preview.providerName} · ${result.preview.model}",
+        subtitle =
+            "查询于 ${formatAiTime(result.generatedAtEpochMillis)}" +
+                if (savesResultsLocally) " · 已保存在本机" else " · 仅本次运行有效",
+        trailing = {
+            InlineTextButton(
+                text = "删除",
+                onClick = onDelete,
+                enabled = deleteEnabled,
+                color = MaterialTheme.colorScheme.error,
+            )
+        },
     )
+    val latestIssue = (history as? AiHistoryAvailability.Ready)?.latestIssue.orEmpty()
+    if (latestIssue.isNewerIssueThan(result.lastIssue)) {
+        Spacer(Modifier.height(SectionTitleSpacing))
+        Notice(
+            message = "本机已有第 $latestIssue 期开奖，晚于本次分析使用的第 ${result.lastIssue} 期；需要时可重新分析。",
+            icon = LotteryIcons.Refresh,
+        )
+    }
     Spacer(Modifier.height(SectionTitleSpacing))
     LotteryCard(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -683,15 +765,16 @@ private fun AiResultHeader(result: AiAnalysisSessionResult) {
             Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    "${result.sourceName} · ${result.preview.firstIssue} 至 ${result.preview.lastIssue} · " +
-                        "${result.preview.sampleCount} 期",
+                    "${result.providerName} · ${result.model} · ${result.templateName}",
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                Text(
+                    "${result.sourceName} · ${result.firstIssue} 至 ${result.lastIssue} · ${result.sampleCount} 期",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Text(
-                    "生成于 ${formatAiTime(
-                        result.generatedAtEpochMillis,
-                    )} · 快照 ${result.preview.snapshotId.take(SHORT_SNAPSHOT_LENGTH)}",
+                    "快照 ${result.analysis.snapshotId.take(SHORT_SNAPSHOT_LENGTH)}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -700,6 +783,13 @@ private fun AiResultHeader(result: AiAnalysisSessionResult) {
         HairlineDivider()
         Text(result.analysis.summary, style = MaterialTheme.typography.bodyMedium)
     }
+}
+
+/** 同一彩种期号位数相同，按数值比较当前期号是否晚于给定期号；任一期号为空时为 `false`。 */
+private fun String.isNewerIssueThan(other: String): Boolean {
+    val current = toLongOrNull() ?: return false
+    val previous = other.toLongOrNull() ?: return false
+    return length == other.length && current > previous
 }
 
 /** 绘制一注通过本地彩票规则复核的 AI 候选。 */

@@ -89,6 +89,7 @@ internal fun createDesktopAppContainer(
         ticketRecordStore = localStorage.ticketRecordStore,
         historicalDrawStore = localStorage.historicalDrawStore,
         drawResultStore = localStorage.drawResultStore,
+        aiAnalysisRecordStore = localStorage.aiAnalysisRecordStore,
         ticketRecordFileExchange = DesktopTicketRecordFileExchange(ownerProvider),
     )
 }

@@ -8,6 +8,7 @@ import roc.win.lottery.data.HistoricalDrawRepository
 import roc.win.lottery.domain.LotteryPrizeCalculator
 import roc.win.lottery.domain.PrizeCalculator
 import roc.win.lottery.domain.TicketValidator
+import roc.win.lottery.persistence.AiAnalysisRecordStore
 import roc.win.lottery.persistence.AiConnectionStore
 import roc.win.lottery.persistence.AppearanceStore
 import roc.win.lottery.persistence.DrawResultStore
@@ -47,6 +48,7 @@ import roc.win.lottery.recognition.TicketRecognizer
  * @property historicalDrawStore 与票据共用数据库的本机官方历史开奖缓存；未接入的平台为 `null`。
  * @property drawResultStore 与票据共用数据库的已开奖查询结果缓存；未接入的平台为 `null`。
  * @property ticketRecordFileExchange 当前平台的系统逻辑包文件接口；未接入的平台为 `null`。
+ * @property aiAnalysisRecordStore 与票据共用数据库的 AI 分析结果仓库，每个彩种保存最近一次；未接入的平台为 `null`，结果只在本次运行有效。
  * @property appearanceStore 本机保存的外观偏好仓库；未接入的平台为 `null`，主题选择只在本次运行有效。
  * @property ocrConfidenceDiagnostics Debug 包使用的匿名字段置信度诊断，默认禁用。
  */
@@ -71,6 +73,7 @@ class AppContainer(
     val historicalDrawStore: HistoricalDrawStore? = null,
     val drawResultStore: DrawResultStore? = null,
     val ticketRecordFileExchange: TicketRecordFileExchange? = null,
+    val aiAnalysisRecordStore: AiAnalysisRecordStore? = null,
     val appearanceStore: AppearanceStore? = null,
     val ocrConfidenceDiagnostics: OcrConfidenceDiagnostics = OcrConfidenceDiagnostics.Disabled,
 ) {

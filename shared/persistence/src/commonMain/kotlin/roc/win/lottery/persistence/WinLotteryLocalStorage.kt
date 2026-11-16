@@ -1,7 +1,7 @@
 package roc.win.lottery.persistence
 
 /**
- * 应用本机结构化存储：结构化票据、官方历史开奖和已开奖查询结果共用同一个 Room 数据库，但使用互不关联的独立表。
+ * 应用本机结构化存储：结构化票据、官方历史开奖、已开奖查询结果和 AI 分析结果共用同一个 Room 数据库，但使用互不关联的独立表。
  *
  * 共用数据库统一由 [ticketRecordStore] 的 `close()` 关闭；其他仓库不单独持有生命周期。
  */
@@ -16,4 +16,7 @@ class WinLotteryLocalStorage internal constructor(
 
     /** 查询开奖时取得的已开奖官方结果缓存。 */
     val drawResultStore: DrawResultStore = RoomDrawResultStore(database)
+
+    /** 每个彩种最近一次 AI 分析结果。 */
+    val aiAnalysisRecordStore: AiAnalysisRecordStore = RoomAiAnalysisRecordStore(database)
 }

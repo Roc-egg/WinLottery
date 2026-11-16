@@ -38,5 +38,20 @@ internal val MIGRATION_2_3: Migration =
         connection.execSQL(CREATE_DRAW_RESULTS_SQL)
     }
 
+/** 模式 4 新增的 AI 分析结果表，语句与导出的模式快照逐字一致。 */
+internal const val CREATE_AI_ANALYSIS_RECORDS_SQL =
+    "CREATE TABLE IF NOT EXISTS `ai_analysis_records` (`lottery_type` TEXT NOT NULL, " +
+        "`provider_name` TEXT NOT NULL, `model` TEXT NOT NULL, `template_name` TEXT NOT NULL, " +
+        "`source_name` TEXT NOT NULL, `sample_count` INTEGER NOT NULL, `first_issue` TEXT NOT NULL, " +
+        "`last_issue` TEXT NOT NULL, `generated_at_epoch_millis` INTEGER NOT NULL, " +
+        "`schema_version` INTEGER NOT NULL, `snapshot_id` TEXT NOT NULL, `summary` TEXT NOT NULL, " +
+        "`candidates` TEXT NOT NULL, `data_version` INTEGER NOT NULL, PRIMARY KEY(`lottery_type`))"
+
+/** 模式 3 升级到 4：只新增 AI 分析结果表，不改动票据表、历史开奖表和开奖结果表。 */
+internal val MIGRATION_3_4: Migration =
+    Migration(3, 4) { connection ->
+        connection.execSQL(CREATE_AI_ANALYSIS_RECORDS_SQL)
+    }
+
 /** 按版本顺序登记的全部显式迁移。 */
-internal val WIN_LOTTERY_DATABASE_MIGRATIONS: List<Migration> = listOf(MIGRATION_1_2, MIGRATION_2_3)
+internal val WIN_LOTTERY_DATABASE_MIGRATIONS: List<Migration> = listOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)

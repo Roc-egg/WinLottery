@@ -8,7 +8,7 @@ import androidx.room3.RoomDatabaseConstructor
 import androidx.sqlite.driver.bundled.BundledSQLiteDriver
 import kotlinx.coroutines.Dispatchers
 
-/** 结构化票据、本机官方历史开奖和已开奖查询结果共用的 Room 数据库，各类数据使用互不关联的独立表。 */
+/** 结构化票据、本机官方历史开奖、已开奖查询结果和 AI 分析结果共用的 Room 数据库，各类数据使用互不关联的独立表。 */
 @Database(
     entities = [
         TicketRecordEntity::class,
@@ -16,6 +16,7 @@ import kotlinx.coroutines.Dispatchers
         HistoricalDrawSetEntity::class,
         HistoricalDrawEntity::class,
         DrawResultEntity::class,
+        AiAnalysisRecordEntity::class,
     ],
     version = WIN_LOTTERY_DATABASE_VERSION,
     exportSchema = true,
@@ -31,6 +32,9 @@ internal abstract class WinLotteryDatabase : RoomDatabase() {
 
     /** 获取已开奖查询结果的数据访问对象。 */
     abstract fun drawResultDao(): DrawResultDao
+
+    /** 获取 AI 分析结果的数据访问对象。 */
+    abstract fun aiAnalysisRecordDao(): AiAnalysisRecordDao
 }
 
 /** 由 Room KSP 为每个平台生成数据库构造实现。 */
@@ -52,4 +56,4 @@ internal fun buildWinLotteryDatabase(builder: RoomDatabase.Builder<WinLotteryDat
 internal const val WIN_LOTTERY_DATABASE_FILE_NAME = "win-lottery-v1.db"
 
 /** 当前 Room 模式版本；每次递增都必须提供显式迁移、模式快照和升级测试。 */
-internal const val WIN_LOTTERY_DATABASE_VERSION = 3
+internal const val WIN_LOTTERY_DATABASE_VERSION = 4

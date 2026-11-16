@@ -27,6 +27,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Clock
@@ -123,6 +124,34 @@ class AiAnalysisWorkflowTest {
             assertEquals("测试历史来源", workflow.state.lastResult?.sourceName)
             assertNull(workflow.state.errorMessage)
             assertTrue(published.any { state -> state.operation is AiAnalysisOperation.Requesting })
+        }
+
+    /** 本机读回的结果随所选彩种切换；较旧的读回结果不会覆盖本次运行刚得到的结果。 */
+    @Test
+    fun restoredRecordsFollowLotteryAndKeepNewerResult() =
+        runTest {
+            val workflow = configuredWorkflow(RecordingAiProvider())
+            assertTrue(workflow.preparePreview(TEST_SESSION_SECRET))
+            val fingerprint =
+                assertIs<AiAnalysisOperation.AwaitingConfirmation>(workflow.state.operation)
+                    .preview
+                    .requestFingerprint
+            assertTrue(workflow.confirmPreview(fingerprint))
+            val fresh = assertNotNull(workflow.state.lastResult)
+            val ready = assertIs<AiHistoryAvailability.Ready>(workflow.state.history)
+            assertEquals(fresh.lastIssue, ready.latestIssue)
+
+            val older = fresh.copy(generatedAtEpochMillis = fresh.generatedAtEpochMillis - 1, model = "older-model")
+            val otherLottery = fresh.copy(analysis = fresh.analysis.copy(lotteryType = LotteryType.DOUBLE_COLOR_BALL))
+            workflow.restoreRecords(listOf(older, otherLottery))
+            assertEquals(fresh, workflow.state.lastResult)
+
+            workflow.updateSettings(workflow.state.settings.copy(lotteryType = LotteryType.DOUBLE_COLOR_BALL))
+            assertEquals(otherLottery, workflow.state.lastResult)
+            workflow.removeRecord(LotteryType.DOUBLE_COLOR_BALL)
+            assertNull(workflow.state.lastResult)
+            workflow.updateSettings(workflow.state.settings.copy(lotteryType = LotteryType.SUPER_LOTTO))
+            assertEquals(fresh, workflow.state.lastResult)
         }
 
     /** 逻辑取消后即使 Provider 返回成功，迟到结果也不能覆盖取消状态。 */

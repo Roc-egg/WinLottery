@@ -196,6 +196,7 @@ fun App(session: LotteryAppSession) {
                     onMainDestinationSelected = onMainDestinationSelected,
                     apiKey = aiApiKey,
                     savesApiKeyLocally = controller.savesAiApiKeyLocally,
+                    savesResultsLocally = controller.savesAiResultsLocally,
                     onSettingsChange = { settings ->
                         scope.launch { controller.updateAiAnalysisSettings(settings) }
                     },
@@ -218,6 +219,7 @@ fun App(session: LotteryAppSession) {
                             }
                     },
                     onCancelRequest = cancelAiRequest,
+                    onDeleteResult = { scope.launch { controller.deleteAiAnalysisRecord() } },
                 )
             }
 

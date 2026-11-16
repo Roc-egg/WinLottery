@@ -32,6 +32,8 @@ import roc.win.lottery.domain.LotteryTrendCalculationResult
 import roc.win.lottery.domain.LotteryTrendCalculator
 import roc.win.lottery.domain.LotteryType
 import roc.win.lottery.domain.RandomNumberGenerationResult
+import roc.win.lottery.domain.TREND_LOTTERY_TYPES
+import roc.win.lottery.persistence.AiAnalysisRecord
 import roc.win.lottery.persistence.SavedAiConnection
 import roc.win.lottery.persistence.TICKET_RECORD_EXPORT_EXTENSION
 import roc.win.lottery.persistence.ThemePreference
@@ -195,8 +197,15 @@ class LotteryAppController(
     val savesAiApiKeyLocally: Boolean
         get() = container.aiConnectionStore?.savesApiKey == true
 
+    /** 当前平台能否把 AI 分析结果保存在本机；否则结果只在本次运行有效。 */
+    val savesAiResultsLocally: Boolean
+        get() = container.aiAnalysisRecordStore != null
+
     /** 本次运行是否已读取过本机保存的 AI 连接配置。 */
     private var aiConnectionLoaded = false
+
+    /** 本次运行是否已读取过本机保存的 AI 分析结果。 */
+    private var aiRecordsLoaded = false
 
     /** 串行写入 AI 连接配置，保证最后写入的总是最新内容。 */
     private val aiConnectionSaveMutex = Mutex()
@@ -668,6 +677,7 @@ class LotteryAppController(
     suspend fun showAiAnalysis() {
         val workflow = aiAnalysisWorkflow ?: return
         loadSavedAiConnection(workflow)
+        loadSavedAiRecords(workflow)
         val generation = advanceFlowGeneration()
         clearTemporaryImage()
         lastQuerySourceScreen = null
@@ -808,7 +818,43 @@ class LotteryAppController(
     suspend fun confirmAiAnalysisPreview(requestFingerprint: String): Boolean {
         val workflow = aiAnalysisWorkflow ?: return false
         if (mutableUiState.value.screen !is AppScreen.AiAnalysis) return false
-        return workflow.confirmPreview(requestFingerprint)
+        val previous = workflow.state.lastResult
+        val completed = workflow.confirmPreview(requestFingerprint)
+        val record = workflow.state.lastResult
+        if (completed && record != null && record != previous) saveAiAnalysisRecord(record)
+        return completed
+    }
+
+    /** 删除当前彩种保存的 AI 分析结果，本机内容与界面同时清空；不影响连接配置和历史开奖。 */
+    suspend fun deleteAiAnalysisRecord() {
+        val workflow = aiAnalysisWorkflow ?: return
+        if (mutableUiState.value.screen !is AppScreen.AiAnalysis) return
+        val lotteryType = workflow.state.settings.lotteryType
+        workflow.removeRecord(lotteryType)
+        val store = container.aiAnalysisRecordStore ?: return
+        runCatching { store.delete(lotteryType) }
+            .onFailure { error -> if (error is CancellationException) throw error }
+    }
+
+    /** 把通过本地校验的新结果写入本机，替换同一彩种的旧结果；写入失败时本次运行仍显示该结果。 */
+    private suspend fun saveAiAnalysisRecord(record: AiAnalysisRecord) {
+        val store = container.aiAnalysisRecordStore ?: return
+        runCatching { store.save(record) }
+            .onFailure { error -> if (error is CancellationException) throw error }
+    }
+
+    /** 本次运行首次进入 AI 页时读取各彩种保存的分析结果；单个彩种读取失败时视为没有保存。 */
+    private suspend fun loadSavedAiRecords(workflow: AiAnalysisWorkflow) {
+        if (aiRecordsLoaded) return
+        aiRecordsLoaded = true
+        val store = container.aiAnalysisRecordStore ?: return
+        val records =
+            TREND_LOTTERY_TYPES.mapNotNull { lotteryType ->
+                runCatching { store.load(lotteryType) }
+                    .onFailure { error -> if (error is CancellationException) throw error }
+                    .getOrNull()
+            }
+        workflow.restoreRecords(records)
     }
 
     /** 逻辑取消正在执行的 AI 请求，使取消后的迟到响应失效。 */

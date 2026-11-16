@@ -93,6 +93,7 @@ fun createIOSRecognitionContainer(
             ticketRecordStore = localStorage.ticketRecordStore,
             historicalDrawStore = localStorage.historicalDrawStore,
             drawResultStore = localStorage.drawResultStore,
+            aiAnalysisRecordStore = localStorage.aiAnalysisRecordStore,
             ticketRecordFileExchange = IOSTicketRecordFileExchange(presenterProvider),
             ocrConfidenceDiagnostics = createIOSOcrConfidenceDiagnostics(),
         )

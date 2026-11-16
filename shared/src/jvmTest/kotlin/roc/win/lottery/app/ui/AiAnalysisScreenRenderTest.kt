@@ -35,6 +35,7 @@ class AiAnalysisScreenRenderTest {
                         onMainDestinationSelected = {},
                         apiKey = "",
                         savesApiKeyLocally = true,
+                        savesResultsLocally = true,
                         onSettingsChange = { settings -> changes += settings },
                         onApiKeyChange = {},
                         onClearSavedConnection = {},
@@ -47,6 +48,7 @@ class AiAnalysisScreenRenderTest {
                         onDismissPreview = {},
                         onConfirmPreview = {},
                         onCancelRequest = {},
+                        onDeleteResult = {},
                     )
                 }
             }

@@ -13,13 +13,13 @@ import roc.win.lottery.data.AiProviderRequestPreview
 import roc.win.lottery.data.AiProviderResult
 import roc.win.lottery.domain.AiAnalysisProtocol
 import roc.win.lottery.domain.AiAnalysisRequest
-import roc.win.lottery.domain.AiAnalysisResult
 import roc.win.lottery.domain.AiAnalysisTemplate
 import roc.win.lottery.domain.AiHistorySnapshotBuildResult
 import roc.win.lottery.domain.AiHistorySnapshotBuilder
 import roc.win.lottery.domain.HistoricalDraw
 import roc.win.lottery.domain.LotteryType
 import roc.win.lottery.domain.TrendSampleSize
+import roc.win.lottery.persistence.AiAnalysisRecord
 import kotlin.time.Clock
 
 /**
@@ -67,11 +67,13 @@ sealed interface AiHistoryAvailability {
      * @property sourceName 官方历史开奖来源展示名称。
      * @property availableDrawCount 本机可用的规范化开奖总数。
      * @property fetchedAtEpochMillis 本次历史开奖加载完成时间。
+     * @property latestIssue 本机历史开奖中的最新期号，用于提示已保存的分析结果是否早于最新开奖。
      */
     data class Ready(
         val sourceName: String,
         val availableDrawCount: Int,
         val fetchedAtEpochMillis: Long,
+        val latestIssue: String = "",
     ) : AiHistoryAvailability
 
     /**
@@ -136,27 +138,12 @@ sealed interface AiModelCatalogState {
 }
 
 /**
- * 当前进程会话内最近一次通过本地校验的 AI 分析结果。
- *
- * @property preview 生成本结果的服务商、模型和历史快照摘要。
- * @property sourceName 本次历史快照所使用的官方来源名称。
- * @property generatedAtEpochMillis 模型结果通过本地校验的时间。
- * @property analysis 已通过严格协议与彩票规则复核的分析内容。
- */
-data class AiAnalysisSessionResult(
-    val preview: AiProviderRequestPreview,
-    val sourceName: String,
-    val generatedAtEpochMillis: Long,
-    val analysis: AiAnalysisResult,
-)
-
-/**
  * AI 分析共享界面状态，不包含密钥、完整请求体或完整响应。
  *
  * @property settings 当前非敏感配置。
  * @property history 当前彩种的官方历史开奖可用性。
  * @property operation 当前精确预览或单次请求状态。
- * @property lastResult 当前进程内最近一次合法结果。
+ * @property lastResult 当前彩种最近一次合法结果；按 ADR-036 可能来自本机保存，查询时间见结果本身。
  * @property errorMessage 最近一次本地阻断或单次请求失败说明。
  * @property historyRefresh 已展示本机历史开奖时与官网核对的进度。
  * @property modelCatalog 用户主动读取的服务商模型列表弹窗状态。
@@ -165,7 +152,7 @@ data class AiAnalysisWorkspaceState(
     val settings: AiAnalysisSettings = AiAnalysisSettings(),
     val history: AiHistoryAvailability = AiHistoryAvailability.Loading,
     val operation: AiAnalysisOperation = AiAnalysisOperation.Idle,
-    val lastResult: AiAnalysisSessionResult? = null,
+    val lastResult: AiAnalysisRecord? = null,
     val errorMessage: String? = null,
     val historyRefresh: HistoricalDrawRefreshStatus = HistoricalDrawRefreshStatus.Idle,
     val modelCatalog: AiModelCatalogState = AiModelCatalogState.Hidden,
@@ -192,6 +179,9 @@ internal class AiAnalysisWorkflow(
     /** 当前不包含密钥的共享界面状态。 */
     var state: AiAnalysisWorkspaceState = AiAnalysisWorkspaceState()
         private set
+
+    /** 每个彩种最近一次合法结果，含本机读回的结果与本次运行新得到的结果。 */
+    private val recordsByLotteryType = mutableMapOf<LotteryType, AiAnalysisRecord>()
 
     /** 当前彩种在进程会话中的规范化历史开奖副本。 */
     private var historicalDraws: List<HistoricalDraw>? = null
@@ -220,8 +210,37 @@ internal class AiAnalysisWorkflow(
                 operation = AiAnalysisOperation.Idle,
                 errorMessage = null,
                 historyRefresh = if (lotteryChanged) HistoricalDrawRefreshStatus.Idle else state.historyRefresh,
+                lastResult = if (lotteryChanged) recordsByLotteryType[settings.lotteryType] else state.lastResult,
             ),
         )
+    }
+
+    /**
+     * 放入本机读回的结果；本次运行已经得到更新结果的彩种保留新结果。
+     *
+     * @param records 本机保存的各彩种结果。
+     */
+    fun restoreRecords(records: Collection<AiAnalysisRecord>) {
+        records.forEach { record ->
+            val current = recordsByLotteryType[record.lotteryType]
+            if (current == null || current.generatedAtEpochMillis < record.generatedAtEpochMillis) {
+                recordsByLotteryType[record.lotteryType] = record
+            }
+        }
+        val currentRecord = recordsByLotteryType[state.settings.lotteryType]
+        if (currentRecord != state.lastResult) publish(state.copy(lastResult = currentRecord))
+    }
+
+    /**
+     * 移除指定彩种的结果；为当前彩种时同时清空界面上的结果。
+     *
+     * @param lotteryType 结果所属彩种。
+     */
+    fun removeRecord(lotteryType: LotteryType) {
+        recordsByLotteryType.remove(lotteryType)
+        if (state.settings.lotteryType == lotteryType && state.lastResult != null) {
+            publish(state.copy(lastResult = null))
+        }
     }
 
     /** 当前是否可以替换历史开奖；存在待确认预览或进行中的请求时替换会使其失效。 */
@@ -292,6 +311,12 @@ internal class AiAnalysisWorkflow(
                         sourceName = sourceName.ifBlank { "官方历史开奖" },
                         availableDrawCount = draws.size,
                         fetchedAtEpochMillis = fetchedAtEpochMillis,
+                        latestIssue =
+                            draws
+                                .lastOrNull()
+                                ?.issue
+                                ?.value
+                                .orEmpty(),
                     ),
                 operation = AiAnalysisOperation.Idle,
                 errorMessage = null,
@@ -479,16 +504,23 @@ internal class AiAnalysisWorkflow(
         if (generation != requestGeneration) return false
         when (result) {
             is AiProviderResult.Success -> {
+                val record =
+                    AiAnalysisRecord(
+                        providerName = pending.preview.providerName,
+                        model = pending.preview.model,
+                        templateName = pending.preview.templateName,
+                        sourceName = pending.sourceName,
+                        sampleCount = pending.preview.sampleCount,
+                        firstIssue = pending.preview.firstIssue,
+                        lastIssue = pending.preview.lastIssue,
+                        generatedAtEpochMillis = clock.now().toEpochMilliseconds().coerceAtLeast(0L),
+                        analysis = result.analysis,
+                    )
+                recordsByLotteryType[record.lotteryType] = record
                 publish(
                     state.copy(
                         operation = AiAnalysisOperation.Idle,
-                        lastResult =
-                            AiAnalysisSessionResult(
-                                preview = pending.preview,
-                                sourceName = pending.sourceName,
-                                generatedAtEpochMillis = clock.now().toEpochMilliseconds().coerceAtLeast(0L),
-                                analysis = result.analysis,
-                            ),
+                        lastResult = recordsByLotteryType[state.settings.lotteryType],
                         errorMessage = null,
                     ),
                 )
@@ -528,7 +560,7 @@ internal class AiAnalysisWorkflow(
         }
     }
 
-    /** 离开 AI 工作区时清除预览、请求授权和模型列表弹窗，不清除当前会话合法结果。 */
+    /** 离开 AI 工作区时清除预览、请求授权和模型列表弹窗，不清除已得到的合法结果。 */
     fun clearTransientRequest() {
         dismissModelCatalog()
         val hadTransientOperation = state.operation !is AiAnalysisOperation.Idle

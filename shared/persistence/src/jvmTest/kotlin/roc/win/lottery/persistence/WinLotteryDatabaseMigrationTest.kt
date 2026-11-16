@@ -85,17 +85,43 @@ class WinLotteryDatabaseMigrationTest {
             }
         }
 
+    /** v3 数据库升级后票据、历史开奖和开奖结果都完整保留，AI 分析结果表可以正常读写。 */
+    @Test
+    fun migratingVersionThreeDatabaseKeepsDataAndAddsAiRecords() =
+        runTest {
+            val history = storedTestDraws(superLottoTestDraws(), fetchedAtEpochMillis = 9_000L)
+            withLegacyDatabase(version = 3, history = history) { databasePath ->
+                val storage = createJvmLocalStorage(databasePath)
+                try {
+                    assertEquals(
+                        "迁移前票据",
+                        assertNotNull(storage.ticketRecordStore.findById(LEGACY_TICKET_ID)).displayName,
+                    )
+                    assertEquals(history, storage.historicalDrawStore.load(LotteryType.SUPER_LOTTO))
+                    val record = testAiAnalysisRecord()
+                    storage.aiAnalysisRecordStore.save(record)
+                    assertEquals(record, storage.aiAnalysisRecordStore.load(LotteryType.SUPER_LOTTO))
+                } finally {
+                    storage.ticketRecordStore.close()
+                }
+                assertEquals(WIN_LOTTERY_DATABASE_VERSION, readUserVersion(databasePath))
+            }
+        }
+
     /** 每个迁移语句都必须与 Room 导出的模式快照逐字一致，且既有表在后续版本中保持不变。 */
     @Test
     fun migrationSqlMatchesExportedSchema() {
         val version2 = schemaEntities(2)
+        val version3 = schemaEntities(3)
         val current = schemaEntities(WIN_LOTTERY_DATABASE_VERSION)
 
         assertEquals(CREATE_HISTORICAL_DRAW_SETS_SQL, version2.getValue("historical_draw_sets"))
         assertEquals(CREATE_HISTORICAL_DRAWS_SQL, version2.getValue("historical_draws"))
-        assertEquals(CREATE_DRAW_RESULTS_SQL, current.getValue("draw_results"))
+        assertEquals(CREATE_DRAW_RESULTS_SQL, version3.getValue("draw_results"))
+        assertEquals(CREATE_AI_ANALYSIS_RECORDS_SQL, current.getValue("ai_analysis_records"))
         assertEquals(schemaEntities(1), version2 - setOf("historical_draw_sets", "historical_draws"))
-        assertEquals(version2, current - "draw_results")
+        assertEquals(version2, version3 - "draw_results")
+        assertEquals(version3, current - "ai_analysis_records")
     }
 
     /** 缺少迁移时必须打开失败且不删除票据，随后使用正式迁移仍能完整读取。 */
