@@ -145,11 +145,11 @@ internal class PpOcrTicketRecognizer(
                 regions = rotatedRegions
             }
         }
-        var boxes = PpOcrDetectionPostProcessor.arrange(regions)
+        var boxes = PpOcrDetectionPostProcessor.arrange(regions, image)
         if (looksUpsideDown(image, boxes)) {
             image = image.rotated180()
             quarterTurns += 2
-            boxes = PpOcrDetectionPostProcessor.arrange(detectTextRegions(image))
+            boxes = PpOcrDetectionPostProcessor.arrange(detectTextRegions(image), image)
         }
         return UprightPage(image, boxes, quarterTurns)
     }

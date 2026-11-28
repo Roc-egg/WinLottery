@@ -239,6 +239,39 @@ internal data class RgbImage(
         channel: Int,
     ): Float = (pixels[(y * width + x) * CHANNEL_COUNT + channel].toInt() and BYTE_MASK).toFloat()
 
+    /**
+     * 统计轴对齐矩形内每一行的深色像素数，深色阈值取矩形内亮度低、高分位的中点。
+     *
+     * @param left 矩形左边界，包含该列，必须位于图片内。
+     * @param top 矩形上边界，包含该行，必须位于图片内。
+     * @param right 矩形右边界，包含该列，必须位于图片内。
+     * @param bottom 矩形下边界，包含该行，必须位于图片内。
+     * @return 自上而下每行的深色像素数；对比度不足以区分墨迹与纸面时返回空。
+     */
+    fun darkPixelRowCounts(
+        left: Int,
+        top: Int,
+        right: Int,
+        bottom: Int,
+    ): IntArray? {
+        require(left in 0..right && right < width && top in 0..bottom && bottom < height) { "统计矩形超出图片范围" }
+        val histogram = IntArray(MAX_CHANNEL_VALUE + 1)
+        for (y in top..bottom) {
+            for (x in left..right) {
+                histogram[luminanceAt(y * width + x)] += 1
+            }
+        }
+        val sampleCount = (right - left + 1) * (bottom - top + 1)
+        val low = histogram.percentileValue(sampleCount, INK_LOW_PERCENTILE)
+        val high = histogram.percentileValue(sampleCount, INK_HIGH_PERCENTILE)
+        if (high - low < MINIMUM_INK_CONTRAST_RANGE) return null
+        val threshold = (low + high) / 2
+        return IntArray(bottom - top + 1) { row ->
+            val y = top + row
+            (left..right).count { x -> luminanceAt(y * width + x) < threshold }
+        }
+    }
+
     /** 使用整数 BT.601 权重计算指定像素的八位亮度。 */
     private fun luminanceAt(pixelIndex: Int): Int {
         val offset = pixelIndex * CHANNEL_COUNT
@@ -323,6 +356,15 @@ internal data class RgbImage(
 
         /** 亮度跨度低于该值时不创建无意义的增强副本。 */
         const val MINIMUM_CONTRAST_RANGE = 24
+
+        /** 区分墨迹与纸面时取的低亮度分位。 */
+        const val INK_LOW_PERCENTILE = 0.05f
+
+        /** 区分墨迹与纸面时取的高亮度分位。 */
+        const val INK_HIGH_PERCENTILE = 0.95f
+
+        /** 墨迹与纸面至少应有的亮度差，低于该值视为无法可靠分辨行间空白。 */
+        const val MINIMUM_INK_CONTRAST_RANGE = 48
     }
 }
 
@@ -406,9 +448,16 @@ internal object PpOcrDetectionPostProcessor {
         config: PpOcrDetectionConfig = PpOcrDetectionConfig(),
     ): List<SourceTextBox> = arrange(extractRegions(output, sourceWidth, sourceHeight, config))
 
-    /** 切分误判成竖排的号码列，并按阅读顺序排列、限制候选数量。 */
-    fun arrange(boxes: List<SourceTextBox>): List<SourceTextBox> =
-        splitVerticalColumns(boxes)
+    /**
+     * 切分误判成竖排的号码列，并按阅读顺序排列、限制候选数量。
+     *
+     * @param image 检测框所在的原图；提供时优先按竖列内墨迹的行间空白切分，否则按典型行高等距切分。
+     */
+    fun arrange(
+        boxes: List<SourceTextBox>,
+        image: RgbImage? = null,
+    ): List<SourceTextBox> =
+        splitVerticalColumns(boxes, image)
             .sortedWith(compareBy<SourceTextBox> { it.readingOrderKey.first }.thenBy { it.readingOrderKey.second })
             .take(MAXIMUM_CANDIDATES)
 
@@ -465,8 +514,16 @@ internal object PpOcrDetectionPostProcessor {
         return boxes
     }
 
-    /** 依据正常横排文字高度，把检测器误判成竖排的多行号码列等距切回横向行框。 */
-    private fun splitVerticalColumns(boxes: List<SourceTextBox>): List<SourceTextBox> {
+    /**
+     * 依据正常横排文字高度，把检测器误判成竖排的多行号码列切回横向行框。
+     *
+     * 行距很紧时检测器会把多行号码竖向粘成整列，列长包含扩张边距，等距切出的行框会与真实行错位；有原图时先按列内
+     * 墨迹的行间空白切分，空白不清晰才退回等距切分。
+     */
+    private fun splitVerticalColumns(
+        boxes: List<SourceTextBox>,
+        image: RgbImage?,
+    ): List<SourceTextBox> {
         val typicalLineHeight =
             boxes
                 .filter { box -> box.isHorizontalDirection }
@@ -485,12 +542,71 @@ internal object PpOcrDetectionPostProcessor {
                     .toInt()
                     .coerceAtMost(MAXIMUM_VERTICAL_SEGMENTS)
             if (segmentCount < MINIMUM_SPLIT_BAND_COUNT) return@flatMap listOf(box)
-            (0 until segmentCount).map { index ->
-                box.horizontalSlice(
-                    startRatio = index.toFloat() / segmentCount,
-                    endRatio = (index + 1).toFloat() / segmentCount,
-                )
+            image?.let { source -> box.inkRowSlices(source, typicalLineHeight) }
+                ?: (0 until segmentCount).map { index ->
+                    box.horizontalSlice(
+                        startRatio = index.toFloat() / segmentCount,
+                        endRatio = (index + 1).toFloat() / segmentCount,
+                    )
+                }
+        }
+    }
+
+    /**
+     * 按竖列包围矩形内墨迹的水平投影切出各行，每行生成以墨迹带为中心、不低于典型行高的轴对齐框。
+     *
+     * 只有至少两条墨迹带、且每条都不高于单行文字时才采用；贴着包围矩形边缘的明显矮带是相邻行被扩张边距截入的
+     * 残部，直接舍弃。
+     */
+    private fun SourceTextBox.inkRowSlices(
+        image: RgbImage,
+        typicalLineHeight: Float,
+    ): List<SourceTextBox>? {
+        val points = listOf(topLeft, topRight, bottomRight, bottomLeft)
+        val left = points.minOf(FloatPoint::x).toInt().coerceIn(0, image.width - 1)
+        val right = ceil(points.maxOf(FloatPoint::x)).toInt().coerceIn(left, image.width - 1)
+        val top = points.minOf(FloatPoint::y).toInt().coerceIn(0, image.height - 1)
+        val bottom = ceil(points.maxOf(FloatPoint::y)).toInt().coerceIn(top, image.height - 1)
+        val counts = image.darkPixelRowCounts(left, top, right, bottom) ?: return null
+        val maximumCount = counts.maxOrNull()?.takeIf { count -> count > 0 } ?: return null
+        val inkThreshold = max(1, ceil(maximumCount * INK_ROW_RATIO).toInt())
+        val maximumInternalGap = (typicalLineHeight * INK_BAND_MERGE_GAP_RATIO).toInt()
+        val bands = mutableListOf<IntRange>()
+        var bandStart = -1
+        var lastInkRow = -1
+        counts.forEachIndexed { row, count ->
+            if (count < inkThreshold) return@forEachIndexed
+            if (bandStart >= 0 && row - lastInkRow - 1 > maximumInternalGap) {
+                bands += bandStart..lastInkRow
+                bandStart = row
+            } else if (bandStart < 0) {
+                bandStart = row
             }
+            lastInkRow = row
+        }
+        if (bandStart >= 0) bands += bandStart..lastInkRow
+        val solidBands = bands.filter { band -> band.count() >= typicalLineHeight * MINIMUM_INK_BAND_HEIGHT_RATIO }
+        val medianBandHeight = solidBands.map { band -> band.count().toFloat() }.sorted().medianOrNull() ?: return null
+        val rowBands =
+            solidBands.filterNot { band ->
+                val touchesEdge = band.first == 0 || band.last == counts.lastIndex
+                touchesEdge && band.count() < medianBandHeight * MINIMUM_EDGE_INK_BAND_RATIO
+            }
+        if (rowBands.size < MINIMUM_SPLIT_BAND_COUNT) return null
+        if (rowBands.any { band -> band.count() > typicalLineHeight * MAXIMUM_INK_BAND_HEIGHT_RATIO }) return null
+        return rowBands.map { band ->
+            val centerY = top + (band.first + band.last + 1) / 2f
+            val halfHeight =
+                max(typicalLineHeight / 2f, band.count() / 2f + typicalLineHeight * INK_SLICE_PADDING_RATIO)
+            val sliceTop = (centerY - halfHeight).coerceAtLeast(0f)
+            val sliceBottom = (centerY + halfHeight).coerceAtMost((image.height - 1).toFloat())
+            SourceTextBox(
+                topLeft = FloatPoint(left.toFloat(), sliceTop),
+                topRight = FloatPoint(right.toFloat(), sliceTop),
+                bottomRight = FloatPoint(right.toFloat(), sliceBottom),
+                bottomLeft = FloatPoint(left.toFloat(), sliceBottom),
+                confidence = confidence,
+            )
         }
     }
 
@@ -785,6 +901,24 @@ internal object PpOcrDetectionPostProcessor {
 
     /** 只有达到正常文字高度宽度的竖列才可能是横排号码误连，窄边栏保持竖排。 */
     private const val MINIMUM_VERTICAL_COLUMN_WIDTH_RATIO = 1.0f
+
+    /** 深色像素数达到列内最密行该比例的行视为墨迹行。 */
+    private const val INK_ROW_RATIO = 0.1
+
+    /** 同一行文字内部允许的连续空白行数相对典型行高的比例，超过即视为行间空白。 */
+    private const val INK_BAND_MERGE_GAP_RATIO = 0.05f
+
+    /** 墨迹带至少达到典型行高的该比例才视为一行文字，排除污点和细线。 */
+    private const val MINIMUM_INK_BAND_HEIGHT_RATIO = 0.3f
+
+    /** 贴边墨迹带低于中位带高该比例时视为相邻行残部。 */
+    private const val MINIMUM_EDGE_INK_BAND_RATIO = 0.75f
+
+    /** 单条墨迹带超过典型行高该倍数说明多行仍然粘连，放弃墨迹切分。 */
+    private const val MAXIMUM_INK_BAND_HEIGHT_RATIO = 1.3f
+
+    /** 墨迹切分行框在墨迹带上下各保留的典型行高比例。 */
+    private const val INK_SLICE_PADDING_RATIO = 0.1f
 
     /** 旋转框最短边下限。 */
     private const val MINIMUM_BOX_SIDE = 3f

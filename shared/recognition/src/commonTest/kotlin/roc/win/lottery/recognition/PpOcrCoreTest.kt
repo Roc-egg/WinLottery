@@ -224,6 +224,33 @@ class PpOcrCoreTest {
         assertTrue(boxes.all { box -> box.topLeft.distanceTo(box.topRight) >= box.topLeft.distanceTo(box.bottomLeft) })
     }
 
+    /** 行距很紧时粘成整列的号码应按墨迹行间空白切分，切片中心对齐真实文字行而不是按列长等分。 */
+    @Test
+    fun verticalColumnSlicesFollowInkGaps() {
+        val rowRanges = listOf(100..139, 150..189, 200..239)
+        val image = inkImage(width = 300, height = 400, darkRows = rowRanges, darkColumns = 110..170)
+        val boxes = referenceLineBoxes() + verticalColumnBox()
+
+        val inkSlices = PpOcrDetectionPostProcessor.arrange(boxes, image).filter(::isColumnSlice)
+        val equalSlices = PpOcrDetectionPostProcessor.arrange(boxes).filter(::isColumnSlice)
+
+        assertEquals(rowRanges.map { range -> (range.first + range.last + 1) / 2f }, inkSlices.map(::centerY))
+        assertTrue(inkSlices.all { box -> box.isHorizontalDirection })
+        assertEquals(5, equalSlices.size)
+    }
+
+    /** 列内行与行之间没有空白时无法确认行界，必须保留原有的等距切分。 */
+    @Test
+    fun verticalColumnWithoutInkGapsKeepsEqualSlices() {
+        val image = inkImage(width = 300, height = 400, darkRows = listOf(100..239), darkColumns = 110..170)
+        val boxes = referenceLineBoxes() + verticalColumnBox()
+
+        assertEquals(
+            PpOcrDetectionPostProcessor.arrange(boxes).filter(::isColumnSlice),
+            PpOcrDetectionPostProcessor.arrange(boxes, image).filter(::isColumnSlice),
+        )
+    }
+
     /** CTC 必须折叠相邻重复、允许 blank 分隔重复，并忽略首尾空格置信度。 */
     @Test
     fun ctcDecoderHandlesBlankDuplicatesAndBoundarySpaces() {
@@ -515,6 +542,55 @@ class PpOcrCoreTest {
         }
         return OnnxTensorData(values, intArrayOf(1, 1, 32, 32))
     }
+
+    /** 创建白底图片，并把指定行区间与列区间相交处涂黑，模拟一列逐行排列的号码。 */
+    private fun inkImage(
+        width: Int,
+        height: Int,
+        darkRows: List<IntRange>,
+        darkColumns: IntRange,
+    ): RgbImage {
+        val pixels = ByteArray(width * height * 3) { 255.toByte() }
+        darkRows.forEach { rows ->
+            for (y in rows) {
+                for (x in darkColumns) {
+                    val offset = (y * width + x) * 3
+                    pixels[offset] = 0
+                    pixels[offset + 1] = 0
+                    pixels[offset + 2] = 0
+                }
+            }
+        }
+        return RgbImage(width, height, pixels)
+    }
+
+    /** 两个高 44 像素的横排文字框，为竖列切分提供典型行高。 */
+    private fun referenceLineBoxes(): List<SourceTextBox> =
+        listOf(20f, 300f).map { top ->
+            SourceTextBox(
+                topLeft = FloatPoint(200f, top),
+                topRight = FloatPoint(290f, top),
+                bottomRight = FloatPoint(290f, top + 44f),
+                bottomLeft = FloatPoint(200f, top + 44f),
+                confidence = 0.9f,
+            )
+        }
+
+    /** 上下扩张边距不对称的竖列检测框，按列长等分会与文字行错位。 */
+    private fun verticalColumnBox(): SourceTextBox =
+        SourceTextBox(
+            topLeft = FloatPoint(180f, 80f),
+            topRight = FloatPoint(180f, 262f),
+            bottomRight = FloatPoint(100f, 262f),
+            bottomLeft = FloatPoint(100f, 80f),
+            confidence = 0.9f,
+        )
+
+    /** 判断切分结果是否来自 [verticalColumnBox]。 */
+    private fun isColumnSlice(box: SourceTextBox): Boolean = box.normalizedBounds(300, 400).left < 0.5f
+
+    /** 返回轴对齐框的中心纵坐标。 */
+    private fun centerY(box: SourceTextBox): Float = (box.topLeft.y + box.bottomLeft.y) / 2f
 
     /** 读取 RGB 图片中一个通道的无符号值。 */
     private fun RgbImage.channelAt(
