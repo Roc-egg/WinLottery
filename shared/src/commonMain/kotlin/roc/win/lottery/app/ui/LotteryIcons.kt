@@ -10,11 +10,13 @@ import com.composables.icons.lucide.Check
 import com.composables.icons.lucide.ChevronDown
 import com.composables.icons.lucide.ChevronRight
 import com.composables.icons.lucide.ChevronUp
+import com.composables.icons.lucide.CircleArrowUp
 import com.composables.icons.lucide.CircleCheck
 import com.composables.icons.lucide.CircleStop
 import com.composables.icons.lucide.ClipboardCheck
 import com.composables.icons.lucide.Database
 import com.composables.icons.lucide.Dices
+import com.composables.icons.lucide.Download
 import com.composables.icons.lucide.EllipsisVertical
 import com.composables.icons.lucide.Eye
 import com.composables.icons.lucide.EyeOff
@@ -148,6 +150,12 @@ object LotteryIcons {
 
     /** 重新加载图标。 */
     val Refresh: ImageVector = Lucide.RefreshCw
+
+    /** 下载新版本安装包图标。 */
+    val Download: ImageVector = Lucide.Download
+
+    /** 版本更新图标。 */
+    val AppUpdate: ImageVector = Lucide.CircleArrowUp
 
     /** 进入下一级的箭头。 */
     val ChevronRight: ImageVector = Lucide.ChevronRight

@@ -50,6 +50,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import roc.win.lottery.app.AppScreen
+import roc.win.lottery.app.AppUpdateState
 import roc.win.lottery.app.TicketLineReviewState
 import roc.win.lottery.app.TicketNumberArea
 import roc.win.lottery.app.TicketReviewEvaluation
@@ -1014,13 +1015,17 @@ fun ErrorScreen(
 }
 
 /**
- * 显示关于、隐私和 V1 支持范围，并提供清除本机开奖缓存的入口。
+ * 显示关于、版本更新、隐私和 V1 支持范围，并提供清除本机开奖缓存的入口。
  *
  * @param screen 当前关于页状态，包含清除进度和结果说明。
  * @param themePreference 当前主题偏好。
  * @param onThemePreferenceChange 切换跟随系统、浅色或深色主题。
  * @param onBack 返回上一页。
  * @param onClearHistory 用户确认后清除本机保存的官方历史开奖。
+ * @param appUpdate 版本更新状态；当前平台未接入更新检查时为 `null`，不显示版本更新分区。
+ * @param onCheckForUpdate 立即检查更新。
+ * @param onAutoUpdateCheckChange 开启或关闭启动时自动检查。
+ * @param onShowAvailableUpdate 重新查看已发现的新版本。
  */
 @Composable
 fun AboutScreen(
@@ -1029,6 +1034,10 @@ fun AboutScreen(
     onThemePreferenceChange: (ThemePreference) -> Unit,
     onBack: () -> Unit,
     onClearHistory: () -> Unit,
+    appUpdate: AppUpdateState? = null,
+    onCheckForUpdate: () -> Unit = {},
+    onAutoUpdateCheckChange: (Boolean) -> Unit = {},
+    onShowAvailableUpdate: () -> Unit = {},
 ) {
     var confirmsClear by remember { mutableStateOf(false) }
     AppShell(
@@ -1047,6 +1056,13 @@ fun AboutScreen(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    appUpdate?.let { update ->
+                        Text(
+                            "版本 ${update.currentVersion}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             }
         }
@@ -1069,6 +1085,15 @@ fun AboutScreen(
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        appUpdate?.let { update ->
+            Spacer(Modifier.height(SectionSpacing))
+            AppUpdateSection(
+                state = update,
+                onCheck = onCheckForUpdate,
+                onAutoCheckChange = onAutoUpdateCheckChange,
+                onShowUpdate = onShowAvailableUpdate,
             )
         }
         Spacer(Modifier.height(SectionSpacing))
@@ -1096,6 +1121,14 @@ fun AboutScreen(
                 "每个彩种只保存最近一次通过校验的分析结果、来源和查询时间，不保存发送快照、请求内容或模型原始响应；" +
                     "重新分析才会替换，可在 AI 页删除。",
             )
+            if (appUpdate != null) {
+                PolicyRow(
+                    LotteryIcons.AppUpdate,
+                    "版本更新",
+                    "检查更新时只向 GitHub 读取本项目最新发布版的版本号、说明和下载地址，不发送票据、记录、AI 配置或设备信息；" +
+                        "启动时自动检查可在上方关闭，下载由系统浏览器完成。",
+                )
+            }
             HairlineDivider()
             OutlineActionButton(
                 text = "清除本机开奖数据",

@@ -55,6 +55,8 @@ dependencies {
 compose.desktop {
     application {
         mainClass = "roc.win.lottery.DesktopEntryKt"
+        // 运行和打包后的启动器都带上版本号，供应用内检查 GitHub 新版本。
+        jvmArgs += "-Droc.win.lottery.appVersion=$desktopPackageVersion"
 
         nativeDistributions {
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)

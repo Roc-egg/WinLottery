@@ -24,6 +24,7 @@ import roc.win.lottery.app.theme.PlatformAppearanceEffect
 import roc.win.lottery.app.ui.AboutScreen
 import roc.win.lottery.app.ui.AiAnalysisScreen
 import roc.win.lottery.app.ui.AnalysisScreen
+import roc.win.lottery.app.ui.AppUpdateDialog
 import roc.win.lottery.app.ui.DemoCompleteScreen
 import roc.win.lottery.app.ui.DrawQueryScreen
 import roc.win.lottery.app.ui.DrawUnavailableScreen
@@ -68,6 +69,9 @@ fun App(session: LotteryAppSession) {
     val controller = session.controller
     val uiState by controller.uiState.collectAsState()
     val themePreference by controller.themePreference.collectAsState()
+    val appUpdates = controller.appUpdates
+    // 会话内更新检查要么始终存在、要么始终为空，条件收集不会改变组合结构。
+    val appUpdateState = appUpdates?.state?.collectAsState()?.value
     val systemDarkTheme = isSystemInDarkTheme()
     val darkTheme =
         when (themePreference) {
@@ -399,8 +403,29 @@ fun App(session: LotteryAppSession) {
                     },
                     onBack = { scope.launch { controller.navigateBack() } },
                     onClearHistory = { scope.launch { controller.clearHistoricalDrawCache() } },
+                    appUpdate = appUpdateState,
+                    onCheckForUpdate = { appUpdates?.let { updates -> scope.launch { updates.checkNow() } } },
+                    onAutoUpdateCheckChange = { enabled ->
+                        appUpdates?.let { updates -> scope.launch { updates.setAutoCheckEnabled(enabled) } }
+                    },
+                    onShowAvailableUpdate = { appUpdates?.showAvailableUpdate() },
                 )
             }
+        }
+        // 新版本提示只在首页和关于页弹出，不打断识别、校正和查询流程；离开期间到达的提示等回到首页再显示。
+        val updatePrompt = appUpdateState?.prompt
+        if (
+            appUpdates != null &&
+            updatePrompt != null &&
+            (uiState.screen == AppScreen.Home || uiState.screen is AppScreen.About)
+        ) {
+            AppUpdateDialog(
+                update = updatePrompt,
+                currentVersion = appUpdateState.currentVersion,
+                onOpened = appUpdates::dismissPrompt,
+                onSkip = { scope.launch { appUpdates.skipPromptedVersion() } },
+                onDismiss = appUpdates::dismissPrompt,
+            )
         }
     }
 }

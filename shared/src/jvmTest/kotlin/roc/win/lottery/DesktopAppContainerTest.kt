@@ -2,6 +2,7 @@ package roc.win.lottery
 
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
+import roc.win.lottery.app.AppDistribution
 import roc.win.lottery.domain.LotteryType
 import java.io.File
 import java.nio.file.Files
@@ -43,6 +44,16 @@ class DesktopAppContainerTest {
                 root.deleteRecursively()
             }
         }
+
+    /** 只有 Apple Silicon Mac 和 x64 Windows 有对应安装包，其他桌面改为打开发布页。 */
+    @Test
+    fun desktopDistributionMatchesReleaseInstallers() {
+        assertEquals(AppDistribution.MACOS_ARM64, resolveDesktopDistribution("Mac OS X", "aarch64"))
+        assertEquals(AppDistribution.OTHER, resolveDesktopDistribution("Mac OS X", "x86_64"))
+        assertEquals(AppDistribution.WINDOWS_X64, resolveDesktopDistribution("Windows 11", "amd64"))
+        assertEquals(AppDistribution.OTHER, resolveDesktopDistribution("Windows 11", "aarch64"))
+        assertEquals(AppDistribution.OTHER, resolveDesktopDistribution("Linux", "amd64"))
+    }
 
     /** Windows 应优先把 Room 数据写入当前用户的 LocalAppData。 */
     @Test

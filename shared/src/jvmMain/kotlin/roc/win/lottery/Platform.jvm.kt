@@ -1,13 +1,17 @@
 package roc.win.lottery
 
+import roc.win.lottery.app.AppBuildInfo
 import roc.win.lottery.app.AppContainer
+import roc.win.lottery.app.AppDistribution
 import roc.win.lottery.app.DesktopTicketRecordFileExchange
+import roc.win.lottery.data.GitHubAppReleaseRepository
 import roc.win.lottery.data.HttpAiAnalysisProvider
 import roc.win.lottery.data.JvmSuperLottoPdfTextExtractor
 import roc.win.lottery.data.OfficialDrawRepository
 import roc.win.lottery.domain.LotteryPrizeCalculator
 import roc.win.lottery.domain.TicketValidator
 import roc.win.lottery.persistence.createJvmAiConnectionStore
+import roc.win.lottery.persistence.createJvmAppUpdateStore
 import roc.win.lottery.persistence.createJvmAppearanceStore
 import roc.win.lottery.persistence.createJvmLocalStorage
 import roc.win.lottery.recognition.ConservativeTicketParser
@@ -62,6 +66,7 @@ internal fun createDesktopAppContainer(
             superLottoPdfTextExtractor = JvmSuperLottoPdfTextExtractor(),
         )
     val localStorage = createJvmLocalStorage(applicationDataDirectory)
+    val buildInfo = resolveDesktopBuildInfo()
     return AppContainer(
         platform = JVMPlatform(),
         imageAcquirer = DesktopFileImageAcquirer(ownerProvider, appPaths),
@@ -91,7 +96,47 @@ internal fun createDesktopAppContainer(
         drawResultStore = localStorage.drawResultStore,
         aiAnalysisRecordStore = localStorage.aiAnalysisRecordStore,
         ticketRecordFileExchange = DesktopTicketRecordFileExchange(ownerProvider),
+        appBuildInfo = buildInfo,
+        appReleaseRepository = buildInfo?.let { GitHubAppReleaseRepository() },
+        appUpdateStore = createJvmAppUpdateStore(applicationDataDirectory),
     )
+}
+
+/** 读取构建脚本注入的版本号并按系统与架构确定安装包；未注入时（例如测试）不检查更新。 */
+private fun resolveDesktopBuildInfo(): AppBuildInfo? {
+    val version =
+        (System.getProperty(APP_VERSION_PROPERTY) ?: System.getProperty(JPACKAGE_APP_VERSION_PROPERTY))
+            ?.takeIf(String::isNotBlank)
+            ?: return null
+    return AppBuildInfo(
+        version = version,
+        distribution =
+            resolveDesktopDistribution(
+                osName = System.getProperty(OS_NAME_PROPERTY).orEmpty(),
+                osArch = System.getProperty(OS_ARCH_PROPERTY).orEmpty(),
+            ),
+    )
+}
+
+/** 按操作系统和处理器架构匹配发布版中的桌面安装包。 */
+internal fun resolveDesktopDistribution(
+    osName: String,
+    osArch: String,
+): AppDistribution {
+    val arch = osArch.lowercase()
+    return when {
+        osName.startsWith(MAC_OS_PREFIX, ignoreCase = true) && arch in ARM64_ARCHITECTURES -> {
+            AppDistribution.MACOS_ARM64
+        }
+
+        osName.startsWith(WINDOWS_OS_PREFIX, ignoreCase = true) && arch in X64_ARCHITECTURES -> {
+            AppDistribution.WINDOWS_X64
+        }
+
+        else -> {
+            AppDistribution.OTHER
+        }
+    }
 }
 
 /** 按当前桌面系统约定定位只供本应用使用的持久化数据目录。 */
@@ -151,6 +196,21 @@ private const val USER_HOME_PROPERTY = "user.home"
 
 /** Java 当前操作系统属性名。 */
 private const val OS_NAME_PROPERTY = "os.name"
+
+/** Java 当前处理器架构属性名。 */
+private const val OS_ARCH_PROPERTY = "os.arch"
+
+/** desktopApp 构建脚本通过 JVM 参数注入的应用版本号属性名。 */
+private const val APP_VERSION_PROPERTY = "roc.win.lottery.appVersion"
+
+/** jpackage 启动器自动设置的应用版本号属性名，作为后备。 */
+private const val JPACKAGE_APP_VERSION_PROPERTY = "jpackage.app-version"
+
+/** JVM 报告的 64 位 ARM 架构名称。 */
+private val ARM64_ARCHITECTURES = setOf("aarch64", "arm64")
+
+/** JVM 报告的 x64 架构名称。 */
+private val X64_ARCHITECTURES = setOf("amd64", "x86_64")
 
 /** macOS 系统名称前缀。 */
 private const val MAC_OS_PREFIX = "Mac"

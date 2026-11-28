@@ -2,6 +2,7 @@ package roc.win.lottery
 
 import android.app.Application
 import android.content.pm.ApplicationInfo
+import android.content.pm.PackageManager
 import android.os.Build
 import android.util.Log
 import androidx.activity.ComponentActivity
@@ -11,17 +12,21 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import roc.win.lottery.app.AndroidTicketRecordFileExchange
+import roc.win.lottery.app.AppBuildInfo
 import roc.win.lottery.app.AppContainer
+import roc.win.lottery.app.AppDistribution
 import roc.win.lottery.app.LogOcrConfidenceDiagnostics
 import roc.win.lottery.app.LotteryAppSession
 import roc.win.lottery.app.OcrConfidenceDiagnostics
 import roc.win.lottery.app.withOneShotConflictInjection
 import roc.win.lottery.data.AndroidSuperLottoPdfTextExtractor
+import roc.win.lottery.data.GitHubAppReleaseRepository
 import roc.win.lottery.data.HttpAiAnalysisProvider
 import roc.win.lottery.data.OfficialDrawRepository
 import roc.win.lottery.domain.LotteryPrizeCalculator
 import roc.win.lottery.domain.TicketValidator
 import roc.win.lottery.persistence.createAndroidAiConnectionStore
+import roc.win.lottery.persistence.createAndroidAppUpdateStore
 import roc.win.lottery.persistence.createAndroidAppearanceStore
 import roc.win.lottery.persistence.createAndroidLocalStorage
 import roc.win.lottery.recognition.AndroidAppPaths
@@ -92,6 +97,10 @@ class AndroidLotteryAppViewModel(
     ): AppContainer {
         val isDebuggable = application.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
         val localStorage = createAndroidLocalStorage(application)
+        val buildInfo =
+            application.installedVersionName()?.let { version ->
+                AppBuildInfo(version = version, distribution = AppDistribution.ANDROID)
+            }
         val officialDrawRepository =
             OfficialDrawRepository(
                 superLottoPdfTextExtractor = AndroidSuperLottoPdfTextExtractor(application),
@@ -130,6 +139,9 @@ class AndroidLotteryAppViewModel(
             aiAnalysisRecordStore = localStorage.aiAnalysisRecordStore,
             ticketRecordFileExchange = ticketRecordFileExchange,
             ocrConfidenceDiagnostics = createAndroidOcrConfidenceDiagnostics(isDebuggable),
+            appBuildInfo = buildInfo,
+            appReleaseRepository = buildInfo?.let { GitHubAppReleaseRepository() },
+            appUpdateStore = createAndroidAppUpdateStore(application),
         )
     }
 }
@@ -150,6 +162,19 @@ fun ComponentActivity.attachLotteryAppSession(): LotteryAppSession {
     viewModel.attach(this)
     return viewModel.session
 }
+
+/** 读取当前安装包的版本名；读取失败时为 `null`，不检查更新。 */
+private fun Application.installedVersionName(): String? =
+    runCatching {
+        val packageInfo =
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                packageManager.getPackageInfo(packageName, PackageManager.PackageInfoFlags.of(0))
+            } else {
+                @Suppress("DEPRECATION")
+                packageManager.getPackageInfo(packageName, 0)
+            }
+        packageInfo.versionName
+    }.getOrNull()?.takeIf { it.isNotBlank() }
 
 /** 只为可调试 Android 包创建匿名置信度日志，Release 保持完全禁用。 */
 private fun createAndroidOcrConfidenceDiagnostics(isDebuggable: Boolean): OcrConfidenceDiagnostics =

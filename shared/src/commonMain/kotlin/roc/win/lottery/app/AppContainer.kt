@@ -2,6 +2,7 @@ package roc.win.lottery.app
 
 import roc.win.lottery.Platform
 import roc.win.lottery.data.AiAnalysisProvider
+import roc.win.lottery.data.AppReleaseRepository
 import roc.win.lottery.data.DrawRepository
 import roc.win.lottery.data.FakeDrawRepository
 import roc.win.lottery.data.HistoricalDrawRepository
@@ -10,6 +11,7 @@ import roc.win.lottery.domain.PrizeCalculator
 import roc.win.lottery.domain.TicketValidator
 import roc.win.lottery.persistence.AiAnalysisRecordStore
 import roc.win.lottery.persistence.AiConnectionStore
+import roc.win.lottery.persistence.AppUpdateStore
 import roc.win.lottery.persistence.AppearanceStore
 import roc.win.lottery.persistence.DrawResultStore
 import roc.win.lottery.persistence.HistoricalDrawStore
@@ -51,6 +53,9 @@ import roc.win.lottery.recognition.TicketRecognizer
  * @property aiAnalysisRecordStore 与票据共用数据库的 AI 分析结果仓库，每个彩种保存最近一次；未接入的平台为 `null`，结果只在本次运行有效。
  * @property appearanceStore 本机保存的外观偏好仓库；未接入的平台为 `null`，主题选择只在本次运行有效。
  * @property ocrConfidenceDiagnostics Debug 包使用的匿名字段置信度诊断，默认禁用。
+ * @property appBuildInfo 当前安装包的版本和发布渠道；为 `null` 时不检查更新。
+ * @property appReleaseRepository 最新正式发布版来源；为 `null` 时不检查更新。
+ * @property appUpdateStore 本机保存的版本更新偏好；为 `null` 时设置只在本次运行有效。
  */
 class AppContainer(
     val platform: Platform,
@@ -76,12 +81,15 @@ class AppContainer(
     val aiAnalysisRecordStore: AiAnalysisRecordStore? = null,
     val appearanceStore: AppearanceStore? = null,
     val ocrConfidenceDiagnostics: OcrConfidenceDiagnostics = OcrConfidenceDiagnostics.Disabled,
+    val appBuildInfo: AppBuildInfo? = null,
+    val appReleaseRepository: AppReleaseRepository? = null,
+    val appUpdateStore: AppUpdateStore? = null,
 ) {
     /** 清理临时票图，并关闭容器持有的数据库连接、识别会话和网络客户端；两类开奖缓存随票据仓库共用的数据库一并关闭。 */
     fun close() {
         appPaths.clearTemporaryImages()
         ticketRecordStore?.close()
-        listOf(ticketRecognizer, drawRepository, historicalDrawRepository, aiAnalysisProvider)
+        listOf(ticketRecognizer, drawRepository, historicalDrawRepository, aiAnalysisProvider, appReleaseRepository)
             .filterIsInstance<AutoCloseable>()
             .distinct()
             .forEach { resource -> runCatching { resource.close() } }

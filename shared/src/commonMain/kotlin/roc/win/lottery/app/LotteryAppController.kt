@@ -195,6 +195,19 @@ class LotteryAppController(
         }
     }
 
+    /** 版本更新检查；未接入发布来源或安装包信息的平台为 `null`，界面不显示更新入口。 */
+    val appUpdates: AppUpdateCoordinator? =
+        container.appBuildInfo?.let { buildInfo ->
+            container.appReleaseRepository?.let { repository ->
+                AppUpdateCoordinator(
+                    buildInfo = buildInfo,
+                    repository = repository,
+                    store = container.appUpdateStore,
+                    clock = clock,
+                )
+            }
+        }
+
     /** 当前平台能否把 AI 密钥加密保存在本机；否则密钥只在本次运行有效。 */
     val savesAiApiKeyLocally: Boolean
         get() = container.aiConnectionStore?.savesApiKey == true

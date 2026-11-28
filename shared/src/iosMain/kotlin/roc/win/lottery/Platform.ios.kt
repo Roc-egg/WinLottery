@@ -1,20 +1,25 @@
 package roc.win.lottery
 
+import platform.Foundation.NSBundle
 import platform.Foundation.NSLog
 import platform.Foundation.NSProcessInfo
 import platform.UIKit.UIDevice
 import platform.UIKit.UIViewController
+import roc.win.lottery.app.AppBuildInfo
 import roc.win.lottery.app.AppContainer
+import roc.win.lottery.app.AppDistribution
 import roc.win.lottery.app.IOSTicketRecordFileExchange
 import roc.win.lottery.app.LogOcrConfidenceDiagnostics
 import roc.win.lottery.app.OcrConfidenceDiagnostics
 import roc.win.lottery.app.withOneShotConflictInjection
+import roc.win.lottery.data.GitHubAppReleaseRepository
 import roc.win.lottery.data.HttpAiAnalysisProvider
 import roc.win.lottery.data.IOSSuperLottoPdfTextExtractor
 import roc.win.lottery.data.OfficialDrawRepository
 import roc.win.lottery.domain.LotteryPrizeCalculator
 import roc.win.lottery.domain.TicketValidator
 import roc.win.lottery.persistence.createIOSAiConnectionStore
+import roc.win.lottery.persistence.createIOSAppUpdateStore
 import roc.win.lottery.persistence.createIOSAppearanceStore
 import roc.win.lottery.persistence.createIOSLocalStorage
 import roc.win.lottery.recognition.ConservativeTicketParser
@@ -60,6 +65,10 @@ fun createIOSRecognitionContainer(
             superLottoPdfTextExtractor = IOSSuperLottoPdfTextExtractor(),
         )
     val localStorage = createIOSLocalStorage()
+    val buildInfo =
+        (NSBundle.mainBundle.objectForInfoDictionaryKey(BUNDLE_VERSION_KEY) as? String)
+            ?.takeIf { it.isNotBlank() }
+            ?.let { version -> AppBuildInfo(version = version, distribution = AppDistribution.IOS) }
     val container =
         AppContainer(
             platform = IOSPlatform(),
@@ -96,6 +105,9 @@ fun createIOSRecognitionContainer(
             aiAnalysisRecordStore = localStorage.aiAnalysisRecordStore,
             ticketRecordFileExchange = IOSTicketRecordFileExchange(presenterProvider),
             ocrConfidenceDiagnostics = createIOSOcrConfidenceDiagnostics(),
+            appBuildInfo = buildInfo,
+            appReleaseRepository = buildInfo?.let { GitHubAppReleaseRepository() },
+            appUpdateStore = createIOSAppUpdateStore(),
         )
     launchIOSMobileAnalysisPerformanceIfRequested(container, isDebugBinary)
     launchIOSOcrAcceptanceIfRequested(
@@ -122,3 +134,6 @@ private fun isIOSDebugBinary(): Boolean = NativePlatform.isDebugBinary
 
 /** iOS Debug 包一次性冲突验收使用的进程环境变量。 */
 private const val DEBUG_CONFLICT_ISSUE_ENVIRONMENT = "WINLOTTERY_DEBUG_CONFLICT_ISSUE"
+
+/** Info.plist 中由 `MARKETING_VERSION` 生成的版本号键名。 */
+private const val BUNDLE_VERSION_KEY = "CFBundleShortVersionString"
