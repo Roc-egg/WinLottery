@@ -4,7 +4,7 @@
   <p><strong>基于 Kotlin Multiplatform 的纸质彩票识别与中奖测算工具</strong></p>
   <p>Android、iOS、Windows 与 macOS 共享业务规则、数据访问、结构化存储和 Compose Multiplatform 界面。</p>
   <p>
-    <img alt="当前版本" src="https://img.shields.io/badge/version-1.3.9-2f7d32">
+    <img alt="当前版本" src="https://img.shields.io/badge/version-1.3.10-2f7d32">
     <img alt="项目状态" src="https://img.shields.io/badge/status-V1.4%20in%20progress-d97706">
     <img alt="技术架构" src="https://img.shields.io/badge/Kotlin-Multiplatform-7f52ff">
     <img alt="目标平台" src="https://img.shields.io/badge/platform-Android%20%7C%20iOS%20%7C%20Windows%20%7C%20macOS-1565c0">
@@ -23,7 +23,7 @@
 
 ## 项目总进度
 
-更新日期：2026-11-28。当前稳定版本为 `1.3.9 (14)`，新增版本更新检查：启动时每 24 小时最多向 GitHub 读取一次最新发布版，发现新版本时提示并由系统浏览器下载安装包，可在“关于与隐私”中关闭自动检查或手动检查；此前的 `1.3.8 (13)` 把 AI 分析结果按彩种连同查询时间保存在本机，记录页直接显示每张票已开奖、中奖期数和税前奖金，大乐透开奖号码审核后即可比对中奖、奖金待公告后确认。各版本更新内容见 [docs/release-notes](docs/release-notes)。V1.4 已立项推进，V1.5 尚未开始。
+更新日期：2026-11-28。当前稳定版本为 `1.3.10 (15)`，新增版本更新检查：启动时每 24 小时最多向 GitHub 读取一次最新发布版，发现新版本时提示并由系统浏览器下载安装包，可在“关于与隐私”中关闭自动检查或手动检查；行距很紧的票面按号码间空白切分，减少漏注；iOS 改用微软官方 NuGet 包中的 ONNX Runtime，修复上游 Swift 包仓库被移除后无法构建（`1.3.9` 因此未发布，内容并入本版）；此前的 `1.3.8 (13)` 把 AI 分析结果按彩种连同查询时间保存在本机，记录页直接显示每张票已开奖、中奖期数和税前奖金，大乐透开奖号码审核后即可比对中奖、奖金待公告后确认。各版本更新内容见 [docs/release-notes](docs/release-notes)。V1.4 已立项推进，V1.5 尚未开始。
 
 | 状态 | 版本数量 | 当前范围 |
 |---|---:|---|
