@@ -886,6 +886,8 @@ readonly release_check_directory
 trap cleanup_release_check EXIT
 
 cd "$REPOSITORY_ROOT"
+# iOS 依赖的 ONNX Runtime 二进制不提交 Git，已是锁定版本时直接跳过（ADR-039）。
+python3 -I tools/ios/fetch_onnxruntime.py
 export ANDROID_SERIAL="$CURRENT_ANDROID_SERIAL_ID"
 
 if [[ "$VERIFY_VERSION_UPGRADE" == "1" ]]; then

@@ -207,6 +207,10 @@ jobs:
         with:
           cache-read-only: true
 
+      # 微软的 Swift Package 仓库已从 GitHub 移除，iOS 运行时改从官方 NuGet 包取出并校验（ADR-039）。
+      - name: 下载并校验 iOS ONNX Runtime
+        run: python3 -I tools/ios/fetch_onnxruntime.py
+
       # 发布仅构建真机安装包，完整测试和模拟器验收通过手动验证工作流执行。
       - name: 构建 iOS 未签名真机 IPA
         id: ios_package

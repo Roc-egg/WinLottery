@@ -1,0 +1,4 @@
+# 由 tools/ios/fetch_onnxruntime.py 下载并校验，不提交 Git。
+/Frameworks/
+/.build/
+/.swiftpm/

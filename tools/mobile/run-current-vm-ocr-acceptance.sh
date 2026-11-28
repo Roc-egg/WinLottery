@@ -111,6 +111,8 @@ readonly acceptance_directory
 android_device_stage="/data/local/tmp/winlottery-ocr-acceptance"
 trap cleanup_ocr_acceptance EXIT
 cd "$REPOSITORY_ROOT"
+# iOS 依赖的 ONNX Runtime 二进制不提交 Git，已是锁定版本时直接跳过（ADR-039）。
+python3 -I tools/ios/fetch_onnxruntime.py
 export ANDROID_SERIAL="$CURRENT_ANDROID_SERIAL_ID"
 
 ./gradlew \

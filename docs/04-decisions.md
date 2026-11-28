@@ -362,6 +362,18 @@
 - 原因：GitHub 是唯一发布渠道，启动检查能让用户及时得到修复；每天最多一次、只读公开元数据、可关闭，对隐私和 GitHub 匿名限额（每 IP 每小时 60 次）影响很小。由浏览器下载可避免申请安装权限、处理安装包校验和平台安装差异。
 - 影响：新增一个用户未主动触发的联网请求，README、产品文档和“关于与隐私”页同步说明；数据库模式、导出格式和其他联网边界不变。
 
+## ADR-039：iOS ONNX Runtime 改用仓库内绑定与官方 NuGet 二进制
+
+- 状态：已采用，2026-11-28；替换原先依赖的远程 Swift Package，Android 与桌面使用的 Maven Central 制品不变。
+- 背景：2026-11-17 至 18 日，微软在 GitHub 上的 `onnxruntime`、`onnxruntime-swift-package-manager` 等仓库连同发布资产一起返回 404，`download.onnxruntime.ai` 也不再提供匹配域名的证书。iOS 原先通过远程 Swift Package 1.24.2 解析 Objective-C 绑定，再从该域名下载 pod 压缩包，本机有缓存时还能构建，干净环境（包括发布工作流）解析依赖即失败，`v1.3.9` 因此没有产出 iOS 安装包，整次发布中止。
+- 决策：
+  - 绑定源码：把上游 `1.24.2` 标签（提交 `b7fb7f7d`）的 `objectivec/` 与 MIT `LICENSE` 原样放入 `iosApp/Vendor/onnxruntime-swift-package-manager/`，删去测试、文档和训练接口；`Package.swift` 改编自上游，只保留应用使用的 `onnxruntime` 产品（目标名仍为 `OnnxRuntimeBindings`），Xcode 工程改为引用这个本地包，Swift 代码不变。
+  - 二进制：`onnxruntime.xcframework` 不提交 Git，由 `tools/ios/fetch_onnxruntime.py` 从 nuget.org 上的 `Microsoft.ML.OnnxRuntime` 1.24.2 官方包中取出 `runtimes/ios/native/onnxruntime.xcframework.zip`，按 NuGet 包与内层压缩包的固定字节数和 SHA-256 校验后原样解压。该 NuGet 包带 Microsoft Corporation 作者签名和 NuGet.org 仓库副署，签名所覆盖的包内容哈希已核对一致。
+  - 等价性：NuGet 内的 xcframework 与原 pod 压缩包版本同为 1.24.2，最低系统同为 iOS 15.1，均为静态库，C/C++ 头文件逐字节相同，`OrtGetApiBase` 与 CoreML 执行提供器等导出接口一致；二者分别构建，二进制不逐字节相同，并以 Mac Catalyst 切片代替 macOS 切片（应用不使用）。
+  - 构建：发布工作流在构建 iOS 前运行该脚本；本机首次用 Xcode 打开工程前也需运行一次。Xcode 工程不再有远程包，`Package.resolved` 随之删除。
+- 原因：GitHub 镜像多为第三方维护，可用性和来源都无法保证；NuGet 是 ONNX Runtime 仍在维护、带官方签名且版本不可覆盖的分发渠道。绑定源码只有约二十个文件，随仓库保存可彻底摆脱上游仓库存续。
+- 影响：iOS 推理运行时从原 pod 构建换成同版本的 NuGet 构建，识别流水线与模型不变，仍需以真机识别结果为最终验收。若以后升级 iOS 的 ONNX Runtime，需要同时更新绑定源码、脚本中的版本与校验值，并重新核对签名。
+
 ## 当前冻结状态
 
 V1.1、V1.2 与 V1.3 均已完成关闭；V1.4 已按 ADR-025 进入实施，其中“会话级快照”的历史开奖来源已由 ADR-026 改为本机保存的规范化开奖；查询开奖的已开奖期次按 ADR-027 保存到本机，AI 分析结果按 ADR-036 每个彩种保存最近一次，数据库模式为 v4。V1.3 已按 ADR-021 至 ADR-024 完成跨平台基本走势图、会话内官方历史开奖、首发数学策略、时间前推回测、双端界面与 `1.2.0 (4) → 1.3.0 (5)` 覆盖升级验收。V1.4 当前只冻结用户自备密钥、会话级快照、逐次确认、单请求费用边界、严格结构输出和本地失败关闭；后续若变更依赖、数据库模式、备份、导入冲突策略、随机方案持久化、历史开奖持久化或 AI 结果持久化，必须新增 ADR，不得在维护中隐式漂移。

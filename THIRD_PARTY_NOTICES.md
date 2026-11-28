@@ -18,10 +18,10 @@
 ## Microsoft ONNX Runtime
 
 - Android：`com.microsoft.onnxruntime:onnxruntime-android:1.29.0`
-- iOS：`onnxruntime-swift-package-manager:1.24.2`
+- iOS：NuGet `Microsoft.ML.OnnxRuntime:1.24.2` 中的 `onnxruntime.xcframework`，由 `tools/ios/fetch_onnxruntime.py` 锁定字节数和 SHA-256；Objective-C 绑定源码取自 `onnxruntime-swift-package-manager` `1.24.2`（提交 `b7fb7f7d`），随仓库保存在 `iosApp/Vendor/onnxruntime-swift-package-manager/`，附原 MIT `LICENSE`
 - Desktop：`com.microsoft.onnxruntime:onnxruntime:1.29.0`
 - 许可证：MIT
-- 上游地址：https://github.com/microsoft/onnxruntime
+- 上游地址：https://github.com/microsoft/onnxruntime （2026-11-18 起在 GitHub 返回 404）、https://www.nuget.org/packages/Microsoft.ML.OnnxRuntime
 - 许可证正文：[licenses/ONNX-Runtime-MIT.txt](licenses/ONNX-Runtime-MIT.txt)
 
 正式分发前必须把适用许可证正文和 ONNX Runtime 官方 `ThirdPartyNotices.txt` 纳入发布材料，并按目标平台核对最终二进制中的第三方组件。本文件不是完整的全项目依赖清单。

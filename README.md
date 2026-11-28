@@ -140,7 +140,7 @@ V1.4 已按 ADR-025 立项。首发在本机保存的规范化开奖数据（ADR
 ./tools/mobile/run-current-vm-tests.sh
 ```
 
-iOS 使用 Xcode 打开 `iosApp/iosApp.xcodeproj`，构建 `iosApp` Scheme。固定虚拟机脚本会校验精确设备身份，目标不匹配时直接停止，不会回退到其他 ADB 或 iOS 设备。
+iOS 首次构建前先在仓库根目录运行 `python3 -I tools/ios/fetch_onnxruntime.py`，从 nuget.org 的微软官方包取出并校验 ONNX Runtime xcframework（见 ADR-039），再用 Xcode 打开 `iosApp/iosApp.xcodeproj`，构建 `iosApp` Scheme。固定虚拟机脚本会校验精确设备身份，目标不匹配时直接停止，不会回退到其他 ADB 或 iOS 设备。
 
 `v1.3.1` 起，GitHub Release 同时发布 Android `arm64-v8a` 签名 APK、iOS `iphoneos arm64` 未签名 IPA、macOS Apple Silicon 未签名 DMG 和 Windows x64 未签名 MSI，并附统一 SHA-256 清单。未签名 IPA 不能直接安装，使用者必须自行准备有效证书和描述文件完成重新签名；桌面发布包尚未完成 Developer ID、公证或 Authenticode 签名，系统可能要求手动确认来源。
 

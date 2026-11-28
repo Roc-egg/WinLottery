@@ -315,7 +315,7 @@ interface AppPaths
 - `tools/ocr-models/fetch_models.py` 记录全部模型和字典的官方地址、修订、字节数与 SHA-256，可重新下载校验；`PpOcrResourceLocks.kt` 在三端加载前校验同一组哈希；CI 校验已提交文件。普通 Gradle 构建不联网下载模型。
 - JVM 推理候选为 `com.microsoft.onnxruntime:onnxruntime:1.29.0` 的 CPU 执行提供器。官方 JAR 已核实包含 Windows x64 和 macOS arm64 原生库；B3 必须验证 Compose 打包、签名、公证以及是否剔除无关平台原生库。
 - Android 使用 `com.microsoft.onnxruntime:onnxruntime-android:1.29.0` 官方 AAR，在 Android 模拟器上禁用 KleidiAI 内核以避免 ARM64 模拟器误报 SME 能力导致的非法指令；模型从 APK 资源复制到 `noBackupFilesDir` 前后核对长度和 SHA-256，再按进程复用各模型 CPU Session。
-- iOS 使用微软官方 ONNX Runtime Swift Package `1.24.2`；Swift 负责连续 Float32 张量、Session，以及在识别输出缓冲区内逐时间步取最大概率类别（不复制完整概率张量），每次推理都在独立的自动释放池中完成，避免连续上百次推理把输出张量累积到进程内存上限；检测、方向分类、识别预后处理及 CTC 解码全部复用共享 Kotlin。模型和字典位于签名应用 Bundle，构建产物必须逐项核对哈希。
+- iOS 使用微软官方 ONNX Runtime `1.24.2`：按 ADR-039，Objective-C 绑定随仓库保存为本地 Swift Package，运行时 xcframework 取自 nuget.org 官方签名包并锁定 SHA-256；Swift 负责连续 Float32 张量、Session，以及在识别输出缓冲区内逐时间步取最大概率类别（不复制完整概率张量），每次推理都在独立的自动释放池中完成，避免连续上百次推理把输出张量累积到进程内存上限；检测、方向分类、识别预后处理及 CTC 解码全部复用共享 Kotlin。模型和字典位于签名应用 Bundle，构建产物必须逐项核对哈希。
 - 该版本官方 `Privacy.md` 明确说明受支持平台的官方二进制默认开启遥测。项目必须在原生库初始化前设置 `ORT_DISABLE_TELEMETRY=1`，或改用通过 `--no_telemetry` 构建并完成供应链记录的目标平台制品；只在初始化后调用关闭 API 不满足本项目的本地处理边界。当前 Windows/macOS 预览启动器均已通过隔离子进程验证，后续若改变启动器或运行时制品必须重新验收。
 - Desktop 采用独立本地工作进程隔离 ONNX Runtime：普通 UI 主进程不加载运行时，父进程在创建子进程时注入 `ORT_DISABLE_TELEMETRY=1`，子进程随后再次调用关闭遥测 API。运行时健康检查协议只返回版本和执行提供器，拒绝额外输出；macOS arm64 与 Windows 11 x64 最终启动器均已通过 ONNX Runtime 和合成票面 OCR 验收。
 - 三个 ONNX 合计约 32.1 MB（检测 9.9 MB、方向分类 1.0 MB、识别 21.2 MB），字典约 75 KB。Android 通用 Debug APK 还会包含四套 ORT ABI，当前约 140 MB；正式 `arm64-v8a` APK、iOS 真机 IPA 和目标平台裁剪只能以发布构建实测为准。
